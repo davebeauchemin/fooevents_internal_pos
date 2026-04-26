@@ -1,0 +1,7 @@
+# Node (source — dist is committed for Git Updater)
+app/node_modules/
+app/.env
+app/.env.local
+
+# OS
+.DS_Store
