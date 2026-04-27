@@ -66,8 +66,6 @@ class Bookings_Checkout_Service {
 			return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
 		}
 
-		$ctx     = $this->bookings->get_processed_options( $event_id );
-		$method  = (string) $ctx['method'];
 		$product = wc_get_product( $event_id );
 		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
 			return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
@@ -91,7 +89,21 @@ class Bookings_Checkout_Service {
 		$result    = null;
 
 		try {
-			$cart_item_data = $this->build_cart_item_data( $method, $slot_id, $date_id );
+			$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
+			if ( null === $norm ) {
+				return new WP_Error(
+					'booking_resolve',
+					__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
+					array( 'status' => 400 )
+				);
+			}
+			$cart_item_data = $this->build_cart_item_data(
+				(string) $norm['method'],
+				$event_id,
+				(string) $norm['slot_id'],
+				(string) $norm['internal_date_id'],
+				isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
+			);
 			$add            = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
 			if ( ! $add ) {
 				$result = new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
@@ -118,7 +130,10 @@ class Bookings_Checkout_Service {
 				$order->set_customer_note( (string) $args['note'] );
 			}
 			$order->update_meta_data( 'fooeventspos_internal_booking', 'yes' );
-			$order->update_meta_data( '_fooeventspos_internal_slot', (string) $slot_id . '|' . (string) $date_id );
+			$order->update_meta_data(
+				'_fooeventspos_internal_slot',
+				(string) $norm['slot_id'] . '|' . (string) $norm['internal_date_id']
+			);
 			$this->apply_fooeventspos_pos_meta( $order, $pm_key, $pm_label );
 			// Mirror FooEvents POS: split event line items into qty=1 rows for admin / refunds; cart still has qty for ticket count.
 			$line_excl = (float) wc_get_price_excluding_tax( $product, array( 'qty' => $qty ) );
@@ -169,7 +184,7 @@ class Bookings_Checkout_Service {
 			}
 			$order->update_status( 'completed', __( 'Booked via Internal POS', 'fooevents-internal-pos' ), true );
 
-			$after  = $this->bookings->check_availability( $event_id, $slot_id, $date_id, 1 );
+			$after  = $this->bookings->check_availability( $event_id, (string) $norm['slot_id'], $date_id, 1 );
 			$remain = $after['remaining'];
 			$ids    = $this->get_order_ticket_ids( $order_id );
 
@@ -218,20 +233,26 @@ class Bookings_Checkout_Service {
 	}
 
 	/**
-	 * @param string $method  slotdate|dateslot.
-	 * @param string $slot_id As from API.
-	 * @param string $date_id As from API.
+	 * FooEvents-native cart keys so WooCommerceEvents_Checkout_Helper and FooEvents_Bookings capture slot/date/stock.
+	 *
+	 * @param string $method            slotdate|dateslot.
+	 * @param int    $event_id          Product id.
+	 * @param string $slot_id           Slot id.
+	 * @param string $internal_date_id  FooEvents add_date key (slotdate) or internal date id (dateslot row).
+	 * @param string $dateslot_bucket   Human-readable date bucket key for dateslot (optional).
 	 * @return array
 	 */
-	private function build_cart_item_data( $method, $slot_id, $date_id ) {
+	private function build_cart_item_data( $method, $event_id, $slot_id, $internal_date_id, $dateslot_bucket = '' ) {
 		$data = array( 'fooevents_bookings_method' => $method );
+		$eid  = (string) (int) $event_id;
 		if ( 'dateslot' === $method ) {
-			$data['fooevents_bookings_date_val'] = $date_id;
-			// Internal FooEvents format for this flow — see class-fooevents-bookings.php ~2545.
-			$data['fooevents_bookings_slot_val'] = (string) $slot_id . '_' . (string) $date_id;
+			// Product page uses slotId_dateId_productId — see fooevents_bookings ~4731, capture ~2549.
+			$data['fooevents_bookings_slot_val'] = (string) $slot_id . '_' . (string) $internal_date_id . '_' . $eid;
+			$data['fooevents_bookings_date_val'] = '' !== $dateslot_bucket ? $dateslot_bucket : (string) $internal_date_id;
 		} else {
-			$data['fooevents_bookings_slot_val'] = $slot_id;
-			$data['fooevents_bookings_date_val'] = $date_id;
+			// First segment of slot_val is slot id (see fooevents_bookings ~6057); suffix event id matches standard checkout.
+			$data['fooevents_bookings_slot_val'] = (string) $slot_id . '_' . $eid;
+			$data['fooevents_bookings_date_val'] = (string) $internal_date_id;
 		}
 		return $data;
 	}

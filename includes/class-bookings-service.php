@@ -162,6 +162,7 @@ class Bookings_Service {
 					}
 					$slot_rows[] = array(
 						'id'     => (string) $slot_id,
+						'dateId' => (string) ( $row['date_id'] ?? '' ),
 						'label'  => trim( $slot_label ),
 						'stock'  => $this->normalize_stock( $stock ),
 					);
@@ -390,7 +391,7 @@ class Bookings_Service {
 						: $this->extract_time( $label );
 					$slots[] = array(
 						'id'     => (string) ( $s['id'] ?? '' ),
-						'dateId' => (string) ( $s['dateId'] ?? $d['id'] ?? '' ),
+						'dateId' => (string) ( $s['dateId'] ?? '' ),
 						'label'  => $label,
 						'time'   => $time,
 						'stock'  => $s['stock'] ?? null,
@@ -426,6 +427,78 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Resolve dateslot processed row for slot_id + date param (display bucket, Y-m-d, or internal date_id).
+	 *
+	 * @param array  $options Processed dateslot options [ dateBucket => [ slotId => row ] ].
+	 * @param string $slot_id Slot ID.
+	 * @param string $date_param Client date segment (may match bucket label, Y-m-d, or FooEvents internal date id).
+	 * @return array{ date_bucket: string, row: array, internal_date_id: string }|null
+	 */
+	private function resolve_dateslot_slot_row( $options, $slot_id, $date_param ) {
+		if ( ! is_array( $options ) ) {
+			return null;
+		}
+		foreach ( $options as $date_bucket => $slots_for_date ) {
+			if ( ! is_array( $slots_for_date ) ) {
+				continue;
+			}
+			if ( ! isset( $slots_for_date[ $slot_id ] ) || ! is_array( $slots_for_date[ $slot_id ] ) ) {
+				continue;
+			}
+			$row               = $slots_for_date[ $slot_id ];
+			$internal_date_id  = isset( $row['date_id'] ) ? (string) $row['date_id'] : '';
+			$ymd_bucket        = $this->date_string_to_ymd( (string) $date_bucket );
+			$matches_display   = (string) $date_param === (string) $date_bucket;
+			$matches_ymd       = $ymd_bucket && (string) $date_param === $ymd_bucket;
+			$matches_internal  = '' !== $internal_date_id && (string) $date_param === $internal_date_id;
+			if ( $matches_display || $matches_ymd || $matches_internal ) {
+				return array(
+					'date_bucket'        => (string) $date_bucket,
+					'row'                => $row,
+					'internal_date_id'   => $internal_date_id,
+				);
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Normalize booking selection after availability passes (internal date ids + cart-ready hints).
+	 *
+	 * @param int    $event_id Event product ID.
+	 * @param string $slot_id Slot ID.
+	 * @param string $date_id Client date id / bucket key / Y-m-d.
+	 * @return array{ method: string, slot_id: string, internal_date_id: string, dateslot_date_bucket?: string }|null Null if dateslot row missing (should not happen after check_availability).
+	 */
+	public function normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id ) {
+		$event_id = absint( $event_id );
+		$slot_id  = (string) $slot_id;
+		$date_id  = (string) $date_id;
+		$ctx      = $this->get_processed_options( $event_id );
+		$method   = (string) $ctx['method'];
+		$options  = $ctx['options'];
+
+		if ( 'dateslot' === $method && is_array( $options ) ) {
+			$res = $this->resolve_dateslot_slot_row( $options, $slot_id, $date_id );
+			if ( null === $res || '' === $res['internal_date_id'] ) {
+				return null;
+			}
+			return array(
+				'method'               => 'dateslot',
+				'slot_id'              => $slot_id,
+				'internal_date_id'     => $res['internal_date_id'],
+				'dateslot_date_bucket' => $res['date_bucket'],
+			);
+		}
+
+		return array(
+			'method'           => '' !== $method ? $method : 'slotdate',
+			'slot_id'          => $slot_id,
+			'internal_date_id' => $date_id,
+		);
+	}
+
+	/**
 	 * Check stock for a slot+date, optionally via FooEvents (direct math for MVP).
 	 *
 	 * @param int    $event_id Event product ID.
@@ -442,25 +515,13 @@ class Bookings_Service {
 		$options  = $ctx['options'];
 
 		if ( 'dateslot' === $method && is_array( $options ) ) {
-			// Processed: [ dateDisplayString => [ slotId => row ] ].
-			$date_display_match = null;
-			foreach ( $options as $date_display => $slots_for_date ) {
-				$ymd_of_row = $this->date_string_to_ymd( (string) $date_display );
-				if ( (string) $date_id === (string) $date_display
-					|| ( $ymd_of_row && (string) $date_id === $ymd_of_row ) ) {
-					$date_display_match = (string) $date_display;
-					break;
-				}
-			}
-			if ( null === $date_display_match || ! isset( $options[ $date_display_match ] ) || ! is_array( $options[ $date_display_match ] ) ) {
+			$res = $this->resolve_dateslot_slot_row( $options, $slot_id, $date_id );
+			if ( null === $res ) {
 				return array( 'available' => false, 'remaining' => 0, 'reason' => 'not_found' );
 			}
-			$slots_for_date = $options[ $date_display_match ];
-			if ( ! isset( $slots_for_date[ $slot_id ] ) || ! is_array( $slots_for_date[ $slot_id ] ) ) {
-				return array( 'available' => false, 'remaining' => 0, 'reason' => 'not_found' );
-			}
-			$row = $slots_for_date[ $slot_id ];
-			$ymd = $this->date_string_to_ymd( (string) $date_display_match );
+			$row        = $res['row'];
+			$date_bucket = $res['date_bucket'];
+			$ymd        = $this->date_string_to_ymd( (string) $date_bucket );
 			if ( null === $ymd || ! $this->is_date_not_past( $ymd ) ) {
 				return array( 'available' => false, 'remaining' => 0, 'reason' => 'past_date' );
 			}
