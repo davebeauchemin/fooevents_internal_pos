@@ -45,6 +45,23 @@ class Rest_API {
 	public function register_routes() {
 		register_rest_route(
 			self::NAMESPACE,
+			'/dashboard',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_dashboard' ),
+				'permission_callback' => array( $this, 'can_manage' ),
+				'args'                => array(
+					'date' => array(
+						'required'          => false,
+						'validate_callback' => function( $p ) {
+							return is_string( $p ) && ( '' === $p || preg_match( '/^\d{4}-\d{2}-\d{2}$/', $p ) );
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/events',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -91,6 +108,18 @@ class Rest_API {
 			);
 		}
 		return true;
+	}
+
+	/**
+	 * GET /dashboard?date=YYYY-MM-DD
+	 *
+	 * @param WP_REST_Request $request Request.
+	 */
+	public function get_dashboard( WP_REST_Request $request ) {
+		$date = $request->get_param( 'date' );
+		$date = is_string( $date ) ? $date : '';
+		$out  = $this->bookings->get_day_dashboard( $date );
+		return rest_ensure_response( $out );
 	}
 
 	/**

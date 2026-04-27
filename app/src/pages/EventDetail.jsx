@@ -12,7 +12,7 @@ export default function EventDetail() {
 	if ( isError ) {
 		return (
 			<div className="space-y-2">
-				<Link to="/" className="text-fuchsia-700 hover:underline">← Back</Link>
+				<Link to="/events" className="text-primary hover:underline">← Back</Link>
 				<div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
 					{ String( error?.message || error || 'Error' ) }
 				</div>
@@ -22,7 +22,7 @@ export default function EventDetail() {
 	if ( ! data ) {
 		return (
 			<div>
-				<Link to="/" className="text-fuchsia-700 hover:underline">← Back</Link>
+				<Link to="/events" className="text-primary hover:underline">← Back</Link>
 				<p className="mt-2 text-slate-600">Event not found.</p>
 			</div>
 		);
@@ -30,7 +30,7 @@ export default function EventDetail() {
 
 	return (
 		<div>
-			<Link to="/" className="text-fuchsia-700 hover:underline">← Event list</Link>
+				<Link to="/events" className="text-primary hover:underline">← Event list</Link>
 			<div className="mt-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
 				<h1 className="text-2xl font-bold text-slate-900">{ data.title }</h1>
 				<span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-mono text-slate-700">

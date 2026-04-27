@@ -327,6 +327,97 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Extract a 24h HH:MM string from a slot label for sorting. Empty if not found.
+	 *
+	 * @param string $label Slot label (may include time text).
+	 * @return string
+	 */
+	public function extract_time( $label ) {
+		$label = (string) $label;
+		if ( preg_match( '/\b([01]?\d|2[0-3]):([0-5]\d)\b/', $label, $m ) ) {
+			return sprintf( '%02d:%02d', (int) $m[1], (int) $m[2] );
+		}
+		if ( preg_match( '/\b(\d{1,2}):([0-5]\d)\s*([ap]m)\b/i', $label, $m ) ) {
+			$h   = (int) $m[1];
+			$min = (int) $m[2];
+			$ap  = strtolower( (string) $m[3] );
+			if ( 'pm' === $ap && $h < 12 ) {
+				$h += 12;
+			}
+			if ( 'am' === $ap && 12 === $h ) {
+				$h = 0;
+			}
+			return sprintf( '%02d:%02d', $h, $min );
+		}
+		return '';
+	}
+
+	/**
+	 * All bookable slots for a single day (Y-m-d in site timezone), for dashboard.
+	 *
+	 * @param string $ymd Y-m-d or empty (defaults to today).
+	 * @return array{ date: string, events: array }
+	 */
+	public function get_day_dashboard( $ymd ) {
+		$ymd = (string) $ymd;
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd ) ) {
+			$ymd = $this->today_ymd();
+		}
+		$out = array();
+		foreach ( $this->list_booking_events() as $row ) {
+			$detail = $this->get_event_detail( (int) $row['id'] );
+			if ( ! empty( $detail['error'] ) ) {
+				continue;
+			}
+			foreach ( (array) ( $detail['dates'] ?? array() ) as $d ) {
+				if ( ( $d['date'] ?? '' ) !== $ymd ) {
+					continue;
+				}
+				$slots = array();
+				foreach ( (array) ( $d['slots'] ?? array() ) as $s ) {
+					if ( ! is_array( $s ) ) {
+						continue;
+					}
+					$label = (string) ( $s['label'] ?? '' );
+					$time  = $this->extract_time( $label );
+					$slots[] = array(
+						'id'     => (string) ( $s['id'] ?? '' ),
+						'dateId' => (string) ( $s['dateId'] ?? $d['id'] ?? '' ),
+						'label'  => $label,
+						'time'   => $time,
+						'stock'  => $s['stock'] ?? null,
+					);
+				}
+				usort(
+					$slots,
+					function( $a, $b ) {
+						$ta = (string) ( $a['time'] ?? '' );
+						$tb = (string) ( $b['time'] ?? '' );
+						$ta = $ta ? $ta : '99:99';
+						$tb = $tb ? $tb : '99:99';
+						$c  = strcmp( $ta, $tb );
+						if ( 0 !== $c ) {
+							return $c;
+						}
+						return strcmp( (string) ( $a['label'] ?? '' ), (string) ( $b['label'] ?? '' ) );
+					}
+				);
+				$out[] = array(
+					'eventId'    => (int) $row['id'],
+					'eventTitle' => (string) $row['title'],
+					'eventImage' => (string) ( $row['image'] ?? '' ),
+					'dateLabel'  => (string) ( $d['label'] ?? '' ),
+					'slots'      => $slots,
+				);
+			}
+		}
+		return array(
+			'date'   => $ymd,
+			'events' => $out,
+		);
+	}
+
+	/**
 	 * Check stock for a slot+date, optionally via FooEvents (direct math for MVP).
 	 *
 	 * @param int    $event_id Event product ID.

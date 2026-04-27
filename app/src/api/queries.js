@@ -21,6 +21,21 @@ export function useEvent( id ) {
 	} );
 }
 
+/**
+ * Read-only day dashboard. Empty `ymd` lets WordPress use site-local today.
+ *
+ * @param {string} ymd - Y-m-d or ""
+ */
+export function useDashboard( ymd ) {
+	const q = ymd && /^\d{4}-\d{2}-\d{2}$/.test( ymd ) ? `?date=${ encodeURIComponent( ymd ) }` : '';
+	return useQuery( {
+		queryKey: [ 'internalpos', 'dashboard', ymd || 'default' ],
+		queryFn: () => restFetch( `${ prefix }/dashboard${ q }` ),
+		refetchInterval: 30_000,
+		refetchOnWindowFocus: true,
+	} );
+}
+
 export function useCheckAvailability() {
 	return useMutation( {
 		mutationKey: [ 'internalpos', 'availability' ],
