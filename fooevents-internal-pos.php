@@ -33,6 +33,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-activator.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-admin-menu.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 
 /**

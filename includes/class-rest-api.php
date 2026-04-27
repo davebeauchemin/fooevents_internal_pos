@@ -26,10 +26,16 @@ class Rest_API {
 	private $bookings;
 
 	/**
+	 * @var Slot_Generator_Service
+	 */
+	private $slot_generator;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
-		$this->bookings = new Bookings_Service();
+		$this->bookings       = new Bookings_Service();
+		$this->slot_generator = new Slot_Generator_Service();
 	}
 
 	/**
@@ -67,6 +73,22 @@ class Rest_API {
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_events' ),
 				'permission_callback' => array( $this, 'can_manage' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/slots/generate',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_slots_generate' ),
+				'permission_callback' => array( $this, 'can_manage' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
 			)
 		);
 		register_rest_route(
@@ -127,6 +149,31 @@ class Rest_API {
 	 */
 	public function get_events() {
 		return rest_ensure_response( $this->bookings->list_booking_events() );
+	}
+
+	/**
+	 * POST /events/{id}/slots/generate
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_slots_generate( WP_REST_Request $request ) {
+		$id = (int) $request['id'];
+		$params  = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$confirm = $params['confirm'] ?? null;
+		$ok      = ( true === $confirm || 1 === (int) $confirm || 'true' === (string) $confirm || '1' === (string) $confirm );
+		if ( ! $ok ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Set confirm: true to replace all existing slots.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		unset( $params['confirm'] );
+		$result = $this->slot_generator->generate( $id, $params );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
 	}
 
 	/**
