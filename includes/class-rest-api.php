@@ -131,6 +131,15 @@ class Rest_API {
 				'permission_callback' => array( $this, 'can_manage' ),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/payment-methods',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_payment_methods' ),
+				'permission_callback' => array( $this, 'can_manage' ),
+			)
+		);
 	}
 
 	/**
@@ -234,6 +243,13 @@ class Rest_API {
 	}
 
 	/**
+	 * GET /payment-methods
+	 */
+	public function get_payment_methods() {
+		return rest_ensure_response( Bookings_Checkout_Service::get_payment_methods_for_rest() );
+	}
+
+	/**
 	 * POST /bookings
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -253,6 +269,7 @@ class Rest_API {
 		$ln       = isset( $att['lastName'] ) ? trim( (string) $att['lastName'] ) : '';
 		$em       = isset( $att['email'] ) ? trim( (string) $att['email'] ) : '';
 		$note     = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
+		$pm_key   = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
 
 		if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
 			return new WP_Error( 'rest_invalid_param', __( 'eventId, slotId, and dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
@@ -269,14 +286,15 @@ class Rest_API {
 
 		$out = $this->booking_checkout->create_booking(
 			array(
-				'event_id'         => $event_id,
-				'slot_id'          => $slot_id,
-				'date_id'          => $date_id,
-				'qty'              => $qty,
-				'attendee_first'   => $fn,
-				'attendee_last'    => $ln,
-				'attendee_email'   => $em,
-				'note'             => $note,
+				'event_id'           => $event_id,
+				'slot_id'            => $slot_id,
+				'date_id'            => $date_id,
+				'qty'                => $qty,
+				'payment_method_key' => $pm_key,
+				'attendee_first'     => $fn,
+				'attendee_last'      => $ln,
+				'attendee_email'     => $em,
+				'note'               => $note,
 			)
 		);
 

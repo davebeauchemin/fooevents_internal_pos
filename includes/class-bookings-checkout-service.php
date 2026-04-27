@@ -33,7 +33,7 @@ class Bookings_Checkout_Service {
 	/**
 	 * Create a booking: prime cart, run FooEvents order ticket builder, complete order, native tickets + email.
 	 *
-	 * @param array $args Arguments (event_id, slot_id, date_id, qty, attendee_*, note optional).
+	 * @param array $args Arguments (event_id, slot_id, date_id, qty, payment_method_key, attendee_*, note optional).
 	 * @return array|WP_Error
 	 */
 	public function create_booking( array $args ) {
@@ -42,6 +42,7 @@ class Bookings_Checkout_Service {
 		$date_id  = isset( $args['date_id'] ) ? (string) $args['date_id'] : '';
 		$qty      = isset( $args['qty'] ) ? (int) $args['qty'] : 1;
 		$qty      = max( 1, min( 20, $qty ) );
+		$pm_raw   = isset( $args['payment_method_key'] ) ? trim( (string) $args['payment_method_key'] ) : '';
 		$af       = isset( $args['attendee_first'] ) ? sanitize_text_field( (string) $args['attendee_first'] ) : '';
 		$al       = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
 		$em       = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
@@ -77,6 +78,14 @@ class Bookings_Checkout_Service {
 			return new WP_Error( 'no_cart', __( 'Could not initialize WooCommerce cart session.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
 
+		self::load_fooeventspos_api_helpers();
+		$valid_pm = self::get_valid_payment_method_keys();
+		$pm_key   = '' !== $pm_raw ? $pm_raw : 'fooeventspos_card';
+		if ( ! in_array( $pm_key, $valid_pm, true ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Invalid or unsupported payment method.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$pm_label = $this->resolve_payment_method_label( $pm_key );
+
 		$order_id  = 0;
 		$post_copy = $this->stash_post();
 		$result    = null;
@@ -101,7 +110,6 @@ class Bookings_Checkout_Service {
 				return $result;
 			}
 			$order_id = $order->get_id();
-			$order->add_product( $product, $qty );
 			$order->set_billing_first_name( $af );
 			$order->set_billing_last_name( $al );
 			$order->set_billing_email( $em );
@@ -111,7 +119,26 @@ class Bookings_Checkout_Service {
 			}
 			$order->update_meta_data( 'fooeventspos_internal_booking', 'yes' );
 			$order->update_meta_data( '_fooeventspos_internal_slot', (string) $slot_id . '|' . (string) $date_id );
+			$this->apply_fooeventspos_pos_meta( $order, $pm_key, $pm_label );
+			// Mirror FooEvents POS: split event line items into qty=1 rows for admin / refunds; cart still has qty for ticket count.
+			$line_excl = (float) wc_get_price_excluding_tax( $product, array( 'qty' => $qty ) );
+			$per_excl  = $qty > 0 ? $line_excl / (float) $qty : 0.0;
+			if ( $qty > 1 ) {
+				for ( $i = 0; $i < $qty; $i++ ) {
+					$order->add_product(
+						$product,
+						1,
+						array(
+							'subtotal' => $per_excl,
+							'total'    => $per_excl,
+						)
+					);
+				}
+			} else {
+				$order->add_product( $product, 1, array( 'subtotal' => $per_excl, 'total' => $per_excl ) );
+			}
 			$order->calculate_totals();
+			$this->create_fooeventspos_payment_record( $order, $pm_key );
 			$order->save();
 
 			$posts  = $this->build_fooevents_attendee_post( $event_id, $af, $al, $em, $qty );
@@ -147,10 +174,13 @@ class Bookings_Checkout_Service {
 			$ids    = $this->get_order_ticket_ids( $order_id );
 
 			$result = array(
-				'orderId'   => (int) $order_id,
-				'ticketIds' => $ids,
-				'remaining' => $remain,
-				'qty'       => $qty,
+				'orderId'            => (int) $order_id,
+				'ticketIds'          => $ids,
+				'remaining'          => $remain,
+				'qty'                => $qty,
+				'paymentMethodKey'   => $pm_key,
+				'paymentMethodLabel' => $pm_label,
+				'cashierId'          => (int) get_current_user_id(),
 			);
 			return $result;
 		} catch ( Throwable $e ) {
@@ -326,5 +356,171 @@ class Bookings_Checkout_Service {
 			}
 		}
 		return $a;
+	}
+
+	/**
+	 * Load FooEvents POS API helper functions (payment gateways, labels).
+	 *
+	 * @return void
+	 */
+	private static function load_fooeventspos_api_helpers() {
+		if ( function_exists( 'fooeventspos_do_get_all_payment_methods' ) ) {
+			return;
+		}
+		$path = WP_PLUGIN_DIR . '/fooevents_pos/admin/helpers/fooeventspos-api-helper.php';
+		if ( file_exists( $path ) ) {
+			require_once $path; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingCustomFunction, WordPress.WP.I18n
+		}
+	}
+
+	/**
+	 * @return string[]
+	 */
+	private static function get_valid_payment_method_keys() {
+		if ( function_exists( 'fooeventspos_do_get_all_payment_methods' ) && \WC() && \WC()->payment_gateways ) {
+			$methods = fooeventspos_do_get_all_payment_methods( true );
+			if ( is_array( $methods ) && ! empty( $methods ) ) {
+				return array_keys( $methods );
+			}
+		}
+		return array( 'fooeventspos_card' );
+	}
+
+	/**
+	 * REST: [{ key, label }, ...] for the payment method selector.
+	 *
+	 * @return array<int, array{key: string, label: string}>
+	 */
+	public static function get_payment_methods_for_rest() {
+		if ( function_exists( 'wc_load_cart' ) ) {
+			wc_load_cart();
+		}
+		self::load_fooeventspos_api_helpers();
+		$out = array();
+		if ( function_exists( 'fooeventspos_do_get_all_payment_methods' ) && \WC() && \WC()->payment_gateways ) {
+			$methods = fooeventspos_do_get_all_payment_methods( true );
+			if ( is_array( $methods ) ) {
+				foreach ( $methods as $key => $label ) {
+					$out[] = array(
+						'key'   => (string) $key,
+						'label' => (string) $label,
+					);
+				}
+			}
+		}
+		if ( empty( $out ) ) {
+			$out[] = array(
+				'key'   => 'fooeventspos_card',
+				'label' => 'Card Payment',
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * @param string $pm_key POS payment key.
+	 * @return string
+	 */
+	private function resolve_payment_method_label( $pm_key ) {
+		if ( function_exists( 'fooeventspos_get_payment_method_from_key' ) ) {
+			return (string) fooeventspos_get_payment_method_from_key( $pm_key );
+		}
+		$map = self::get_payment_method_fallback_labels();
+		return isset( $map[ $pm_key ] ) ? $map[ $pm_key ] : (string) $pm_key;
+	}
+
+	/**
+	 * @return array<string, string>
+	 */
+	private static function get_payment_method_fallback_labels() {
+		return array(
+			'fooeventspos_card' => 'Card Payment',
+		);
+	}
+
+	/**
+	 * Meta key used for the duplicate "Order Payment Method" row (phrases or English default).
+	 *
+	 * @return string
+	 */
+	private function get_order_payment_method_meta_key() {
+		$path = WP_PLUGIN_DIR . '/fooevents_pos/admin/helpers/fooeventspos-phrases-helper.php';
+		if ( file_exists( $path ) ) {
+			require_once $path; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingCustomFunction, WordPress.WP.I18n
+			global $fooeventspos_phrases;
+			if ( is_array( $fooeventspos_phrases ) && ! empty( $fooeventspos_phrases['meta_key_order_payment_method'] ) ) {
+				return (string) $fooeventspos_phrases['meta_key_order_payment_method'];
+			}
+		}
+		return 'Order Payment Method';
+	}
+
+	/**
+	 * @param WC_Order $order   Order.
+	 * @param string   $pm_key  FooEvents POS method key.
+	 * @param string   $pm_label Resolved label.
+	 * @return void
+	 */
+	private function apply_fooeventspos_pos_meta( $order, $pm_key, $pm_label ) {
+		$order->update_meta_data( '_fooeventspos_order_source', 'fooeventspos_app' );
+		$uid = (int) get_current_user_id();
+		if ( $uid > 0 ) {
+			$order->update_meta_data( '_fooeventspos_user_id', (string) $uid );
+		}
+		$order->update_meta_data( '_fooeventspos_payment_method', $pm_key );
+		if ( function_exists( 'fooeventspos_get_wc_payment_method_from_fooeventspos_key' ) ) {
+			$wc_id = (string) fooeventspos_get_wc_payment_method_from_fooeventspos_key( $pm_key );
+			if ( '' !== $wc_id ) {
+				$order->set_payment_method( $wc_id );
+			}
+		}
+		$title = function_exists( 'fooeventspos_get_payment_method_from_key' )
+			? (string) fooeventspos_get_payment_method_from_key( $pm_key )
+			: $pm_label;
+		$order->set_payment_method_title( $title );
+		$order->update_meta_data( $this->get_order_payment_method_meta_key(), $title );
+	}
+
+	/**
+	 * @param WC_Order $order  Order (totals calculated).
+	 * @param string   $pm_key Payment method key.
+	 * @return void
+	 */
+	private function create_fooeventspos_payment_record( $order, $pm_key ) {
+		if ( ! is_a( $order, 'WC_Order' ) ) {
+			return;
+		}
+		if ( ! class_exists( 'FooEventsPOS_Payments' ) ) {
+			$path = WP_PLUGIN_DIR . '/fooevents_pos/admin/class-fooeventspos-payments.php';
+			if ( file_exists( $path ) ) {
+				require_once $path; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingCustomFunction
+			}
+		}
+		if ( ! class_exists( 'FooEventsPOS_Payments' ) ) {
+			return;
+		}
+		$ts = $order->get_date_created() ? $order->get_date_created()->getTimestamp() : time();
+		$payment_args = array(
+			'pd'   => (string) $ts,
+			'oid'  => (string) $order->get_id(),
+			'opmk' => $pm_key,
+			'oud'  => (string) ( (int) get_current_user_id() ),
+			'tid'  => '',
+			'pa'   => $order->get_total(),
+			'np'   => '1',
+			'pn'   => '1',
+			'pap'  => '1',
+			'par'  => '0',
+		);
+		$payment_post = \FooEventsPOS_Payments::fooeventspos_create_update_payment( $payment_args );
+		if ( is_wp_error( $payment_post ) || empty( $payment_post['ID'] ) ) {
+			return;
+		}
+		$pid = (int) $payment_post['ID'];
+		$payment_args['fspid'] = (string) $pid;
+		$payment_args['pe']    = get_post_meta( $pid, '_payment_extra', true );
+		$payment_args['soar']  = get_post_meta( $pid, '_fooeventspos_square_order_auto_refund', true );
+		$payment_args['sfa']   = get_post_meta( $pid, '_fooeventspos_square_fee_amount', true );
+		$order->update_meta_data( '_fooeventspos_payments', \wp_json_encode( array( $payment_args ) ) );
 	}
 }
