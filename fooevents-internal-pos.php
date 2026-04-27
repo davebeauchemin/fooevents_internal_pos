@@ -12,7 +12,7 @@
  * Domain Path:        /languages
  * Requires Plugins:   woocommerce, fooevents, fooevents_bookings
  *
- * GitHub Plugin URI:  TBD/fooevents-internal-pos
+ * GitHub Plugin URI:  https://github.com/davebeauchemin/fooevents_internal_pos
  * Primary Branch:     main
  * Release Asset:       false
  *
