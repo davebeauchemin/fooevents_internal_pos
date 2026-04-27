@@ -35,6 +35,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
 
 /**
  * Init plugin.
@@ -47,6 +48,7 @@ function fooevents_internal_pos_init() {
 	( new \FooEvents_Internal_POS\Admin_Menu() )->init();
 	( new \FooEvents_Internal_POS\Frontend_Page() )->init();
 	( new \FooEvents_Internal_POS\Rest_API() )->init();
+	( new \FooEvents_Internal_POS\Storefront_Assets() )->init();
 }
 add_action( 'plugins_loaded', 'fooevents_internal_pos_init', 20 );
 

@@ -53,6 +53,10 @@ curl -i -u "USER:PASS" "https://SITE/wp-json/internalpos/v1/events"
 
 You can still symlink `fooevents_internal_pos` into `wp-content/plugins/` and run `npm run build` to test the embedded build on a local WP site.
 
+## Storefront (single product + cart)
+
+The plugin enqueues `public/frontend/css|js` on single product (FooEvents date/slot pill UI) and on cart/checkout (slot line formatting + Woo button styling). If you still enqueue the same files from a child theme, remove the duplicate enqueues to avoid double-loading.
+
 ## Release (Git Updater)
 
 1. `npm run build` in `app/`

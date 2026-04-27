@@ -1,0 +1,29 @@
+/* ─── Kaboom Montréal — WooCommerce ─────────────────────────────────────────── */
+
+/* Cart — checkout button / Checkout — place order button */
+.wc-block-cart__submit-container .wc-block-cart__submit-button,
+.wc-block-components-checkout-place-order-button.contained {
+  background-color: #cc0000 !important;
+  border-color: #cc0000 !important;
+  color: #fff !important;
+  border-radius: var(--radius-m) !important;
+}
+
+.wc-block-cart__submit-container .wc-block-cart__submit-button:hover,
+.wc-block-components-checkout-place-order-button.contained:hover {
+  background-color: #aa0000 !important;
+  border-color: #aa0000 !important;
+}
+
+.woocommerce-notices-wrapper:not(:empty) {
+  width: 100%
+}
+
+.woocommerce-notices-wrapper .woocommerce-message {
+  border-radius: var(--radius-m) !important;
+}
+
+.woocommerce-notices-wrapper .woocommerce-message a {
+  color: #fff !important;
+  border-radius: var(--radius-m) !important;
+}

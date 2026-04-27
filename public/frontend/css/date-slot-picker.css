@@ -1,0 +1,208 @@
+/* ─── Kaboom Date & Slot Picker ─────────────────────────────────────────────── */
+
+.kbm-slider,
+.kbm-slot-slider {
+  position: relative;
+  margin: 16px 0 24px;
+}
+
+.kbm-slider__label,
+.kbm-qte__label {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  color: inherit;
+}
+
+.kbm-qte__label {
+  margin-bottom: -10px;
+}
+
+/* Pills */
+.kbm-pill {
+  flex: 0 0 auto;
+  display: inline-flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 3px !important;
+  padding: 10px 16px !important;
+  min-width: unset !important;
+  border: 2px solid #ddd !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  color: #333 !important;
+  font-size: 16px !important;
+  font-family: inherit !important;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  line-height: 1 !important;
+}
+
+.kbm-pill__date,
+.kbm-pill__day {
+  white-space: nowrap;
+}
+
+.kbm-pill__day {
+  font-size: 13px !important;
+  opacity: 0.55;
+  font-weight: 400 !important;
+  line-height: 1 !important;
+}
+
+.kbm-pill.active .kbm-pill__day {
+  opacity: 0.8;
+}
+
+.kbm-pill:hover:not(.disabled) {
+  border-color: #cc0000;
+}
+
+.kbm-pill:focus-visible {
+  outline: 2px solid #cc0000;
+  outline-offset: 2px;
+}
+
+.kbm-pill.active {
+  background: #cc0000 !important;
+  border-color: #cc0000 !important;
+  color: #fff !important;
+}
+
+.kbm-pill.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+/* Prev / Next arrows — reset all theme button overrides */
+.kbm-slider__arrow {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: absolute !important;
+  top: 50% !important;
+  transform: translateY(-50%) translateY(12px) !important;
+  /* offset for label height */
+  width: 32px !important;
+  height: 32px !important;
+  min-width: unset !important;
+  border-radius: 50% !important;
+  border: 2px solid #ddd !important;
+  background: #fff !important;
+  color: var(--button-color) !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  cursor: pointer !important;
+  z-index: 2;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+  padding: 0 !important;
+  box-shadow: none !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+.kbm-slider__arrow--prev {
+  left: -16px;
+}
+
+.kbm-slider__arrow--next {
+  right: -16px;
+}
+
+.kbm-slider__arrow svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.kbm-slider__arrow:hover {
+  border-color: #cc0000;
+  color: #cc0000 !important;
+}
+
+.kbm-slider__arrow--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ─── Shared viewport & track (date + slot) ─────────────────────────────────── */
+
+.kbm-slot-viewport {
+  width: 100%;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+
+.kbm-slot-viewport:active {
+  cursor: grabbing;
+}
+
+.kbm-slot-track {
+  display: flex;
+  transition: transform 0.3s ease;
+  will-change: transform;
+}
+
+.kbm-slot-slide {
+  flex: 0 0 100%;
+  width: 100%;
+  min-width: 0;
+}
+
+/* Date slide — pills in a flex row */
+.kbm-date-slide {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.kbm-date-slide .kbm-pill {
+  flex: 1;
+  justify-content: center !important;
+}
+
+/* Slot slide — pills in a 3-col grid */
+.kbm-slot-hour-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+
+.kbm-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.kbm-slot-grid .kbm-pill {
+  width: 100%;
+  text-align: center !important;
+  justify-content: center !important;
+}
+
+/* Loading / empty states */
+.kbm-slot-loading {
+  font-size: 13px;
+  color: #888;
+  padding: 8px 0;
+}
+
+.kbm-no-dates,
+.kbm-no-slots {
+  font-size: 14px;
+  color: #888;
+  margin: 8px 0 16px;
+}
+
+/* ─── Mobile ────────────────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .kbm-slider__arrow {
+    display: none;
+  }
+}

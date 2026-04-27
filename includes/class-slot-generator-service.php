@@ -205,8 +205,10 @@ class Slot_Generator_Service {
 			if ( null === $hm ) {
 				continue;
 			}
-			$h   = (string) str_pad( (string) $hm['h'], 2, '0', STR_PAD_LEFT );
-			$min = (string) str_pad( (string) $hm['m'], 2, '0', STR_PAD_LEFT );
+			$h    = (string) str_pad( (string) $hm['h'], 2, '0', STR_PAD_LEFT );
+			$min  = (string) str_pad( (string) $hm['m'], 2, '0', STR_PAD_LEFT );
+			$h24  = (int) $hm['h'];
+			$period = ( $h24 < 12 ) ? 'a.m.' : 'p.m.';
 
 			if ( '' !== $bname ) {
 				$label = $bname;
@@ -222,7 +224,7 @@ class Slot_Generator_Service {
 				'add_time' => 'enabled',
 				'hour'     => $h,
 				'minute'   => $min,
-				'period'   => '',
+				'period'   => $period,
 			);
 
 			foreach ( $ymds as $ymd ) {
