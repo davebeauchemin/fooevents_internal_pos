@@ -219,12 +219,14 @@ class Slot_Generator_Service {
 			}
 
 			$slot_id = (string) ( $seq++ );
+			// Key order must match what FooEvents process_booking_options() expects:
+			// 'add_time' must be iterated after hour/minute/period or formatted_time is never set.
 			$slot    = array(
 				'label'    => $label,
-				'add_time' => 'enabled',
 				'hour'     => $h,
 				'minute'   => $min,
 				'period'   => $period,
+				'add_time' => 'enabled',
 			);
 
 			foreach ( $ymds as $ymd ) {

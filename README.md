@@ -60,8 +60,10 @@ The plugin enqueues `public/frontend/css|js` on single product (FooEvents date/s
 ## Release (Git Updater)
 
 1. `npm run build` in `app/`
-2. Bump `Version` in `fooevents-internal-pos.php` and `readme.txt`
+2. Bump `Version` in `fooevents-internal-pos.php` and `Stable tag` / changelog in `readme.txt`
 3. Commit and push; Git Updater shows an update in **Dashboard → Updates**
+
+After upgrading to **0.1.1.4+**, if you used the schedule generator before that release, open **Internal POS → Schedule** for each affected product and **Save schedule** once so serialized slot meta is rewritten with the correct key order (storefront then shows time next to the schedule name).
 
 ## REST
 
