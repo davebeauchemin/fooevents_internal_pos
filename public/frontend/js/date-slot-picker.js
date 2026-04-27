@@ -225,8 +225,8 @@ jQuery(document).ready(function ($) {
         hourGroups[gk] = { title: slideTitle, slots: [] };
         hourOrder.push(gk);
       }
-      var pillText = parsed.displayLabel != null && parsed.displayLabel !== '' ? parsed.displayLabel : (parsed.timeLabel || row.label);
-      hourGroups[gk].slots.push({ value: row.val, label: pillText, disabled: row.soldOut });
+      // Pill text = raw FooEvents option label (no displayLabel / time reformatting).
+      hourGroups[gk].slots.push({ value: row.val, label: row.label, disabled: row.soldOut });
     });
 
     removeLoading($('#kbm-slot-area'));

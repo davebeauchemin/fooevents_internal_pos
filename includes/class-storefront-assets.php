@@ -62,7 +62,7 @@ class Storefront_Assets {
 				'fipos-date-slot-picker',
 				'fiposDateSlotPicker',
 				array(
-					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', false ),
+					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', true ),
 				)
 			);
 		}

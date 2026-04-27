@@ -55,7 +55,7 @@ You can still symlink `fooevents_internal_pos` into `wp-content/plugins/` and ru
 
 ## Storefront (single product + cart)
 
-The plugin enqueues `public/frontend/css|js` on single product and on cart/checkout (slot line formatting + Woo button styling). On the product page, the **custom time-slot pill grid is off by default**; customers use FooEvents’ normal slot `<select>`. To turn the custom grid back on, add a small PHP snippet: `add_filter( 'fipos_enable_custom_time_slot_picker', '__return_true' );`. If you still enqueue the same files from a child theme, remove the duplicate enqueues to avoid double-loading.
+The plugin enqueues `public/frontend/css|js` on single product and on cart/checkout (slot line formatting + Woo button styling). On the product page, the **custom time-slot pill grid is on by default** (same text as the native FooEvents slot options, without reformatting). To use the native slot `<select>` only: `add_filter( 'fipos_enable_custom_time_slot_picker', '__return_false' );`. If you still enqueue the same files from a child theme, remove the duplicate enqueues to avoid double-loading.
 
 ## Release (Git Updater)
 
