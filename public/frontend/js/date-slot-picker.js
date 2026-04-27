@@ -130,7 +130,9 @@ jQuery(document).ready(function ($) {
 
   function parseSlotLabel(label) {
     var m = label.match(/\((\d{1,2}):(\d{2})(?:\s*(a\.m\.|p\.m\.))?\)/i);
-    if (!m) return { hourKey: label, timeLabel: label, slideTitle: label, category: '' };
+    if (!m) {
+      return { hourKey: label, timeLabel: label, slideTitle: label, category: '', displayLabel: label };
+    }
     var h = parseInt(m[1], 10);
     var apRaw = m[3] ? m[3].replace(/\./g, '').toLowerCase() : '';
     var h24;
@@ -147,11 +149,33 @@ jQuery(document).ready(function ($) {
     if (h12 === 0) h12 = 12;
     var hourKey = String(h24);
     var category = label.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    var mm = m[2];
+    var timeNice = h12 + ':' + mm + ' ' + apLabel;
+    var slideTitle = h12 + ' ' + apLabel;
+
+    // Pill text: "Category · 11:00 AM". If the label is time-only (e.g. 11:00 (11:00 a.m.)), show time once.
+    var displayLabel;
+    var catHm = category.match(/^(\d{1,2}):(\d{2})$/);
+    if (catHm) {
+      var catM = parseInt(catHm[1], 10) * 60 + parseInt(catHm[2], 10);
+      var slotM = h24 * 60 + parseInt(mm, 10);
+      if (catM === slotM) {
+        displayLabel = timeNice;
+      } else {
+        displayLabel = category + ' \u00b7 ' + timeNice;
+      }
+    } else if (category) {
+      displayLabel = category + ' \u00b7 ' + timeNice;
+    } else {
+      displayLabel = timeNice;
+    }
+
     return {
       hourKey: hourKey,
       timeLabel: m[1] + ':' + m[2],
-      slideTitle: h12 + ' ' + apLabel,
-      category: category
+      slideTitle: slideTitle,
+      category: category,
+      displayLabel: displayLabel
     };
   }
 
@@ -188,7 +212,8 @@ jQuery(document).ready(function ($) {
         hourGroups[gk] = { title: slideTitle, slots: [] };
         hourOrder.push(gk);
       }
-      hourGroups[gk].slots.push({ value: row.val, label: parsed.timeLabel, disabled: row.soldOut });
+      var pillText = parsed.displayLabel != null && parsed.displayLabel !== '' ? parsed.displayLabel : (parsed.timeLabel || row.label);
+      hourGroups[gk].slots.push({ value: row.val, label: pillText, disabled: row.soldOut });
     });
 
     removeLoading($('#kbm-slot-area'));
@@ -212,7 +237,8 @@ jQuery(document).ready(function ($) {
       $slide.append($('<div class="kbm-slot-hour-label"></div>').text(group.title), $grid);
 
       group.slots.forEach(function (slot) {
-        var $pill = $('<button type="button" class="kbm-pill">' + slot.label + '</button>');
+        var $pill = $('<button type="button" class="kbm-pill"></button>');
+        $pill.text(slot.label);
         if (slot.disabled) $pill.addClass('disabled').prop('disabled', true).attr('title', 'Sold out');
         $pill.on('click', function () {
           $wrapper.find('.kbm-pill').removeClass('active');

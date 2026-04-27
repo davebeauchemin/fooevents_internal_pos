@@ -21,6 +21,8 @@ class Slot_Generator_Service {
 	const MAX_TOTAL_ENTRIES     = 5000;
 	const SESSION_MIN_MINUTES  = 5;
 	const SESSION_MAX_MINUTES  = 240;
+	/** Max length for a schedule block "name" (slot label prefix). */
+	const BLOCK_NAME_MAX        = 60;
 
 	/**
 	 * @var Bookings_Service
@@ -58,8 +60,8 @@ class Slot_Generator_Service {
 		$today_ymd = $this->bookings->today_ymd();
 		$warnings  = array();
 
-		// Map session time "HH:MM" => set of Y-m-d (blocks with the same time merge dates).
-		$by_time = array();
+		// Map block name + session time "HH:MM" => set of Y-m-d.
+		$by_name_time = array();
 
 		foreach ( $config['blocks'] as $block_idx => $block ) {
 			$start_ymd = (string) $block['startDate'];
@@ -113,24 +115,32 @@ class Slot_Generator_Service {
 				return new WP_Error( 'rest_invalid_param', sprintf( __( 'Block %d: no session fits in open/close range.', 'fooevents-internal-pos' ), $block_idx + 1 ), array( 'status' => 400 ) );
 			}
 
+			$block_name = (string) ( $block['name'] ?? '' );
+
 			foreach ( $starts as $start_m ) {
 				$time_key = $this->minutes_to_hhmm( $start_m );
-				if ( ! isset( $by_time[ $time_key ] ) ) {
-					$by_time[ $time_key ] = array();
+				if ( ! isset( $by_name_time[ $block_name ] ) ) {
+					$by_name_time[ $block_name ] = array();
+				}
+				if ( ! isset( $by_name_time[ $block_name ][ $time_key ] ) ) {
+					$by_name_time[ $block_name ][ $time_key ] = array();
 				}
 				foreach ( $dates_in_block as $ymd ) {
-					$by_time[ $time_key ][ $ymd ] = true;
+					$by_name_time[ $block_name ][ $time_key ][ $ymd ] = true;
 				}
 			}
 		}
 
 		$unique_dates = array();
-		$slot_count   = count( $by_time );
+		$slot_count   = 0;
 		$total_lines  = 0;
-		foreach ( $by_time as $set ) {
-			$total_lines += count( $set );
-			foreach ( array_keys( $set ) as $ymd ) {
-				$unique_dates[ $ymd ] = true;
+		foreach ( $by_name_time as $times ) {
+			$slot_count += count( $times );
+			foreach ( $times as $set ) {
+				$total_lines += count( $set );
+				foreach ( array_keys( $set ) as $ymd ) {
+					$unique_dates[ $ymd ] = true;
+				}
 			}
 		}
 		$date_count = count( $unique_dates );
@@ -159,16 +169,23 @@ class Slot_Generator_Service {
 		}
 
 		$rows = array();
-		foreach ( $by_time as $time_key => $ymd_set ) {
-			$rows[] = array(
-				'time_key' => (string) $time_key,
-				'ymd_set'  => $ymd_set,
-			);
+		foreach ( $by_name_time as $bname => $times ) {
+			foreach ( $times as $time_key => $ymd_set ) {
+				$rows[] = array(
+					'name'     => (string) $bname,
+					'time_key' => (string) $time_key,
+					'ymd_set'  => $ymd_set,
+				);
+			}
 		}
 		usort(
 			$rows,
 			function( $a, $b ) {
-				return strcmp( (string) $a['time_key'], (string) $b['time_key'] );
+				$c = strcmp( (string) $a['time_key'], (string) $b['time_key'] );
+				if ( 0 !== $c ) {
+					return $c;
+				}
+				return strcmp( (string) $a['name'], (string) $b['name'] );
 			}
 		);
 
@@ -179,6 +196,7 @@ class Slot_Generator_Service {
 		foreach ( $rows as $row ) {
 			$time_key = $row['time_key'];
 			$ymd_set  = $row['ymd_set'];
+			$bname    = (string) $row['name'];
 
 			$ymds = array_keys( $ymd_set );
 			sort( $ymds, SORT_STRING );
@@ -192,9 +210,11 @@ class Slot_Generator_Service {
 			$h24  = (int) $hm['h'];
 			$period = ( $h24 < 12 ) ? 'a.m.' : 'p.m.';
 
-			// Slot label = time (or custom prefix + time). Category names were removed — FooEvents
-			// concatenates label + formatted_time for the storefront; time-based labels stay stable.
-			if ( 0 === strpos( $label_mode, 'custom:' ) ) {
+			// Primary slot label: schedule name if set, else time or custom prefix + time. FooEvents
+			// appends formatted_time in parentheses in the select options when add_time is enabled.
+			if ( '' !== $bname ) {
+				$label = $bname;
+			} elseif ( 0 === strpos( $label_mode, 'custom:' ) ) {
 				$label = ( '' !== $custom_pre ? $custom_pre . ' ' : '' ) . $time_key;
 			} else {
 				$label = $time_key;
@@ -296,12 +316,27 @@ class Slot_Generator_Service {
 			if ( null === $this->to_minutes( $ot ) || null === $this->to_minutes( $ct ) ) {
 				return new WP_Error( 'rest_invalid_param', sprintf( /* translators: %d */ __( 'Block %d: openTime and closeTime must be HH:MM.', 'fooevents-internal-pos' ), $i + 1 ), array( 'status' => 400 ) );
 			}
+			$raw_name = array_key_exists( 'name', $b ) ? (string) $b['name'] : '';
+			$name     = ( '' === trim( $raw_name ) ) ? '' : sanitize_text_field( $raw_name );
+			if ( '' !== $name && strlen( $name ) > self::BLOCK_NAME_MAX ) {
+				return new WP_Error(
+					'rest_invalid_param',
+					sprintf(
+						/* translators: 1: block index, 2: max length */
+						__( 'Block %1$d: schedule name must be at most %2$d characters.', 'fooevents-internal-pos' ),
+						$i + 1,
+						self::BLOCK_NAME_MAX
+					),
+					array( 'status' => 400 )
+				);
+			}
 			$norm[] = array(
 				'startDate' => $start,
 				'endDate'   => $end,
 				'weekdays'  => $wds,
 				'openTime'  => $ot,
 				'closeTime' => $ct,
+				'name'      => $name,
 			);
 		}
 		return array(

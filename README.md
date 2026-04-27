@@ -63,7 +63,7 @@ The plugin enqueues `public/frontend/css|js` on single product (FooEvents date/s
 2. Bump `Version` in `fooevents-internal-pos.php` and `Stable tag` / changelog in `readme.txt`
 3. Commit and push; Git Updater shows an update in **Dashboard → Updates**
 
-After upgrading to **0.1.1.4+**, if you used the schedule generator before that release, open **Internal POS → Schedule** for each affected product and **Save schedule** once so serialized slot meta is rewritten with the correct key order. **0.1.1.5+** drops custom schedule names in generated slots; use time-only labels and re-save the schedule to refresh the storefront.
+After upgrading to **0.1.1.4+**, if you used the schedule generator before that release, open **Internal POS → Schedule** for each affected product and **Save schedule** once so serialized slot meta is rewritten with the correct key order. **0.1.1.5+** addressed time-only slot labels; **0.1.1.6+** restores optional schedule block names and improves the storefront pill text. Re-save the schedule after upgrade.
 
 ## REST
 
