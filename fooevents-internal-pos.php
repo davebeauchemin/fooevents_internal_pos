@@ -21,7 +21,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.0' );
+define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.1' );
 define( 'FOOEVENTS_INTERNAL_POS_FILE', __FILE__ );
 define( 'FOOEVENTS_INTERNAL_POS_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FOOEVENTS_INTERNAL_POS_URL', plugin_dir_url( __FILE__ ) );
