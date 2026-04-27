@@ -58,6 +58,13 @@ class Storefront_Assets {
 				$ver,
 				true
 			);
+			wp_localize_script(
+				'fipos-date-slot-picker',
+				'fiposDateSlotPicker',
+				array(
+					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', false ),
+				)
+			);
 		}
 	}
 }

@@ -1,4 +1,7 @@
 jQuery(document).ready(function ($) {
+  // Set fipos_enable_custom_time_slot_picker to true in PHP (filter) to use pill grid; default is native <select>.
+  var useCustomTimeSlots = !!(window.fiposDateSlotPicker && window.fiposDateSlotPicker.customTimeSlots);
+
   var DATE_SELECT_ID = '#fooevents_bookings_date_val__trans';
   var SLOT_SELECT_ID = '#fooevents_bookings_slot_val__trans';
   var DATE_FIELD_ID = '#fooevents_bookings_date_val__trans_field';
@@ -108,8 +111,10 @@ jQuery(document).ready(function ($) {
           $track.find('.kbm-pill').removeClass('active');
           $pill.addClass('active');
           $dateSelect.val(pill.value).trigger('change');
-          $('#kbm-slot-area').show();
-          showLoading($('#kbm-slot-area'));
+          if (useCustomTimeSlots) {
+            $('#kbm-slot-area').show();
+            showLoading($('#kbm-slot-area'));
+          }
         });
         $slide.append($pill);
       });
@@ -119,8 +124,13 @@ jQuery(document).ready(function ($) {
     $viewport.append($track);
     $wrapper.append($label, $prev, $viewport, $next);
     $(DATE_FIELD_ID).after($wrapper).hide();
-    $wrapper.after('<div id="kbm-slot-area" style="display:none"></div>');
-    $(SLOT_FIELD_ID).hide();
+    if (useCustomTimeSlots) {
+      $wrapper.after('<div id="kbm-slot-area" style="display:none"></div>');
+      $(SLOT_FIELD_ID).hide();
+    } else {
+      $(SLOT_FIELD_ID).insertAfter($wrapper).show();
+      $('<div id="kbm-slot-area" style="display:none"></div>').insertAfter($(SLOT_FIELD_ID));
+    }
 
     var goToSlide = makePager($viewport, $track, pages.length, $prev, $next);
     goToSlide(0);
@@ -180,6 +190,9 @@ jQuery(document).ready(function ($) {
   }
 
   function buildSlotSlider() {
+    if (!useCustomTimeSlots) {
+      return;
+    }
     var rows = [];
     $slotSelect.find('option').each(function () {
       var val = $(this).val(), label = $(this).text().trim();
@@ -237,8 +250,7 @@ jQuery(document).ready(function ($) {
       $slide.append($('<div class="kbm-slot-hour-label"></div>').text(group.title), $grid);
 
       group.slots.forEach(function (slot) {
-        var $pill = $('<button type="button" class="kbm-pill"></button>');
-        $pill.text(slot.label);
+        var $pill = $('<button type="button" class="kbm-pill">' + slot.label + '</button>');
         if (slot.disabled) $pill.addClass('disabled').prop('disabled', true).attr('title', 'Sold out');
         $pill.on('click', function () {
           $wrapper.find('.kbm-pill').removeClass('active');
@@ -273,13 +285,18 @@ jQuery(document).ready(function ($) {
 
   // ─── MutationObserver for slot population ────────────────────────────────────
 
-  var slotObserver = new MutationObserver(function (mutations) {
-    if (mutations.some(function (m) { return m.addedNodes.length > 0; })) buildSlotSlider();
+  if (useCustomTimeSlots && $slotSelect.length) {
+    var slotObserver = new MutationObserver(function (mutations) {
+      if (mutations.some(function (m) { return m.addedNodes.length > 0; })) buildSlotSlider();
+    });
+    slotObserver.observe($slotSelect[0], { childList: true });
+  }
+
+  $dateSelect.on('change', function () {
+    if (useCustomTimeSlots) {
+      $('#kbm-slot-area').html('');
+    }
   });
-
-  if ($slotSelect.length) slotObserver.observe($slotSelect[0], { childList: true });
-
-  $dateSelect.on('change', function () { $('#kbm-slot-area').html(''); });
 
   // ─── Init ────────────────────────────────────────────────────────────────────
 
