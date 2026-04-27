@@ -183,10 +183,11 @@ class Bookings_Service {
 				if ( ! is_array( $opt ) || empty( $opt['add_date'] ) || ! is_array( $opt['add_date'] ) ) {
 					continue;
 				}
-				$base_label = (string) ( $opt['label'] ?? $slot_id );
-				if ( isset( $opt['add_time'] ) && 'enabled' === $opt['add_time'] && ! empty( $opt['formatted_time'] ) ) {
-					$base_label .= ' ' . (string) $opt['formatted_time'];
-				}
+				$base_label = trim( (string) ( $opt['label'] ?? $slot_id ) );
+				$hour      = isset( $opt['hour'] ) ? (string) $opt['hour'] : '';
+				$minute    = isset( $opt['minute'] ) ? (string) $opt['minute'] : '';
+				$time_hhmm = ( '' === $hour || '' === $minute ) ? '' : sprintf( '%02d:%02d', (int) $hour, (int) $minute );
+				$period     = array_key_exists( 'period', $opt ) ? (string) $opt['period'] : '';
 				foreach ( $opt['add_date'] as $date_id => $drow ) {
 					if ( ! is_array( $drow ) || empty( $drow['date'] ) ) {
 						continue;
@@ -206,12 +207,17 @@ class Bookings_Service {
 							'slots'  => array(),
 						);
 					}
-					$by_day[ $day_key ]['slots'][] = array(
-						'id'         => (string) $slot_id,
-						'dateId'     => (string) $date_id,
-						'label'      => trim( $base_label ),
-						'stock'      => $this->normalize_stock( $stock ),
+					$slot_row = array(
+						'id'     => (string) $slot_id,
+						'dateId' => (string) $date_id,
+						'label'  => $base_label,
+						'stock'  => $this->normalize_stock( $stock ),
+						'time'   => $time_hhmm,
+						'hour'   => $hour,
+						'minute' => $minute,
+						'period' => $period,
 					);
+					$by_day[ $day_key ]['slots'][] = $slot_row;
 				}
 			}
 			foreach ( $by_day as $row ) {
@@ -379,7 +385,9 @@ class Bookings_Service {
 						continue;
 					}
 					$label = (string) ( $s['label'] ?? '' );
-					$time  = $this->extract_time( $label );
+					$time  = ( isset( $s['time'] ) && (string) $s['time'] !== '' )
+						? (string) $s['time']
+						: $this->extract_time( $label );
 					$slots[] = array(
 						'id'     => (string) ( $s['id'] ?? '' ),
 						'dateId' => (string) ( $s['dateId'] ?? $d['id'] ?? '' ),
