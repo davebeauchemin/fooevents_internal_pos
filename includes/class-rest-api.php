@@ -31,11 +31,17 @@ class Rest_API {
 	private $slot_generator;
 
 	/**
+	 * @var Bookings_Checkout_Service
+	 */
+	private $booking_checkout;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
-		$this->bookings       = new Bookings_Service();
-		$this->slot_generator = new Slot_Generator_Service();
+		$this->bookings         = new Bookings_Service();
+		$this->slot_generator   = new Slot_Generator_Service();
+		$this->booking_checkout = new Bookings_Checkout_Service( $this->bookings );
 	}
 
 	/**
@@ -113,6 +119,15 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'post_availability' ),
+				'permission_callback' => array( $this, 'can_manage' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/bookings',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_bookings' ),
 				'permission_callback' => array( $this, 'can_manage' ),
 			)
 		);
@@ -216,5 +231,59 @@ class Rest_API {
 				'reason'     => (string) $result['reason'],
 			)
 		);
+	}
+
+	/**
+	 * POST /bookings
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_bookings( WP_REST_Request $request ) {
+		$params  = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$event_id = isset( $params['eventId'] ) ? (int) $params['eventId'] : 0;
+		$slot_id  = isset( $params['slotId'] ) ? trim( (string) $params['slotId'] ) : '';
+		$date_id  = isset( $params['dateId'] ) ? trim( (string) $params['dateId'] ) : '';
+		$qty      = isset( $params['qty'] ) ? (int) $params['qty'] : 1;
+		$att      = isset( $params['attendee'] ) && is_array( $params['attendee'] ) ? $params['attendee'] : array();
+		$fn       = isset( $att['firstName'] ) ? trim( (string) $att['firstName'] ) : '';
+		$ln       = isset( $att['lastName'] ) ? trim( (string) $att['lastName'] ) : '';
+		$em       = isset( $att['email'] ) ? trim( (string) $att['email'] ) : '';
+		$note     = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
+
+		if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'eventId, slotId, and dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( $qty < 1 || $qty > 20 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'qty must be between 1 and 20.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( '' === $fn || '' === $ln || mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required (max 100 characters each).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( ! is_email( $em ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'A valid attendee.email is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$out = $this->booking_checkout->create_booking(
+			array(
+				'event_id'         => $event_id,
+				'slot_id'          => $slot_id,
+				'date_id'          => $date_id,
+				'qty'              => $qty,
+				'attendee_first'   => $fn,
+				'attendee_last'    => $ln,
+				'attendee_email'   => $em,
+				'note'             => $note,
+			)
+		);
+
+		if ( is_wp_error( $out ) ) {
+			return $out;
+		}
+
+		return rest_ensure_response( $out );
 	}
 }
