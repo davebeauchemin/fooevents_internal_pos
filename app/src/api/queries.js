@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { restFetch } from './client.js';
 
 const prefix = 'internalpos/v1';
@@ -31,8 +31,38 @@ export function useDashboard( ymd ) {
 	return useQuery( {
 		queryKey: [ 'internalpos', 'dashboard', ymd || 'default' ],
 		queryFn: () => restFetch( `${ prefix }/dashboard${ q }` ),
+		placeholderData: keepPreviousData,
 		refetchInterval: 30_000,
 		refetchOnWindowFocus: true,
+	} );
+}
+
+/** FooEvents POS–style payment methods (key/label) for the booking flow. */
+export function usePaymentMethods() {
+	return useQuery( {
+		queryKey: [ 'internalpos', 'paymentMethods' ],
+		queryFn: () => restFetch( `${ prefix }/payment-methods` ),
+		staleTime: 5 * 60_000,
+	} );
+}
+
+/**
+ * Preview WooCommerce subtotal/taxes/total for booking lines (cart simulation only).
+ *
+ * @param {Array<{eventId:number,slotId:string,dateId:string,qty:number}>|null|undefined} lines
+ */
+export function useCheckoutPreview( lines ) {
+	const key = lines?.length ? JSON.stringify( lines ) : '';
+	return useQuery( {
+		queryKey: [ 'internalpos', 'checkoutPreview', key ],
+		queryFn: () =>
+			restFetch( `${ prefix }/checkout/preview`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( { lines } ),
+			} ),
+		enabled: Boolean( lines?.length ),
+		staleTime: 0,
 	} );
 }
 
@@ -45,5 +75,53 @@ export function useCheckAvailability() {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify( body ),
 			} ),
+	} );
+}
+
+/**
+ * Replace all FooEvents booking slots for an event product (server writes post meta).
+ *
+ * @param {number|string|undefined} eventId
+ */
+export function useGenerateSlots( eventId ) {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'generateSlots', eventId ],
+		mutationFn: ( body ) =>
+			restFetch( `${ prefix }/events/${ eventId }/slots/generate`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( body ),
+			} ),
+		onSuccess: () => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+		},
+	} );
+}
+
+/**
+ * Book FooEvents booking slot(s) (creates WC order + tickets).
+ *
+ * @param {object} body - Legacy single slot: { eventId, slotId, dateId, qty, paymentMethodKey?, attendee, note? }
+ *                        Multi-line: { lines: [{ eventId, slotId, dateId, qty }], paymentMethodKey?, attendee, note? }
+ */
+export function useCreateBooking() {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'createBooking' ],
+		mutationFn: ( body ) =>
+			restFetch( `${ prefix }/bookings`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( body ),
+			} ),
+		onSuccess: () => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
+		},
 	} );
 }

@@ -37,7 +37,16 @@ export default function DateSlotPicker( { detail } ) {
 								className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 first:border-0 first:pt-0"
 							>
 								<div>
-									<p className="text-slate-800">{ slot.label }</p>
+									{ slot.time ? (
+										<p className="text-slate-800">
+											<span className="font-semibold tabular-nums">{ slot.time }</span>
+											{ slot.label && String( slot.label ).trim() !== String( slot.time ).trim() ? (
+												<span className="text-slate-600">{ ' \u00b7 ' }{ slot.label }</span>
+											) : null }
+										</p>
+									) : (
+										<p className="text-slate-800">{ slot.label }</p>
+									) }
 									<p className="text-xs text-slate-500">
 										{ slot.stock === null || slot.stock === undefined
 											? 'Unlimited'

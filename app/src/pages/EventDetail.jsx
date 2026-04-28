@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import EventDaySchedule from '@/components/EventDaySchedule';
 import { useEvent } from '../api/queries.js';
-import DateSlotPicker from '../components/DateSlotPicker.jsx';
 
 export default function EventDetail() {
 	const { id } = useParams();
@@ -29,16 +30,27 @@ export default function EventDetail() {
 	}
 
 	return (
-		<div>
-				<Link to="/events" className="text-primary hover:underline">← Event list</Link>
-			<div className="mt-2 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-				<h1 className="text-2xl font-bold text-slate-900">{ data.title }</h1>
-				<span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-mono text-slate-700">
-					{ data.bookingMethod }
-				</span>
+		<div className="space-y-6">
+			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+				<Button variant="outline" asChild className="w-fit">
+					<Link to="/events">Back to events</Link>
+				</Button>
 			</div>
-			<p className="mb-4 mt-1 text-sm text-slate-500">Read-only · upcoming dates only</p>
-			<DateSlotPicker detail={ data } />
+			<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+				<h1 className="text-2xl font-bold text-slate-900">{ data.title }</h1>
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-mono text-slate-700">
+						{ data.bookingMethod }
+					</span>
+					<Button variant="secondary" asChild>
+						<Link to={ `/event/${ id }/manage` }>Manage schedule</Link>
+					</Button>
+				</div>
+			</div>
+			<p className="text-slate-500 text-sm">
+				Pick a day, expand an hour, then add slots to your order or open checkout (WooCommerce order + FooEvents tickets).
+			</p>
+			<EventDaySchedule detail={ data } />
 		</div>
 	);
 }

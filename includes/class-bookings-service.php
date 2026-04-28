@@ -63,7 +63,7 @@ class Bookings_Service {
 	 * Display price for POS cart/checkout labels (matches storefront inclusive/exclusive logic).
 	 *
 	 * @param int $product_id Product ID.
-	 * @return array{ price: float|null, priceHtml: string }
+	 * @return array{ price: float|null, priceHtml: string } priceHtml is plain text (not WooCommerce wc_price HTML).
 	 */
 	public function get_product_price_for_rest( $product_id ) {
 		$product_id = absint( $product_id );
@@ -75,9 +75,11 @@ class Bookings_Service {
 			);
 		}
 		$display = (float) wc_get_price_to_display( $product );
+		$html    = wc_price( $display );
 		return array(
 			'price'     => $display,
-			'priceHtml' => wc_price( $display ),
+			// Plain text for SPA/React (wc_price outputs HTML markup).
+			'priceHtml' => wp_strip_all_tags( html_entity_decode( $html, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ),
 		);
 	}
 

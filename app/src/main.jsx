@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
+import { CartProvider } from '@/context/CartContext';
 import { Toaster } from '@/components/ui/sonner';
 import './styles.css';
 
@@ -34,8 +35,10 @@ if ( root ) {
 			<ThemeProvider attribute="class" defaultTheme="light" enableSystem={ false }>
 				<QueryClientProvider client={ queryClient }>
 					<BrowserRouter basename={ getBasename() }>
-						<App />
-						<Toaster />
+						<CartProvider>
+							<App />
+							<Toaster />
+						</CartProvider>
 					</BrowserRouter>
 				</QueryClientProvider>
 			</ThemeProvider>

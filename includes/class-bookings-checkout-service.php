@@ -34,6 +34,22 @@ class Bookings_Checkout_Service {
 	const MAX_BOOKING_LINES = 40;
 
 	/**
+	 * Plain formatted money for JSON REST consumers (wc_price outputs HTML markup).
+	 *
+	 * @param float|string $amount Amount.
+	 * @return string
+	 */
+	private static function format_price_plain_for_rest( $amount ) {
+		return wp_strip_all_tags(
+			html_entity_decode(
+				wc_price( $amount ),
+				ENT_QUOTES | ENT_HTML5,
+				'UTF-8'
+			)
+		);
+	}
+
+	/**
 	 * Preview WooCommerce-calculated totals from booking lines without creating an order.
 	 *
 	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Booking lines.
@@ -119,7 +135,7 @@ class Bookings_Checkout_Service {
 					'id'              => (string) $code,
 					'label'           => isset( $tax->label ) ? wp_strip_all_tags( (string) $tax->label ) : '',
 					'amount'          => wc_format_decimal( $amt, wc_get_price_decimals() ),
-					'amountFormatted' => wc_price( $amt ),
+					'amountFormatted' => self::format_price_plain_for_rest( $amt ),
 				);
 			}
 
@@ -137,14 +153,14 @@ class Bookings_Checkout_Service {
 
 				$line_rows[] = array(
 					'eventId'           => $pid,
-					'name'              => $_product->get_name(),
+					'name'              => wp_strip_all_tags( (string) $_product->get_name() ),
 					'qty'               => $cqty,
 					'unitPriceExclTax'  => wc_format_decimal( $unit_ex, wc_get_price_decimals() ),
-					'unitPriceFormatted'=> wc_price( wc_get_price_to_display( $_product ) ),
+					'unitPriceFormatted'=> self::format_price_plain_for_rest( wc_get_price_to_display( $_product ) ),
 					'lineSubtotalExclTax'=> wc_format_decimal( $line_subtotal_ex, wc_get_price_decimals() ),
 					'lineTax'           => wc_format_decimal( $line_tax_amt, wc_get_price_decimals() ),
 					'lineTotalInclTax' => wc_format_decimal( $line_subtotal_ex + $line_tax_amt, wc_get_price_decimals() ),
-					'lineTotalFormatted'=> wc_price( $line_subtotal_ex + $line_tax_amt ),
+					'lineTotalFormatted'=> self::format_price_plain_for_rest( $line_subtotal_ex + $line_tax_amt ),
 				);
 			}
 
@@ -164,13 +180,13 @@ class Bookings_Checkout_Service {
 				'currency'           => (string) get_woocommerce_currency(),
 				'currencySymbol'     => html_entity_decode( (string) get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ),
 				'subtotal'           => wc_format_decimal( (float) $cart->get_subtotal(), wc_get_price_decimals() ),
-				'subtotalFormatted'  => wc_price( (float) $cart->get_subtotal() ),
+				'subtotalFormatted'  => self::format_price_plain_for_rest( (float) $cart->get_subtotal() ),
 				'subtotalTax'        => wc_format_decimal( (float) $cart->get_subtotal_tax(), wc_get_price_decimals() ),
-				'subtotalTaxFormatted'=> wc_price( (float) $cart->get_subtotal_tax() ),
+				'subtotalTaxFormatted'=> self::format_price_plain_for_rest( (float) $cart->get_subtotal_tax() ),
 				'taxTotal'           => wc_format_decimal( (float) $cart->get_total_tax(), wc_get_price_decimals() ),
-				'taxTotalFormatted'  => wc_price( (float) $cart->get_total_tax() ),
+				'taxTotalFormatted'  => self::format_price_plain_for_rest( (float) $cart->get_total_tax() ),
 				'total'              => wc_format_decimal( (float) $cart->get_total( 'edit' ), wc_get_price_decimals() ),
-				'totalFormatted'     => wc_price( (float) $cart->get_total( 'edit' ) ),
+				'totalFormatted'     => self::format_price_plain_for_rest( (float) $cart->get_total( 'edit' ) ),
 				'taxes'              => $tax_rows,
 				'lines'              => $line_rows,
 				'availability'       => $availability,
@@ -490,7 +506,9 @@ class Bookings_Checkout_Service {
 				);
 			}
 
-			$ids = $this->get_order_ticket_ids( $order_id );
+			$ids             = $this->get_order_ticket_ids( $order_id );
+			$completed_order = wc_get_order( $order_id );
+			$order_total     = $completed_order instanceof WC_Order ? (float) $completed_order->get_total() : 0.0;
 
 			return array(
 				'orderId'             => (int) $order_id,
@@ -502,8 +520,8 @@ class Bookings_Checkout_Service {
 				'paymentMethodKey'    => $pm_key,
 				'paymentMethodLabel'  => $pm_label,
 				'cashierId'           => (int) get_current_user_id(),
-				'total'               => wc_format_decimal( (float) wc_get_order( $order_id )->get_total(), wc_get_price_decimals() ),
-				'totalFormatted'      => wc_price( (float) wc_get_order( $order_id )->get_total() ),
+				'total'               => wc_format_decimal( $order_total, wc_get_price_decimals() ),
+				'totalFormatted'      => self::format_price_plain_for_rest( $order_total ),
 			);
 		} catch ( Throwable $e ) {
 			$result = new WP_Error(
