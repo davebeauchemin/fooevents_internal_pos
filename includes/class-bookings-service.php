@@ -60,6 +60,28 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Display price for POS cart/checkout labels (matches storefront inclusive/exclusive logic).
+	 *
+	 * @param int $product_id Product ID.
+	 * @return array{ price: float|null, priceHtml: string }
+	 */
+	public function get_product_price_for_rest( $product_id ) {
+		$product_id = absint( $product_id );
+		$product    = wc_get_product( $product_id );
+		if ( ! $product ) {
+			return array(
+				'price'     => null,
+				'priceHtml' => '',
+			);
+		}
+		$display = (float) wc_get_price_to_display( $product );
+		return array(
+			'price'     => $display,
+			'priceHtml' => wc_price( $display ),
+		);
+	}
+
+	/**
 	 * True if Y-m-d is today or in the future.
 	 *
 	 * @param string $ymd Y-m-d.
@@ -233,12 +255,16 @@ class Bookings_Service {
 			);
 		}
 
+		$price_row = $this->get_product_price_for_rest( $product_id );
+
 		return array(
 			'id'             => $product_id,
 			'title'         => $product->get_name(),
 			'bookingMethod' => $method,
 			'labels'        => $labels,
 			'dates'         => $dates_out,
+			'price'         => $price_row['price'],
+			'priceHtml'     => $price_row['priceHtml'],
 		);
 	}
 
@@ -411,12 +437,16 @@ class Bookings_Service {
 						return strcmp( (string) ( $a['label'] ?? '' ), (string) ( $b['label'] ?? '' ) );
 					}
 				);
+				$price_row = $this->get_product_price_for_rest( (int) $row['id'] );
+
 				$out[] = array(
 					'eventId'    => (int) $row['id'],
 					'eventTitle' => (string) $row['title'],
 					'eventImage' => (string) ( $row['image'] ?? '' ),
 					'dateLabel'  => (string) ( $d['label'] ?? '' ),
 					'slots'      => $slots,
+					'price'      => $price_row['price'],
+					'priceHtml'  => $price_row['priceHtml'],
 				);
 			}
 		}

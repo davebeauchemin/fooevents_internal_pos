@@ -9,6 +9,7 @@ namespace FooEvents_Internal_POS;
 
 use Throwable;
 use WC_Order;
+use WC_Product;
 use WP_Error;
 
 defined( 'ABSPATH' ) || exit;
@@ -30,45 +31,276 @@ class Bookings_Checkout_Service {
 		$this->bookings = $bookings;
 	}
 
+	const MAX_BOOKING_LINES = 40;
+
+	/**
+	 * Preview WooCommerce-calculated totals from booking lines without creating an order.
+	 *
+	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Booking lines.
+	 * @return array|WP_Error
+	 */
+	public function preview_checkout_lines( array $lines ) {
+		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) ) {
+			return new WP_Error( 'fooevents_wc', __( 'WooCommerce is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
+		}
+
+		$parsed = $this->normalize_booking_lines_array( $lines );
+		if ( is_wp_error( $parsed ) ) {
+			return $parsed;
+		}
+		$lines = $parsed;
+
+		$session_ok = $this->ensure_wc_cart_session();
+		if ( ! $session_ok ) {
+			return new WP_Error( 'no_cart', __( 'Could not initialize WooCommerce cart session.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
+		}
+
+		try {
+			if ( WC()->cart ) {
+				WC()->cart->empty_cart();
+			}
+
+			foreach ( $lines as $ln ) {
+				$event_id = (int) $ln['event_id'];
+				$slot_id  = (string) $ln['slot_id'];
+				$date_id  = (string) $ln['date_id'];
+				$qty      = (int) $ln['qty'];
+
+				$pre = $this->bookings->check_availability( $event_id, $slot_id, $date_id, $qty );
+				if ( 'not_found' === $pre['reason'] ) {
+					return new WP_Error( 'not_found', __( 'Slot or date not found for this event.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+				}
+				if ( 'past_date' === $pre['reason'] ) {
+					return new WP_Error( 'past_date', __( 'That date is in the past.', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
+				}
+				if ( 'insufficient' === $pre['reason'] || ! $pre['available'] ) {
+					return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
+				}
+
+				$product = wc_get_product( $event_id );
+				if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+					return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+				}
+
+				$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
+				if ( null === $norm ) {
+					return new WP_Error(
+						'booking_resolve',
+						__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
+						array( 'status' => 400 )
+					);
+				}
+
+				$cart_item_data = $this->build_cart_item_data(
+					(string) $norm['method'],
+					$event_id,
+					(string) $norm['slot_id'],
+					(string) $norm['internal_date_id'],
+					isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
+				);
+
+				$add = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
+				if ( ! $add ) {
+					return new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+				}
+			}
+
+			WC()->cart->calculate_totals();
+
+			$cart       = WC()->cart;
+			$tax_totals = $cart->get_tax_totals();
+			$tax_rows   = array();
+			foreach ( (array) $tax_totals as $code => $tax ) {
+				if ( ! is_object( $tax ) ) {
+					continue;
+				}
+				$amt = isset( $tax->amount ) ? (float) $tax->amount : 0.0;
+				$tax_rows[] = array(
+					'id'              => (string) $code,
+					'label'           => isset( $tax->label ) ? wp_strip_all_tags( (string) $tax->label ) : '',
+					'amount'          => wc_format_decimal( $amt, wc_get_price_decimals() ),
+					'amountFormatted' => wc_price( $amt ),
+				);
+			}
+
+			$line_rows = array();
+			foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) {
+				$_product = isset( $cart_item['data'] ) ? $cart_item['data'] : null;
+				if ( ! $_product || ! is_a( $_product, WC_Product::class ) ) {
+					continue;
+				}
+				$cqty             = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 1;
+				$pid              = isset( $cart_item['product_id'] ) ? (int) $cart_item['product_id'] : 0;
+				$line_subtotal_ex = isset( $cart_item['line_subtotal'] ) ? (float) $cart_item['line_subtotal'] : 0.0;
+				$line_tax_amt     = isset( $cart_item['line_subtotal_tax'] ) ? (float) $cart_item['line_subtotal_tax'] : 0.0;
+				$unit_ex          = $cqty > 0 ? $line_subtotal_ex / (float) $cqty : 0.0;
+
+				$line_rows[] = array(
+					'eventId'           => $pid,
+					'name'              => $_product->get_name(),
+					'qty'               => $cqty,
+					'unitPriceExclTax'  => wc_format_decimal( $unit_ex, wc_get_price_decimals() ),
+					'unitPriceFormatted'=> wc_price( wc_get_price_to_display( $_product ) ),
+					'lineSubtotalExclTax'=> wc_format_decimal( $line_subtotal_ex, wc_get_price_decimals() ),
+					'lineTax'           => wc_format_decimal( $line_tax_amt, wc_get_price_decimals() ),
+					'lineTotalInclTax' => wc_format_decimal( $line_subtotal_ex + $line_tax_amt, wc_get_price_decimals() ),
+					'lineTotalFormatted'=> wc_price( $line_subtotal_ex + $line_tax_amt ),
+				);
+			}
+
+			$availability = array();
+			foreach ( $lines as $ln ) {
+				$chk          = $this->bookings->check_availability( (int) $ln['event_id'], (string) $ln['slot_id'], (string) $ln['date_id'], 1 );
+				$availability[] = array(
+					'eventId'   => (int) $ln['event_id'],
+					'slotId'    => (string) $ln['slot_id'],
+					'dateId'    => (string) $ln['date_id'],
+					'remaining' => $chk['remaining'],
+					'available' => (bool) $chk['available'],
+				);
+			}
+
+			return array(
+				'currency'           => (string) get_woocommerce_currency(),
+				'currencySymbol'     => html_entity_decode( (string) get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ),
+				'subtotal'           => wc_format_decimal( (float) $cart->get_subtotal(), wc_get_price_decimals() ),
+				'subtotalFormatted'  => wc_price( (float) $cart->get_subtotal() ),
+				'subtotalTax'        => wc_format_decimal( (float) $cart->get_subtotal_tax(), wc_get_price_decimals() ),
+				'subtotalTaxFormatted'=> wc_price( (float) $cart->get_subtotal_tax() ),
+				'taxTotal'           => wc_format_decimal( (float) $cart->get_total_tax(), wc_get_price_decimals() ),
+				'taxTotalFormatted'  => wc_price( (float) $cart->get_total_tax() ),
+				'total'              => wc_format_decimal( (float) $cart->get_total( 'edit' ), wc_get_price_decimals() ),
+				'totalFormatted'     => wc_price( (float) $cart->get_total( 'edit' ) ),
+				'taxes'              => $tax_rows,
+				'lines'              => $line_rows,
+				'availability'       => $availability,
+			);
+		} finally {
+			$this->reset_cart_safely();
+		}
+	}
+
 	/**
 	 * Create a booking: prime cart, run FooEvents order ticket builder, complete order, native tickets + email.
 	 *
-	 * @param array $args Arguments (event_id, slot_id, date_id, qty, payment_method_key, attendee_*, note optional).
+	 * Supports legacy single-slot args or multi-line `lines` array (same keys as REST preview).
+	 *
+	 * @param array $args Arguments including attendee fields and either legacy slot keys or `lines`.
 	 * @return array|WP_Error
 	 */
 	public function create_booking( array $args ) {
-		$event_id = isset( $args['event_id'] ) ? (int) $args['event_id'] : 0;
-		$slot_id  = isset( $args['slot_id'] ) ? (string) $args['slot_id'] : '';
-		$date_id  = isset( $args['date_id'] ) ? (string) $args['date_id'] : '';
-		$qty      = isset( $args['qty'] ) ? (int) $args['qty'] : 1;
-		$qty      = max( 1, min( 20, $qty ) );
-		$pm_raw   = isset( $args['payment_method_key'] ) ? trim( (string) $args['payment_method_key'] ) : '';
-		$af       = isset( $args['attendee_first'] ) ? sanitize_text_field( (string) $args['attendee_first'] ) : '';
-		$al       = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
-		$em       = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
+		$pm_raw = isset( $args['payment_method_key'] ) ? trim( (string) $args['payment_method_key'] ) : '';
+		$af     = isset( $args['attendee_first'] ) ? sanitize_text_field( (string) $args['attendee_first'] ) : '';
+		$al     = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
+		$em     = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
+		$note   = isset( $args['note'] ) ? sanitize_text_field( (string) $args['note'] ) : '';
 
-		if ( $event_id <= 0 || '' === $slot_id || '' === $date_id || ! is_email( $em ) ) {
+		if ( ! is_email( $em ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'Invalid booking parameters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
+		if ( isset( $args['lines'] ) && is_array( $args['lines'] ) && count( $args['lines'] ) > 0 ) {
+			$parsed = $this->normalize_booking_lines_array( $args['lines'] );
+		} else {
+			$parsed = $this->normalize_booking_lines_array(
+				array(
+					array(
+						'event_id' => isset( $args['event_id'] ) ? (int) $args['event_id'] : 0,
+						'slot_id'  => isset( $args['slot_id'] ) ? (string) $args['slot_id'] : '',
+						'date_id'  => isset( $args['date_id'] ) ? (string) $args['date_id'] : '',
+						'qty'      => isset( $args['qty'] ) ? (int) $args['qty'] : 1,
+					),
+				)
+			);
+		}
+
+		if ( is_wp_error( $parsed ) ) {
+			return $parsed;
+		}
+
+		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note );
+	}
+
+	/**
+	 * Normalize incoming REST booking lines (snake_case keys expected).
+	 *
+	 * @param array $lines Raw lines.
+	 * @return array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}>|WP_Error
+	 */
+	private function normalize_booking_lines_array( array $lines ) {
+		if ( empty( $lines ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'At least one booking line is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( count( $lines ) > self::MAX_BOOKING_LINES ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: %d max booking lines */
+					__( 'Too many booking lines (max %d).', 'fooevents-internal-pos' ),
+					self::MAX_BOOKING_LINES
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		$out = array();
+		foreach ( $lines as $ln ) {
+			if ( ! is_array( $ln ) ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Invalid booking line.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			$event_id = isset( $ln['event_id'] ) ? (int) $ln['event_id'] : 0;
+			$slot_id  = isset( $ln['slot_id'] ) ? trim( (string) $ln['slot_id'] ) : '';
+			$date_id  = isset( $ln['date_id'] ) ? trim( (string) $ln['date_id'] ) : '';
+			$qty      = isset( $ln['qty'] ) ? (int) $ln['qty'] : 1;
+			$qty      = max( 1, min( 20, $qty ) );
+
+			if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Each line needs event_id, slot_id, and date_id.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+
+			$out[] = array(
+				'event_id' => $event_id,
+				'slot_id'  => $slot_id,
+				'date_id'  => $date_id,
+				'qty'      => $qty,
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Create WooCommerce order from validated booking lines.
+	 *
+	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Lines.
+	 * @param string                                                                   $pm_raw Payment method key.
+	 * @param string                                                                   $af First name.
+	 * @param string                                                                   $al Last name.
+	 * @param string                                                                   $em Email.
+	 * @param string                                                                   $note Customer note.
+	 * @return array|WP_Error
+	 */
+	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) || ! class_exists( 'FooEvents_Config' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce or FooEvents is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
 
-		$pre = $this->bookings->check_availability( $event_id, $slot_id, $date_id, $qty );
-		if ( 'not_found' === $pre['reason'] ) {
-			return new WP_Error( 'not_found', __( 'Slot or date not found for this event.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
-		}
-		if ( 'past_date' === $pre['reason'] ) {
-			return new WP_Error( 'past_date', __( 'That date is in the past.', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
-		}
-		if ( 'insufficient' === $pre['reason'] || ! $pre['available'] ) {
-			return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
-		}
+		foreach ( $lines as $ln ) {
+			$pre = $this->bookings->check_availability( (int) $ln['event_id'], (string) $ln['slot_id'], (string) $ln['date_id'], (int) $ln['qty'] );
+			if ( 'not_found' === $pre['reason'] ) {
+				return new WP_Error( 'not_found', __( 'Slot or date not found for this event.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+			}
+			if ( 'past_date' === $pre['reason'] ) {
+				return new WP_Error( 'past_date', __( 'That date is in the past.', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
+			}
+			if ( 'insufficient' === $pre['reason'] || ! $pre['available'] ) {
+				return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
+			}
 
-		$product = wc_get_product( $event_id );
-		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
-			return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+			$product = wc_get_product( (int) $ln['event_id'] );
+			if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+				return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+			}
 		}
 
 		$session_ok = $this->ensure_wc_cart_session();
@@ -89,59 +321,96 @@ class Bookings_Checkout_Service {
 		$result    = null;
 
 		try {
-			$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
-			if ( null === $norm ) {
-				return new WP_Error(
-					'booking_resolve',
-					__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
-					array( 'status' => 400 )
-				);
+			if ( WC()->cart ) {
+				WC()->cart->empty_cart();
 			}
-			$cart_item_data = $this->build_cart_item_data(
-				(string) $norm['method'],
-				$event_id,
-				(string) $norm['slot_id'],
-				(string) $norm['internal_date_id'],
-				isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
-			);
-			$add            = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
-			if ( ! $add ) {
-				$result = new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-				return $result;
+
+			$slot_pairs           = array();
+			$norm_slots_for_remain = array();
+
+			foreach ( $lines as $ln ) {
+				$event_id = (int) $ln['event_id'];
+				$slot_id  = (string) $ln['slot_id'];
+				$date_id  = (string) $ln['date_id'];
+				$qty      = (int) $ln['qty'];
+
+				$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
+				if ( null === $norm ) {
+					return new WP_Error(
+						'booking_resolve',
+						__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
+						array( 'status' => 400 )
+					);
+				}
+
+				$cart_item_data = $this->build_cart_item_data(
+					(string) $norm['method'],
+					$event_id,
+					(string) $norm['slot_id'],
+					(string) $norm['internal_date_id'],
+					isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
+				);
+
+				$add = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
+				if ( ! $add ) {
+					return new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+				}
+
+				$slot_pairs[] = (string) $norm['slot_id'] . '|' . (string) $norm['internal_date_id'];
+				$norm_slots_for_remain[] = array(
+					'event_id' => $event_id,
+					'slot_id'  => (string) $norm['slot_id'],
+					'date_id'  => $date_id,
+				);
 			}
 
 			$order = wc_create_order(
 				array(
-					'created_via'   => 'fooevents_internal_pos',
-					'customer_id'   => get_current_user_id(),
-					'status'        => 'pending',
+					'created_via' => 'fooevents_internal_pos',
+					'customer_id' => get_current_user_id(),
+					'status'      => 'pending',
 				)
 			);
 			if ( is_wp_error( $order ) ) {
-				$result = new WP_Error( 'order', $order->get_error_message(), array( 'status' => 500 ) );
-				return $result;
+				return new WP_Error( 'order', $order->get_error_message(), array( 'status' => 500 ) );
 			}
+
 			$order_id = $order->get_id();
 			$order->set_billing_first_name( $af );
 			$order->set_billing_last_name( $al );
 			$order->set_billing_email( $em );
 			$order->set_billing_phone( '' );
-			if ( ! empty( $args['note'] ) ) {
-				$order->set_customer_note( (string) $args['note'] );
+			if ( '' !== $note ) {
+				$order->set_customer_note( $note );
 			}
 			$order->update_meta_data( 'fooeventspos_internal_booking', 'yes' );
-			$order->update_meta_data(
-				'_fooeventspos_internal_slot',
-				(string) $norm['slot_id'] . '|' . (string) $norm['internal_date_id']
-			);
+			$order->update_meta_data( '_fooeventspos_internal_slot', wp_json_encode( $slot_pairs ) );
 			$this->apply_fooeventspos_pos_meta( $order, $pm_key, $pm_label );
-			// Mirror FooEvents POS: split event line items into qty=1 rows for admin / refunds; cart still has qty for ticket count.
-			$line_excl = (float) wc_get_price_excluding_tax( $product, array( 'qty' => $qty ) );
-			$per_excl  = $qty > 0 ? $line_excl / (float) $qty : 0.0;
-			if ( $qty > 1 ) {
-				for ( $i = 0; $i < $qty; $i++ ) {
+
+			foreach ( WC()->cart->get_cart() as $cart_item ) {
+				$_product = isset( $cart_item['data'] ) ? $cart_item['data'] : null;
+				if ( ! $_product || ! is_a( $_product, WC_Product::class ) ) {
+					continue;
+				}
+				$cqty = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 1;
+
+				$line_excl = (float) wc_get_price_excluding_tax( $_product, array( 'qty' => $cqty ) );
+				$per_excl  = $cqty > 0 ? $line_excl / (float) $cqty : 0.0;
+
+				if ( $cqty > 1 ) {
+					for ( $i = 0; $i < $cqty; $i++ ) {
+						$order->add_product(
+							$_product,
+							1,
+							array(
+								'subtotal' => $per_excl,
+								'total'    => $per_excl,
+							)
+						);
+					}
+				} else {
 					$order->add_product(
-						$product,
+						$_product,
 						1,
 						array(
 							'subtotal' => $per_excl,
@@ -149,15 +418,32 @@ class Bookings_Checkout_Service {
 						)
 					);
 				}
-			} else {
-				$order->add_product( $product, 1, array( 'subtotal' => $per_excl, 'total' => $per_excl ) );
 			}
+
 			$order->calculate_totals();
 			$this->create_fooeventspos_payment_record( $order, $pm_key );
 			$order->save();
 
-			$posts  = $this->build_fooevents_attendee_post( $event_id, $af, $al, $em, $qty );
-			$_POST  = self::array_merge_recurse( (array) $_POST, (array) $posts );
+			$qty_by_event = array();
+			foreach ( WC()->cart->get_cart() as $cart_item ) {
+				$eid = isset( $cart_item['product_id'] ) ? (int) $cart_item['product_id'] : 0;
+				$cq  = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 0;
+				if ( $eid <= 0 ) {
+					continue;
+				}
+				$qty_by_event[ $eid ] = isset( $qty_by_event[ $eid ] ) ? $qty_by_event[ $eid ] + $cq : $cq;
+			}
+
+			$posts = array();
+			foreach ( $qty_by_event as $eid => $qtot ) {
+				$posts = array_merge(
+					$posts,
+					$this->build_fooevents_attendee_post( (int) $eid, $af, $al, $em, (int) $qtot )
+				);
+			}
+
+			$_POST = self::array_merge_recurse( (array) $_POST, (array) $posts );
+
 			$fooevents_config = new \FooEvents_Config();
 			if ( ! class_exists( 'FooEvents_Checkout_Helper', false ) ) {
 				// phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable
@@ -168,7 +454,9 @@ class Bookings_Checkout_Service {
 
 			$order = wc_get_order( $order_id );
 			if ( $order instanceof WC_Order ) {
-				$this->patch_order_tickets_attendee( $order, (int) $event_id, $af, $al, $em );
+				foreach ( array_keys( $qty_by_event ) as $eid ) {
+					$this->patch_order_tickets_attendee( $order, (int) $eid, $af, $al, $em );
+				}
 			}
 
 			if ( WC()->cart ) {
@@ -184,20 +472,39 @@ class Bookings_Checkout_Service {
 			}
 			$order->update_status( 'completed', __( 'Booked via Internal POS', 'fooevents-internal-pos' ), true );
 
-			$after  = $this->bookings->check_availability( $event_id, (string) $norm['slot_id'], $date_id, 1 );
-			$remain = $after['remaining'];
-			$ids    = $this->get_order_ticket_ids( $order_id );
+			$total_qty = 0;
+			foreach ( $lines as $ln ) {
+				$total_qty += (int) $ln['qty'];
+			}
 
-			$result = array(
-				'orderId'            => (int) $order_id,
-				'ticketIds'          => $ids,
-				'remaining'          => $remain,
-				'qty'                => $qty,
-				'paymentMethodKey'   => $pm_key,
-				'paymentMethodLabel' => $pm_label,
-				'cashierId'          => (int) get_current_user_id(),
+			$remaining_by_line = array();
+			$last_remain       = null;
+			foreach ( $norm_slots_for_remain as $ns ) {
+				$after             = $this->bookings->check_availability( (int) $ns['event_id'], (string) $ns['slot_id'], (string) $ns['date_id'], 1 );
+				$last_remain       = $after['remaining'];
+				$remaining_by_line[] = array(
+					'eventId'   => (int) $ns['event_id'],
+					'slotId'    => (string) $ns['slot_id'],
+					'dateId'    => (string) $ns['date_id'],
+					'remaining' => $after['remaining'],
+				);
+			}
+
+			$ids = $this->get_order_ticket_ids( $order_id );
+
+			return array(
+				'orderId'             => (int) $order_id,
+				'ticketIds'           => $ids,
+				'remaining'           => $last_remain,
+				'remainingByLine'     => $remaining_by_line,
+				'qty'                 => $total_qty,
+				'totalQty'            => $total_qty,
+				'paymentMethodKey'    => $pm_key,
+				'paymentMethodLabel'  => $pm_label,
+				'cashierId'           => (int) get_current_user_id(),
+				'total'               => wc_format_decimal( (float) wc_get_order( $order_id )->get_total(), wc_get_price_decimals() ),
+				'totalFormatted'      => wc_price( (float) wc_get_order( $order_id )->get_total() ),
 			);
-			return $result;
 		} catch ( Throwable $e ) {
 			$result = new WP_Error(
 				'booking_failed',

@@ -133,6 +133,15 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/checkout/preview',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_checkout_preview' ),
+				'permission_callback' => array( $this, 'can_manage' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/payment-methods',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -250,13 +259,75 @@ class Rest_API {
 	}
 
 	/**
+	 * POST /checkout/preview — WooCommerce totals from booking lines (cart-only; does not create an order).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_checkout_preview( WP_REST_Request $request ) {
+		$params = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		if ( empty( $params['lines'] ) || ! is_array( $params['lines'] ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'lines array is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$lines_snake = $this->normalize_rest_booking_lines_array( $params['lines'] );
+		if ( is_wp_error( $lines_snake ) ) {
+			return $lines_snake;
+		}
+
+		$out = $this->booking_checkout->preview_checkout_lines( $lines_snake );
+		if ( is_wp_error( $out ) ) {
+			return $out;
+		}
+
+		return rest_ensure_response( $out );
+	}
+
+	/**
+	 * Convert REST booking lines (camelCase or snake_case) to internal snake_case rows.
+	 *
+	 * @param array $raw_lines Raw lines array.
+	 * @return array<int, array<string, mixed>>|WP_Error
+	 */
+	private function normalize_rest_booking_lines_array( array $raw_lines ) {
+		$out = array();
+		foreach ( $raw_lines as $ln ) {
+			if ( ! is_array( $ln ) ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Invalid booking line.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			$event_id = isset( $ln['eventId'] ) ? (int) $ln['eventId'] : ( isset( $ln['event_id'] ) ? (int) $ln['event_id'] : 0 );
+			$slot_id  = isset( $ln['slotId'] ) ? trim( (string) $ln['slotId'] ) : ( isset( $ln['slot_id'] ) ? trim( (string) $ln['slot_id'] ) : '' );
+			$date_id  = isset( $ln['dateId'] ) ? trim( (string) $ln['dateId'] ) : ( isset( $ln['date_id'] ) ? trim( (string) $ln['date_id'] ) : '' );
+			$qty      = isset( $ln['qty'] ) ? (int) $ln['qty'] : 1;
+
+			if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Each line needs eventId, slotId, and dateId.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			if ( $qty < 1 || $qty > 20 ) {
+				return new WP_Error( 'rest_invalid_param', __( 'qty must be between 1 and 20 per line.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+
+			$out[] = array(
+				'event_id' => $event_id,
+				'slot_id'  => $slot_id,
+				'date_id'  => $date_id,
+				'qty'      => $qty,
+			);
+		}
+
+		return $out;
+	}
+
+	/**
 	 * POST /bookings
 	 *
 	 * @param WP_REST_Request $request Request.
 	 * @return \WP_REST_Response|WP_Error
 	 */
 	public function post_bookings( WP_REST_Request $request ) {
-		$params  = $request->get_json_params();
+		$params = $request->get_json_params();
 		if ( ! is_array( $params ) ) {
 			$params = array();
 		}
@@ -271,12 +342,33 @@ class Rest_API {
 		$note     = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
 		$pm_key   = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
 
-		if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
-			return new WP_Error( 'rest_invalid_param', __( 'eventId, slotId, and dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		$booking_args = array(
+			'payment_method_key' => $pm_key,
+			'attendee_first'     => $fn,
+			'attendee_last'      => $ln,
+			'attendee_email'     => $em,
+			'note'               => $note,
+		);
+
+		if ( ! empty( $params['lines'] ) && is_array( $params['lines'] ) ) {
+			$lines_snake = $this->normalize_rest_booking_lines_array( $params['lines'] );
+			if ( is_wp_error( $lines_snake ) ) {
+				return $lines_snake;
+			}
+			$booking_args['lines'] = $lines_snake;
+		} else {
+			if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
+				return new WP_Error( 'rest_invalid_param', __( 'eventId, slotId, and dateId are required unless lines[] is sent.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			if ( $qty < 1 || $qty > 20 ) {
+				return new WP_Error( 'rest_invalid_param', __( 'qty must be between 1 and 20.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			$booking_args['event_id'] = $event_id;
+			$booking_args['slot_id']  = $slot_id;
+			$booking_args['date_id']  = $date_id;
+			$booking_args['qty']      = $qty;
 		}
-		if ( $qty < 1 || $qty > 20 ) {
-			return new WP_Error( 'rest_invalid_param', __( 'qty must be between 1 and 20.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
+
 		if ( '' === $fn || '' === $ln || mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required (max 100 characters each).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
@@ -284,19 +376,7 @@ class Rest_API {
 			return new WP_Error( 'rest_invalid_param', __( 'A valid attendee.email is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
-		$out = $this->booking_checkout->create_booking(
-			array(
-				'event_id'           => $event_id,
-				'slot_id'            => $slot_id,
-				'date_id'            => $date_id,
-				'qty'                => $qty,
-				'payment_method_key' => $pm_key,
-				'attendee_first'     => $fn,
-				'attendee_last'      => $ln,
-				'attendee_email'     => $em,
-				'note'               => $note,
-			)
-		);
+		$out = $this->booking_checkout->create_booking( $booking_args );
 
 		if ( is_wp_error( $out ) ) {
 			return $out;
