@@ -151,16 +151,17 @@ class Bookings_Checkout_Service {
 				$line_tax_amt     = isset( $cart_item['line_subtotal_tax'] ) ? (float) $cart_item['line_subtotal_tax'] : 0.0;
 				$unit_ex          = $cqty > 0 ? $line_subtotal_ex / (float) $cqty : 0.0;
 
+				// Line list in POS shows amounts before tax; taxes appear in the breakdown below.
 				$line_rows[] = array(
 					'eventId'           => $pid,
 					'name'              => wp_strip_all_tags( (string) $_product->get_name() ),
 					'qty'               => $cqty,
 					'unitPriceExclTax'  => wc_format_decimal( $unit_ex, wc_get_price_decimals() ),
-					'unitPriceFormatted'=> self::format_price_plain_for_rest( wc_get_price_to_display( $_product ) ),
+					'unitPriceFormatted'=> self::format_price_plain_for_rest( $unit_ex ),
 					'lineSubtotalExclTax'=> wc_format_decimal( $line_subtotal_ex, wc_get_price_decimals() ),
 					'lineTax'           => wc_format_decimal( $line_tax_amt, wc_get_price_decimals() ),
 					'lineTotalInclTax' => wc_format_decimal( $line_subtotal_ex + $line_tax_amt, wc_get_price_decimals() ),
-					'lineTotalFormatted'=> self::format_price_plain_for_rest( $line_subtotal_ex + $line_tax_amt ),
+					'lineTotalFormatted'=> self::format_price_plain_for_rest( $line_subtotal_ex ),
 				);
 			}
 

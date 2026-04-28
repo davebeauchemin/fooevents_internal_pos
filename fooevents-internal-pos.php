@@ -3,7 +3,7 @@
  * Plugin Name:       FooEvents Internal POS
  * Plugin URI:         https://github.com/TBD/fooevents-internal-pos
  * Description:        Internal read-only booking dashboard for shop managers. FooEvents + WooCommerce.
- * Version:            0.1.1.13
+ * Version:            0.1.1.14
  * Requires at least:  6.0
  * Requires PHP:       7.4
  * Author:             Module Rouge
