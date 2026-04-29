@@ -36,6 +36,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-checkout-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-ticket-reschedule-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
 

@@ -1,7 +1,9 @@
 import { useDeferredValue, useEffect, useId, useRef, useState } from 'react';
+import { format, parseISO } from 'date-fns';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
 	ArrowLeft,
+	CalendarClock,
 	Camera,
 	CheckCircle2,
 	CircleAlert,
@@ -12,7 +14,13 @@ import {
 	XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useTicketDetail, useTicketSearch, useUpdateTicketStatus } from '@/api/queries.js';
+import {
+	useRescheduleTicket,
+	useTicketDetail,
+	useTicketSearch,
+	useUpdateTicketStatus,
+	useValidateEvent,
+} from '@/api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,9 +30,23 @@ import {
 	CardHeader,
 	CardTitle,
 } from '@/components/ui/card';
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import {
+	formatSlotTime,
+	groupSlotsByHour,
+	hidePastHourBucketsForToday,
+	slotSelectable,
+} from '@/lib/slotHourGrouping';
 import { cn } from '@/lib/utils';
 
 const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
@@ -65,24 +87,26 @@ function searchRowAccentClass( status: string ): string {
 }
 
 /**
- * Builds API ticketId for mutate (matches existing applyStatus logic).
+ * Builds REST `ticketId` path segment for validate/reschedule (matches `get_single_ticket` lookup rules).
  */
 function ticketLookupArg(
 	ticket: FooTicketPayload,
 	selectedId: string | null
 ): string {
+	const sel = selectedId && selectedId.trim() !== '' ? selectedId.trim() : '';
+	if ( sel ) {
+		return sel;
+	}
+	const pid = String( ticket.WooCommerceEventsProductID ?? '' ).trim();
 	const formatted = ticket.WooCommerceEventsTicketNumberFormatted;
-	let lookup =
-		isNonEmptyStr( formatted ) && formatted.trim().length > 0
-			? formatted.trim()
-			: '';
-	if ( ! lookup && selectedId && selectedId.length > 0 ) {
-		lookup = selectedId.trim();
+	const fmt = isNonEmptyStr( formatted ) ? formatted.trim() : '';
+	if ( pid && fmt && ! fmt.includes( '-' ) ) {
+		return `${ pid }-${ fmt }`;
 	}
-	if ( ! lookup ) {
-		lookup = String( ticket.WooCommerceEventsTicketID ?? '' );
+	if ( fmt ) {
+		return fmt;
 	}
-	return lookup;
+	return String( ticket.WooCommerceEventsTicketID ?? '' ).trim();
 }
 
 /** Card border/background tone for main ticket Card. */
@@ -216,10 +240,328 @@ type FooTicketPayload = Record< string, unknown > & {
 	WooCommerceEventsAttendeeTelephone?: string;
 	WooCommerceEventsBookingDate?: string;
 	WooCommerceEventsBookingSlot?: string;
+	WooCommerceEventsBookingSlotID?: string;
+	WooCommerceEventsBookingDateID?: string;
 	eventDisplayName?: string;
 };
 
+type EventDetailForReschedule = {
+	id?: number;
+	bookingMethod?: string;
+	labels?: { date?: string; slot?: string };
+	dates?: Array<{
+		id: string;
+		date: string;
+		label: string;
+		slots?: Array<{
+			id: string;
+			dateId?: string;
+			label: string;
+			stock: number | null;
+			time?: string;
+		}>;
+	}>;
+	error?: string;
+};
+
 type ScanPurpose = 'validate' | 'checkin';
+
+/** True when this API slot/date pair matches the ticket’s stored booking IDs. */
+function isTicketOnSlot(
+	ticket: FooTicketPayload,
+	slotId: string,
+	apiDateId: string,
+) {
+	return (
+		String( ticket.WooCommerceEventsBookingSlotID ?? '' ) === String( slotId )
+		&& String( ticket.WooCommerceEventsBookingDateID ?? '' ) === String( apiDateId )
+	);
+}
+
+function TicketRescheduleDialog( props: {
+	open: boolean;
+	onOpenChange: ( v: boolean ) => void;
+	ticket: FooTicketPayload;
+	ticketLookup: string;
+	eventProductId: number;
+} ) {
+	const { open, onOpenChange, ticket, ticketLookup, eventProductId } = props;
+	const eventQ = useValidateEvent( eventProductId, { enabled: open } );
+	const rescheduleMut = useRescheduleTicket();
+	const detail = eventQ.data as EventDetailForReschedule | undefined;
+
+	const siteTodayYmd = format( new Date(), 'yyyy-MM-dd' );
+	const [ viewYmd, setViewYmd ] = useState( '' );
+	const [ picked, setPicked ] = useState< {
+		slotId: string;
+		dateParam: string;
+		internalDateId: string;
+	} | null >( null );
+
+	const bookingMethod = detail?.bookingMethod ?? 'slotdate';
+	const isDateSlot = bookingMethod === 'dateslot';
+	const dates = detail?.dates ?? [];
+
+	useEffect( () => {
+		if ( ! open || ! dates.length ) {
+			return;
+		}
+		setViewYmd( ( prev ) => {
+			if ( prev && dates.some( ( d ) => d.date === prev ) ) {
+				return prev;
+			}
+			return dates[ 0 ]!.date;
+		} );
+		setPicked( null );
+	}, [ open, dates ] );
+
+	const selectedDay = dates.find( ( d ) => d.date === viewYmd );
+	const slots = selectedDay?.slots ?? [];
+
+	const groups = hidePastHourBucketsForToday(
+		groupSlotsByHour( slots ),
+		viewYmd,
+		siteTodayYmd,
+	);
+
+	const submitDisabled = ( () => {
+		if ( ! picked || ! selectedDay ) {
+			return true;
+		}
+		if (
+			isTicketOnSlot( ticket, picked.slotId, picked.internalDateId )
+		) {
+			return true;
+		}
+		return false;
+	} )();
+
+	const onConfirm = () => {
+		if ( ! picked || submitDisabled ) {
+			return;
+		}
+		rescheduleMut.mutate(
+			{
+				ticketId: ticketLookup,
+				eventId: eventProductId,
+				slotId: picked.slotId,
+				dateId: picked.dateParam,
+			},
+			{
+				onSuccess: () => {
+					toast.success( 'Ticket rescheduled.' );
+					onOpenChange( false );
+				},
+				onError: ( err: Error ) => {
+					toast.error( err?.message ?? 'Reschedule failed' );
+				},
+			},
+		);
+	};
+
+	return (
+		<Dialog open={ open } onOpenChange={ onOpenChange }>
+			<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg" showCloseButton>
+				<DialogHeader>
+					<DialogTitle>Reschedule booking</DialogTitle>
+					<DialogDescription>
+						Move this ticket to another date or time on the same event. The existing order
+						and payment are unchanged.
+					</DialogDescription>
+				</DialogHeader>
+
+				<div className="bg-muted/50 space-y-1 rounded-lg border px-3 py-2 text-sm">
+					<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+						Current booking
+					</p>
+					<p>{ ticket.WooCommerceEventsBookingDate || '\u2014' }</p>
+					<p>{ ticket.WooCommerceEventsBookingSlot || '\u2014' }</p>
+				</div>
+
+				{ String( ticket.WooCommerceEventsStatus ?? '' ) === 'Checked In' && (
+					<p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-950 dark:text-amber-100">
+						This ticket is already checked in. Rescheduling keeps the checked-in status.
+					</p>
+				) }
+
+				{ eventQ.isLoading && (
+					<div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
+						<Loader2 className="size-5 animate-spin" aria-hidden />
+						Loading event schedule…
+					</div>
+				) }
+
+				{ eventQ.isError && (
+					<p className="text-destructive text-sm">
+						{ eventQ.error instanceof Error
+							? eventQ.error.message
+							: 'Could not load event.' }
+					</p>
+				) }
+
+				{ detail?.error === 'not_booking_event' && (
+					<p className="text-muted-foreground text-sm">
+						This ticket is not for a booking event — rescheduling slots is not available.
+					</p>
+				) }
+
+				{ detail && ! detail.error && dates.length === 0 && (
+					<p className="text-muted-foreground text-sm">No upcoming bookable dates.</p>
+				) }
+
+				{ detail && ! detail.error && dates.length > 0 && (
+					<div className="space-y-4">
+						<div>
+							<p className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-wide">
+								{ detail.labels?.date ?? 'Date' }
+							</p>
+							<div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto pb-1">
+								{ dates.map( ( d ) => (
+									<button
+										key={ d.id + d.date }
+										type="button"
+										onClick={ () => {
+											setViewYmd( d.date );
+											setPicked( null );
+										} }
+										className={ cn(
+											'rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+											viewYmd === d.date
+												? 'border-primary bg-primary/10'
+												: 'border-border bg-card hover:border-primary/50',
+										) }
+									>
+										<div className="max-w-[180px] truncate font-medium">{ d.label }</div>
+										<div className="text-muted-foreground text-xs">
+											{ format( parseISO( `${ d.date }T12:00:00` ), 'yyyy-MM-dd' ) }
+										</div>
+									</button>
+								) ) }
+							</div>
+						</div>
+
+						<div>
+							<p className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-wide">
+								{ detail.labels?.slot ?? 'Slot' }
+							</p>
+							<div className="max-h-52 space-y-3 overflow-y-auto pr-1">
+								{ groups.length === 0 ? (
+									<p className="text-muted-foreground text-sm">
+										No bookable slots for this day.
+									</p>
+								) : (
+									groups.map( ( g ) => (
+										<div key={ g.key }>
+											<p className="text-muted-foreground mb-1.5 text-xs font-medium">
+												{ String( g.hour ).padStart( 2, '0' ) }:00
+											</p>
+											<div className="flex flex-wrap gap-2">
+												{ g.slots.map( ( slot ) => {
+													const dateParam = isDateSlot
+														? ( selectedDay?.id ?? '' )
+														: ( slot.dateId || selectedDay?.id || '' );
+													const internalDateId = String( slot.dateId ?? '' );
+													const isCurrent = isTicketOnSlot(
+														ticket,
+														slot.id,
+														internalDateId,
+													);
+													const selectable = slotSelectable(
+														viewYmd,
+														slot.stock,
+														siteTodayYmd,
+													);
+													const disabled = ! selectable || isCurrent;
+													const isPicked =
+														picked
+														&& picked.slotId === slot.id
+														&& picked.internalDateId === internalDateId;
+													return (
+														<button
+															key={ slot.id + String( slot.dateId ?? '' ) }
+															type="button"
+															disabled={ disabled }
+															onClick={ () =>
+																setPicked( {
+																	slotId: slot.id,
+																	dateParam,
+																	internalDateId,
+																} ) }
+															className={ cn(
+																'rounded-md border px-2.5 py-2 text-left text-xs transition-colors',
+																isPicked
+																	&& 'border-primary bg-primary/15 ring-2 ring-primary/25',
+																isCurrent
+																	&& 'border-amber-600/50 bg-amber-500/10',
+																disabled
+																	&& 'cursor-not-allowed opacity-45',
+																! disabled
+																	&& ! isPicked
+																	&& 'hover:border-primary/55',
+															) }
+														>
+															<span className="block font-medium">
+																{ formatSlotTime( slot ) }
+															</span>
+															{ slot.label
+																&& formatSlotTime( slot ) !== slot.label.trim() ? (
+																		<span className="text-muted-foreground block truncate">
+																			{ slot.label }
+																		</span>
+																	) : null }
+															{ slot.stock !== null && slot.stock !== undefined ? (
+																<span className="text-muted-foreground block">
+																	{ slot.stock } left
+																</span>
+															) : (
+																<span className="text-muted-foreground block">
+																	Unlimited
+																</span>
+															) }
+															{ isCurrent ? (
+																<span className="mt-1 block text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+																	Current
+																</span>
+															) : null }
+														</button>
+													);
+												} ) }
+											</div>
+										</div>
+									) )
+								) }
+							</div>
+						</div>
+					</div>
+				) }
+
+				<DialogFooter className="gap-2 sm:gap-0">
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ () => onOpenChange( false ) }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						disabled={ submitDisabled || rescheduleMut.isPending }
+						onClick={ onConfirm }
+					>
+						{ rescheduleMut.isPending ? (
+							<>
+								<Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+								Saving…
+							</>
+						) : (
+							'Confirm reschedule'
+						) }
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
 
 export default function Validate() {
 	const formId = useId();
@@ -231,6 +573,7 @@ export default function Validate() {
 
 	const [ lastScanPurpose, setLastScanPurpose ] = useState< ScanPurpose | null >( null );
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
+	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
 
 	const scanRegionId =
 		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
@@ -361,12 +704,14 @@ export default function Validate() {
 		setSelectedTicketId( null );
 		setLastScanPurpose( null );
 		setJustCheckedInNumericId( null );
+		setRescheduleOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 	};
 
 	const openTicketFromSearchOrSibling = ( id: string ) => {
 		setJustCheckedInNumericId( null );
 		setLastScanPurpose( null );
+		setRescheduleOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( id.trim() );
 		setScannerOpen( false );
@@ -633,6 +978,49 @@ export default function Validate() {
 										<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
 									) }
 								</div>
+							</div>
+
+							<Separator />
+
+							<div>
+								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
+									Reschedule
+								</p>
+								<p className="text-muted-foreground mb-3 text-sm">
+									Change date or time on the same event (booking tickets only). Your order and payment stay the
+									same.
+								</p>
+								{ ticket.WooCommerceEventsStatus === 'Canceled' ? (
+									<p className="text-muted-foreground text-sm">
+										Canceled tickets cannot be rescheduled.
+									</p>
+								)
+									: isNonEmptyStr( ticket.WooCommerceEventsBookingSlotID )
+										&& isNonEmptyStr( ticket.WooCommerceEventsBookingDateID )
+										&& Number( ticket.WooCommerceEventsProductID ) > 0 ? (
+											<>
+												<Button
+													type="button"
+													variant="outline"
+													className="gap-2"
+													onClick={ () => setRescheduleOpen( true ) }
+												>
+													<CalendarClock className="size-4" aria-hidden />
+													Reschedule booking
+												</Button>
+												<TicketRescheduleDialog
+													open={ rescheduleOpen }
+													onOpenChange={ setRescheduleOpen }
+													ticket={ ticket }
+													ticketLookup={ getLookupFromTicket( ticket ) }
+													eventProductId={ Number( ticket.WooCommerceEventsProductID ) }
+												/>
+											</>
+										) : (
+											<p className="text-muted-foreground text-sm">
+												This ticket has no booking slot to reschedule.
+											</p>
+										) }
 							</div>
 
 							<SiblingTicketsBlock

@@ -8,6 +8,7 @@
 namespace FooEvents_Internal_POS;
 
 use WP_Error;
+use WP_Query;
 use WP_REST_Request;
 use WP_REST_Server;
 
@@ -36,12 +37,18 @@ class Rest_API {
 	private $booking_checkout;
 
 	/**
+	 * @var Ticket_Reschedule_Service
+	 */
+	private $ticket_reschedule;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
 		$this->bookings         = new Bookings_Service();
 		$this->slot_generator   = new Slot_Generator_Service();
 		$this->booking_checkout = new Bookings_Checkout_Service( $this->bookings );
+		$this->ticket_reschedule = new Ticket_Reschedule_Service( $this->bookings );
 	}
 
 	/**
@@ -182,6 +189,31 @@ class Rest_API {
 				),
 			)
 		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/validate/ticket/(?P<ticketId>[^/]+)/reschedule',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_validate_ticket_reschedule' ),
+				'permission_callback' => array( $this, 'can_validate_tickets' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/validate/event/(?P<id>\\d+)',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_validate_event' ),
+				'permission_callback' => array( $this, 'can_validate_tickets' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
 	}
 
 	/**
@@ -296,6 +328,16 @@ class Rest_API {
 		}
 		unset( $out['error'] );
 		return rest_ensure_response( $out );
+	}
+
+	/**
+	 * GET /validate/event/{id} — same payload as GET /events/{id} for ticket validators.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function get_validate_event( WP_REST_Request $request ) {
+		return $this->get_event( $request );
 	}
 
 	/**
@@ -515,6 +557,51 @@ class Rest_API {
 	}
 
 	/**
+	 * Resolve `event_magic_tickets` post ID from the same lookup string as `get_single_ticket()`.
+	 *
+	 * @param string $ticket_lookup Ticket id or productId-formatted id.
+	 * @return int Post ID or 0.
+	 */
+	private function resolve_ticket_post_id_for_lookup( $ticket_lookup ) {
+		$ticket_lookup = sanitize_text_field( (string) $ticket_lookup );
+		if ( '' === $ticket_lookup ) {
+			return 0;
+		}
+		$args = array(
+			'post_type'        => array( 'event_magic_tickets' ),
+			'post_status'      => 'any',
+			'posts_per_page'   => 1,
+			'suppress_filters' => true,
+			'fields'           => 'ids',
+		);
+
+		$ticket_id_parts = explode( '-', $ticket_lookup );
+		if ( count( $ticket_id_parts ) === 2 ) {
+			$args['meta_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+				'relation' => 'AND',
+				array(
+					'key'   => 'WooCommerceEventsProductID',
+					'value' => $ticket_id_parts[0],
+				),
+				array(
+					'key'   => 'WooCommerceEventsTicketNumberFormatted',
+					'value' => $ticket_id_parts[1],
+				),
+			);
+		} else {
+			$args['meta_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+				array(
+					'key'   => 'WooCommerceEventsTicketID',
+					'value' => $ticket_id_parts[0],
+				),
+			);
+		}
+
+		$q = new WP_Query( $args );
+		return ! empty( $q->posts[0] ) ? absint( $q->posts[0] ) : 0;
+	}
+
+	/**
 	 * GET /validate/ticket/{ticketId}
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -536,6 +623,18 @@ class Rest_API {
 
 		$data = $out['data'];
 		$pid  = isset( $data['WooCommerceEventsProductID'] ) ? absint( $data['WooCommerceEventsProductID'] ) : 0;
+
+		// FooEvents sometimes omits booking IDs from `get_ticket_data()`; read from the ticket post for Validate UI + reschedule.
+		$ticket_post_id = $this->resolve_ticket_post_id_for_lookup( $ticket_id );
+		if ( $ticket_post_id > 0 ) {
+			if ( empty( $data['WooCommerceEventsBookingSlotID'] ) ) {
+				$data['WooCommerceEventsBookingSlotID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlotID', true );
+			}
+			if ( empty( $data['WooCommerceEventsBookingDateID'] ) ) {
+				$data['WooCommerceEventsBookingDateID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true );
+			}
+		}
+
 		if ( $pid > 0 && function_exists( 'wc_get_product' ) ) {
 			$product = wc_get_product( $pid );
 			if ( $product ) {
@@ -584,6 +683,41 @@ class Rest_API {
 				'appliedStatus' => $status,
 			)
 		);
+	}
+
+	/**
+	 * POST /validate/ticket/{ticketId}/reschedule — body `{ "eventId", "slotId", "dateId" }`.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_validate_ticket_reschedule( WP_REST_Request $request ) {
+		$ticket_id = isset( $request['ticketId'] ) ? sanitize_text_field( rawurldecode( (string) $request['ticketId'] ) ) : '';
+		if ( '' === $ticket_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'ticketId is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$params = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$event_id = isset( $params['eventId'] ) ? (int) $params['eventId'] : 0;
+		$slot_id  = isset( $params['slotId'] ) ? trim( (string) $params['slotId'] ) : '';
+		$date_id  = isset( $params['dateId'] ) ? trim( (string) $params['dateId'] ) : '';
+
+		$result = $this->ticket_reschedule->reschedule(
+			$ticket_id,
+			$event_id,
+			$slot_id,
+			$date_id,
+			(int) get_current_user_id()
+		);
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return rest_ensure_response( $result );
 	}
 
 	/**

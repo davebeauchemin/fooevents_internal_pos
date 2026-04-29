@@ -22,6 +22,21 @@ export function useEvent( id ) {
 }
 
 /**
+ * Event detail for ticket validation UI (validators may lack `manage_woocommerce`).
+ *
+ * @param {number|string|undefined} id Product id.
+ * @param {{ enabled?: boolean }} options Optional query options.
+ */
+export function useValidateEvent( id, options = {} ) {
+	const { enabled = true } = options;
+	return useQuery( {
+		queryKey: [ 'internalpos', 'validateEvent', id ],
+		enabled: Boolean( id ) && enabled,
+		queryFn: () => restFetch( `${ prefix }/validate/event/${ id }` ),
+	} );
+}
+
+/**
  * Read-only day dashboard. Empty `ymd` lets WordPress use site-local today.
  *
  * @param {string} ymd - Y-m-d or ""
@@ -176,6 +191,39 @@ export function useUpdateTicketStatus() {
 		onSuccess: ( _data, variables ) => {
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', variables.ticketId ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
+		},
+	} );
+}
+
+/**
+ * Same-event booking reschedule (ticket CPT + inventory); body `{ eventId, slotId, dateId }`.
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult<
+ *   unknown,
+ *   Error,
+ *   { ticketId: string, eventId: number, slotId: string, dateId: string }
+ * >}
+ */
+export function useRescheduleTicket() {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'rescheduleTicket' ],
+		mutationFn: ( { ticketId, eventId, slotId, dateId } ) =>
+			restFetch(
+				`${ prefix }/validate/ticket/${ encodeURIComponent( ticketId ) }/reschedule`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify( { eventId, slotId, dateId } ),
+				}
+			),
+		onSuccess: ( _data, variables ) => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', variables.ticketId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateEvent', variables.eventId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
 		},
 	} );
 }
