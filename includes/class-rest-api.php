@@ -7,6 +7,7 @@
 
 namespace FooEvents_Internal_POS;
 
+use WC_Order;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -602,6 +603,64 @@ class Rest_API {
 	}
 
 	/**
+	 * Fill booking slot/date *internal* IDs from the WooCommerce order blueprint when ticket post meta is empty.
+	 *
+	 * @param array<string,mixed> $data Ticket payload (by ref).
+	 * @param int                 $event_id Product id.
+	 * @param string              $numeric_ticket_id FooEvents ticket id.
+	 */
+	private function enrich_booking_ids_from_order_tickets( array &$data, $event_id, $numeric_ticket_id ) {
+		$numeric_ticket_id = trim( (string) $numeric_ticket_id );
+		$event_id          = (int) $event_id;
+		if ( '' === $numeric_ticket_id || $event_id <= 0 || ! function_exists( 'wc_get_order' ) ) {
+			return;
+		}
+
+		$order_id = isset( $data['WooCommerceEventsOrderID'] ) ? absint( $data['WooCommerceEventsOrderID'] ) : 0;
+		if ( $order_id <= 0 ) {
+			return;
+		}
+
+		$order = wc_get_order( $order_id );
+		if ( ! $order instanceof WC_Order ) {
+			return;
+		}
+
+		$tickets = $order->get_meta( 'WooCommerceEventsOrderTickets', true );
+		if ( ! is_array( $tickets ) ) {
+			return;
+		}
+
+		foreach ( $tickets as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			foreach ( $row as $t ) {
+				if ( ! is_array( $t ) ) {
+					continue;
+				}
+				if ( (int) ( $t['WooCommerceEventsProductID'] ?? 0 ) !== $event_id ) {
+					continue;
+				}
+				if ( (string) ( $t['WooCommerceEventsTicketID'] ?? '' ) !== $numeric_ticket_id ) {
+					continue;
+				}
+				$opts = isset( $t['WooCommerceEventsBookingOptions'] ) ? $t['WooCommerceEventsBookingOptions'] : null;
+				if ( ! is_array( $opts ) ) {
+					return;
+				}
+				if ( isset( $opts['slot_id'] ) && '' !== trim( (string) $opts['slot_id'] ) ) {
+					$data['WooCommerceEventsBookingSlotID'] = (string) $opts['slot_id'];
+				}
+				if ( isset( $opts['date_id'] ) && '' !== trim( (string) $opts['date_id'] ) ) {
+					$data['WooCommerceEventsBookingDateID'] = (string) $opts['date_id'];
+				}
+				return;
+			}
+		}
+	}
+
+	/**
 	 * GET /validate/ticket/{ticketId}
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -626,13 +685,27 @@ class Rest_API {
 
 		// FooEvents sometimes omits booking IDs from `get_ticket_data()`; read from the ticket post for Validate UI + reschedule.
 		$ticket_post_id = $this->resolve_ticket_post_id_for_lookup( $ticket_id );
+		if ( $ticket_post_id <= 0 && $pid > 0 && ! empty( $data['WooCommerceEventsTicketNumberFormatted'] ) ) {
+			$ticket_post_id = $this->resolve_ticket_post_id_for_lookup( (string) $pid . '-' . (string) $data['WooCommerceEventsTicketNumberFormatted'] );
+		}
+		if ( $ticket_post_id <= 0 && ! empty( $data['WooCommerceEventsTicketID'] ) ) {
+			$ticket_post_id = $this->resolve_ticket_post_id_for_lookup( (string) $data['WooCommerceEventsTicketID'] );
+		}
 		if ( $ticket_post_id > 0 ) {
-			if ( empty( $data['WooCommerceEventsBookingSlotID'] ) ) {
+			$have_slot = isset( $data['WooCommerceEventsBookingSlotID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingSlotID'] );
+			$have_date = isset( $data['WooCommerceEventsBookingDateID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingDateID'] );
+			if ( ! $have_slot ) {
 				$data['WooCommerceEventsBookingSlotID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlotID', true );
 			}
-			if ( empty( $data['WooCommerceEventsBookingDateID'] ) ) {
+			if ( ! $have_date ) {
 				$data['WooCommerceEventsBookingDateID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true );
 			}
+		}
+
+		$slot_ok = isset( $data['WooCommerceEventsBookingSlotID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingSlotID'] );
+		$date_ok = isset( $data['WooCommerceEventsBookingDateID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingDateID'] );
+		if ( ( ! $slot_ok || ! $date_ok ) && $pid > 0 && ! empty( $data['WooCommerceEventsTicketID'] ) ) {
+			$this->enrich_booking_ids_from_order_tickets( $data, $pid, (string) $data['WooCommerceEventsTicketID'] );
 		}
 
 		if ( $pid > 0 && function_exists( 'wc_get_product' ) ) {

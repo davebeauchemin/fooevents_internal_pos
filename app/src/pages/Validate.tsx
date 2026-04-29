@@ -52,6 +52,21 @@ import { cn } from '@/lib/utils';
 const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
 const SCAN_REGION_CHECKIN = 'fooevents-checkin-scan-region';
 
+/** Non-empty booking meta id from API (string or number). */
+function normalizedBookingMetaId( v: unknown ): string {
+	if ( v == null ) {
+		return '';
+	}
+	return String( v ).trim();
+}
+
+function ticketHasBookingSlotIds( ticket: FooTicketPayload ): boolean {
+	return (
+		normalizedBookingMetaId( ticket.WooCommerceEventsBookingSlotID ) !== ''
+		&& normalizedBookingMetaId( ticket.WooCommerceEventsBookingDateID ) !== ''
+	);
+}
+
 /** @param {unknown} s */
 function isNonEmptyStr( s: unknown ): s is string {
 	return typeof s === 'string' && s.trim().length > 0;
@@ -240,8 +255,8 @@ type FooTicketPayload = Record< string, unknown > & {
 	WooCommerceEventsAttendeeTelephone?: string;
 	WooCommerceEventsBookingDate?: string;
 	WooCommerceEventsBookingSlot?: string;
-	WooCommerceEventsBookingSlotID?: string;
-	WooCommerceEventsBookingDateID?: string;
+	WooCommerceEventsBookingSlotID?: string | number;
+	WooCommerceEventsBookingDateID?: string | number;
 	eventDisplayName?: string;
 };
 
@@ -995,8 +1010,7 @@ export default function Validate() {
 										Canceled tickets cannot be rescheduled.
 									</p>
 								)
-									: isNonEmptyStr( ticket.WooCommerceEventsBookingSlotID )
-										&& isNonEmptyStr( ticket.WooCommerceEventsBookingDateID )
+									: ticketHasBookingSlotIds( ticket )
 										&& Number( ticket.WooCommerceEventsProductID ) > 0 ? (
 											<>
 												<Button
