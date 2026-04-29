@@ -61,7 +61,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_dashboard' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
 				'args'                => array(
 					'date' => array(
 						'required'          => false,
@@ -78,7 +78,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_events' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
 			)
 		);
 		register_rest_route(
@@ -87,7 +87,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'post_slots_generate' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
 				'args'                => array(
 					'id' => array(
 						'validate_callback' => function( $p ) {
@@ -103,7 +103,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_event' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
 				'args'                => array(
 					'id' => array(
 						'validate_callback' => function( $p ) {
@@ -119,7 +119,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'post_availability' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
 			)
 		);
 		register_rest_route(
@@ -128,7 +128,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'post_bookings' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
 			)
 		);
 		register_rest_route(
@@ -137,7 +137,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'post_checkout_preview' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
 			)
 		);
 		register_rest_route(
@@ -146,20 +146,94 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_payment_methods' ),
-				'permission_callback' => array( $this, 'can_manage' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/validate/search',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_validate_search' ),
+				'permission_callback' => array( $this, 'can_validate_tickets' ),
+				'args'                => array(
+					'q' => array(
+						'required'          => true,
+						'validate_callback' => function( $p ) {
+							return is_string( $p ) && mb_strlen( trim( $p ) ) >= 3;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/validate/ticket/(?P<ticketId>[^/]+)',
+			array(
+				array(
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => array( $this, 'get_validate_ticket' ),
+					'permission_callback' => array( $this, 'can_validate_tickets' ),
+				),
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'post_validate_ticket_status' ),
+					'permission_callback' => array( $this, 'can_validate_tickets' ),
+				),
 			)
 		);
 	}
 
 	/**
+	 * Cashiers (publish_fooeventspos) + shop managers.
+	 *
 	 * @return true|WP_Error
 	 */
-	public function can_manage() {
-		if ( ! is_user_logged_in() || ! current_user_can( 'manage_woocommerce' ) ) {
+	public function can_use_pos() {
+		if ( ! Access_Helper::can_use_pos() ) {
 			return new WP_Error(
 				'rest_forbidden',
 				__( 'You do not have permission to use Internal POS.', 'fooevents-internal-pos' ),
 				array( 'status' => 403 )
+			);
+		}
+		return true;
+	}
+
+	/**
+	 * Shop managers — event list/detail and slot generation.
+	 *
+	 * @return true|WP_Error
+	 */
+	public function can_manage_events() {
+		if ( ! Access_Helper::can_manage_shop_events() ) {
+			return new WP_Error(
+				'rest_forbidden',
+				__( 'You do not have permission for event management.', 'fooevents-internal-pos' ),
+				array( 'status' => 403 )
+			);
+		}
+		return true;
+	}
+
+	/**
+	 * FooEvents ticket check-in validators (publish_event_magic_tickets | app_event_magic_tickets).
+	 *
+	 * @return true|WP_Error
+	 */
+	public function can_validate_tickets() {
+		if ( ! Access_Helper::can_validate_fooevents_tickets() ) {
+			return new WP_Error(
+				'rest_forbidden',
+				__( 'You do not have permission to validate tickets.', 'fooevents-internal-pos' ),
+				array( 'status' => 403 )
+			);
+		}
+		if ( ! function_exists( 'get_single_ticket' ) || ! function_exists( 'update_ticket_status' ) ) {
+			return new WP_Error(
+				'rest_ticket_api_unavailable',
+				__( 'FooEvents ticket API is not available.', 'fooevents-internal-pos' ),
+				array( 'status' => 503 )
 			);
 		}
 		return true;
@@ -321,6 +395,184 @@ class Rest_API {
 	}
 
 	/**
+	 * GET /validate/search?q=
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function get_validate_search( WP_REST_Request $request ) {
+		global $wpdb;
+		$q = $request->get_param( 'q' );
+		$q = is_string( $q ) ? trim( sanitize_text_field( $q ) ) : '';
+		if ( mb_strlen( $q ) < 3 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Query q must be at least 3 characters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$like_any = '%' . $wpdb->esc_like( $q ) . '%';
+
+		$ticket_query = new \WP_Query(
+			array(
+				'post_type'              => 'event_magic_tickets',
+				'post_status'            => 'any',
+				'posts_per_page'         => 50,
+				'fields'                 => 'ids',
+				'no_found_rows'          => true,
+				'suppress_filters'       => true,
+				'update_post_term_cache' => false,
+				'meta_query'             => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+					'relation' => 'OR',
+					array(
+						'key'     => 'WooCommerceEventsAttendeeEmail',
+						'value'   => $like_any,
+						'compare' => 'LIKE',
+					),
+					array(
+						'key'     => 'WooCommerceEventsAttendeeTelephone',
+						'value'   => $like_any,
+						'compare' => 'LIKE',
+					),
+					array(
+						'key'     => 'WooCommerceEventsTicketID',
+						'value'   => $like_any,
+						'compare' => 'LIKE',
+					),
+				),
+			)
+		);
+
+		$ticket_post_ids = $ticket_query->get_posts();
+		$results         = array();
+
+		foreach ( $ticket_post_ids as $post_id ) {
+			$lookup = $this->ticket_lookup_identifier_for_post( $post_id );
+			$fn    = (string) get_post_meta( $post_id, 'WooCommerceEventsAttendeeName', true );
+			$ln    = (string) get_post_meta( $post_id, 'WooCommerceEventsAttendeeLastName', true );
+			$name  = trim( $fn . ' ' . $ln );
+			if ( '' === $name ) {
+				$name = (string) get_post_meta( $post_id, 'WooCommerceEventsProductName', true );
+			}
+			$results[] = array(
+				'ticketId'           => $lookup['ticketId'],
+				'ticketNumericId'   => $lookup['numericId'],
+				'attendeeName'      => $name,
+				'eventName'          => (string) get_post_meta( $post_id, 'WooCommerceEventsProductName', true ),
+				'WooCommerceEventsStatus' => (string) get_post_meta( $post_id, 'WooCommerceEventsStatus', true ),
+			);
+		}
+
+		return rest_ensure_response(
+			array(
+				'results' => $results,
+			)
+		);
+	}
+
+	/**
+	 * Build the same ticket id string scanners / Check-ins apps use (`get_single_ticket`).
+	 *
+	 * @param int $ticket_post_id Ticket CPT id.
+	 * @return array{ticketId:string,numericId:string}
+	 */
+	private function ticket_lookup_identifier_for_post( $ticket_post_id ) {
+		$ticket_post_id = absint( $ticket_post_id );
+		$product_id     = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsProductID', true );
+		$numeric_tid    = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketID', true );
+		$formatted      = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketNumberFormatted', true );
+		if ( '' === $product_id ) {
+			return array(
+				'ticketId'  => $numeric_tid,
+				'numericId' => $numeric_tid,
+			);
+		}
+		$identifier_mode = (string) get_post_meta( absint( $product_id ), 'WooCommerceEventsTicketIdentifierOutput', true );
+		if ( '' === $identifier_mode ) {
+			$identifier_mode = 'ticketid';
+		}
+		if ( 'ticketnumberformatted' === $identifier_mode && '' !== $formatted ) {
+			return array(
+				'ticketId'  => $product_id . '-' . $formatted,
+				'numericId' => $numeric_tid,
+			);
+		}
+		return array(
+			'ticketId'  => $numeric_tid,
+			'numericId' => $numeric_tid,
+		);
+	}
+
+	/**
+	 * GET /validate/ticket/{ticketId}
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function get_validate_ticket( WP_REST_Request $request ) {
+		$ticket_id = isset( $request['ticketId'] ) ? sanitize_text_field( rawurldecode( (string) $request['ticketId'] ) ) : '';
+		if ( '' === $ticket_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'ticketId is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$out = get_single_ticket( $ticket_id );
+		if ( ! empty( $out['status'] ) && 'error' === $out['status'] ) {
+			return new WP_Error( 'not_found', __( 'Ticket not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		if ( empty( $out['data'] ) || ! is_array( $out['data'] ) ) {
+			return new WP_Error( 'not_found', __( 'Ticket not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$data = $out['data'];
+		$pid  = isset( $data['WooCommerceEventsProductID'] ) ? absint( $data['WooCommerceEventsProductID'] ) : 0;
+		if ( $pid > 0 && function_exists( 'wc_get_product' ) ) {
+			$product = wc_get_product( $pid );
+			if ( $product ) {
+				$data['eventDisplayName'] = $product->get_name();
+			}
+		}
+
+		return rest_ensure_response(
+			array(
+				'ticket' => $data,
+			)
+		);
+	}
+
+	/**
+	 * POST /validate/ticket/{ticketId} — body `{ "status": "Checked In" | "Not Checked In" | "Canceled" }`.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_validate_ticket_status( WP_REST_Request $request ) {
+		$ticket_id = isset( $request['ticketId'] ) ? sanitize_text_field( rawurldecode( (string) $request['ticketId'] ) ) : '';
+		if ( '' === $ticket_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'ticketId is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$params = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$status = isset( $params['status'] ) ? trim( wp_strip_all_tags( (string) $params['status'] ) ) : '';
+		$allowed = array( 'Checked In', 'Not Checked In', 'Canceled' );
+		if ( ! in_array( $status, $allowed, true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'Invalid status. Use Checked In, Not Checked In, or Canceled.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$result = update_ticket_status( $ticket_id, $status );
+
+		return rest_ensure_response(
+			array(
+				'message'       => $result,
+				'appliedStatus' => $status,
+			)
+		);
+	}
+
+	/**
 	 * POST /bookings
 	 *
 	 * @param WP_REST_Request $request Request.
@@ -339,8 +591,14 @@ class Rest_API {
 		$fn       = isset( $att['firstName'] ) ? trim( (string) $att['firstName'] ) : '';
 		$ln       = isset( $att['lastName'] ) ? trim( (string) $att['lastName'] ) : '';
 		$em       = isset( $att['email'] ) ? trim( (string) $att['email'] ) : '';
-		$note     = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
-		$pm_key   = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
+		$note   = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
+		$pm_key = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
+
+		$check_in_now = false;
+		if ( isset( $params['checkInNow'] ) ) {
+			$boo = filter_var( $params['checkInNow'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+			$check_in_now = null === $boo ? (bool) $params['checkInNow'] : (bool) $boo;
+		}
 
 		$booking_args = array(
 			'payment_method_key' => $pm_key,
@@ -348,6 +606,7 @@ class Rest_API {
 			'attendee_last'      => $ln,
 			'attendee_email'     => $em,
 			'note'               => $note,
+			'check_in_now'       => $check_in_now,
 		);
 
 		if ( ! empty( $params['lines'] ) && is_array( $params['lines'] ) ) {

@@ -61,8 +61,8 @@ class Frontend_Page {
 		if ( ! $this->is_internal_pos_page() ) {
 			return $template;
 		}
-		// Capability gate for logged-in shop managers.
-		if ( ! is_user_logged_in() || ! current_user_can( 'manage_woocommerce' ) ) {
+		// Cashiers (`publish_fooeventspos`) and shop managers (`manage_woocommerce`).
+		if ( ! Access_Helper::can_use_pos() ) {
 			if ( ! is_user_logged_in() ) {
 				wp_safe_redirect( wp_login_url( get_permalink() ) );
 			} else {
@@ -84,7 +84,7 @@ class Frontend_Page {
 		if ( ! $this->is_internal_pos_page() || is_admin() ) {
 			return;
 		}
-		if ( ! is_user_logged_in() || ! current_user_can( 'manage_woocommerce' ) ) {
+		if ( ! Access_Helper::can_use_pos() ) {
 			return;
 		}
 

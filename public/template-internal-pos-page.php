@@ -28,6 +28,10 @@ defined( 'ABSPATH' ) || exit;
 		?>
 		localStorage.setItem("INTERNAL_POS_BASENAME", <?php echo wp_json_encode( $page_path ); ?>);
 		localStorage.setItem("INTERNAL_POS_APP_URL", <?php echo wp_json_encode( is_string( $page_url ) ? $page_url : home_url( '/' ) ); ?>);
+
+		window.FooEventsInternalPOS = <?php
+		echo wp_json_encode( FooEvents_Internal_POS\Access_Helper::pos_access_flags() );
+		?>;
 	})();
 	</script>
 </head>

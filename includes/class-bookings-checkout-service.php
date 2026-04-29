@@ -211,6 +211,12 @@ class Bookings_Checkout_Service {
 		$al     = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
 		$em     = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
 		$note   = isset( $args['note'] ) ? sanitize_text_field( (string) $args['note'] ) : '';
+		if ( isset( $args['check_in_now'] ) ) {
+			$b               = filter_var( $args['check_in_now'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+			$check_in_now = null === $b ? (bool) $args['check_in_now'] : (bool) $b;
+		} else {
+			$check_in_now = false;
+		}
 
 		if ( ! is_email( $em ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'Invalid booking parameters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
@@ -235,7 +241,7 @@ class Bookings_Checkout_Service {
 			return $parsed;
 		}
 
-		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note );
+		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note, $check_in_now );
 	}
 
 	/**
@@ -294,10 +300,11 @@ class Bookings_Checkout_Service {
 	 * @param string                                                                   $af First name.
 	 * @param string                                                                   $al Last name.
 	 * @param string                                                                   $em Email.
-	 * @param string                                                                   $note Customer note.
+	 * @param string                                                                     $note Customer note.
+	 * @param bool                                                                       $check_in_now Mark emitted tickets Checked In immediately.
 	 * @return array|WP_Error
 	 */
-	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note ) {
+	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note, $check_in_now = false ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) || ! class_exists( 'FooEvents_Config' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce or FooEvents is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
@@ -476,6 +483,12 @@ class Bookings_Checkout_Service {
 				}
 			}
 
+			$checked_in_ticket_ids = array();
+			if ( $check_in_now ) {
+				$ticket_candidates = $this->get_order_ticket_ids( $order_id );
+				$checked_in_ticket_ids = $this->check_in_ticket_posts_native( $ticket_candidates );
+			}
+
 			if ( WC()->cart ) {
 				WC()->cart->empty_cart();
 			}
@@ -514,6 +527,8 @@ class Bookings_Checkout_Service {
 			return array(
 				'orderId'             => (int) $order_id,
 				'ticketIds'           => $ids,
+				'checkedInTicketIds' => $checked_in_ticket_ids,
+				'checkedInCount'      => count( $checked_in_ticket_ids ),
 				'remaining'           => $last_remain,
 				'remainingByLine'     => $remaining_by_line,
 				'qty'                 => $total_qty,
@@ -637,6 +652,102 @@ class Bookings_Checkout_Service {
 		}
 		$order->update_meta_data( 'WooCommerceEventsOrderTickets', $tickets );
 		$order->save();
+	}
+
+	/**
+	 * Mark FooEvents ticket posts as checked in — mirrors FooEvents `update_ticket_status()` behavior.
+	 *
+	 * @param int[] $ticket_post_ids `event_magic_tickets` post IDs.
+	 * @return int[]
+	 */
+	private function check_in_ticket_posts_native( array $ticket_post_ids ) {
+		global $wpdb;
+
+		$table_name = $wpdb->prefix . 'fooevents_check_in';
+		$status      = 'Checked In';
+		$done_ids    = array();
+
+		if ( ! function_exists( 'is_plugin_active' ) || ! function_exists( 'is_plugin_active_for_network' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		foreach ( $ticket_post_ids as $tid_raw ) {
+			$tid = (int) $tid_raw;
+			if ( $tid <= 0 ) {
+				continue;
+			}
+			if ( 'event_magic_tickets' !== get_post_type( $tid ) ) {
+				continue;
+			}
+
+			$existing = get_post_meta( $tid, 'WooCommerceEventsStatus', true );
+			if ( 'Checked In' === $existing ) {
+				$done_ids[] = $tid;
+				continue;
+			}
+
+			update_post_meta( $tid, 'WooCommerceEventsStatus', wp_strip_all_tags( $status ) );
+
+			$event_id = (int) get_post_meta( $tid, 'WooCommerceEventsProductID', true );
+			$timestamp = current_time( 'timestamp' ); // phpcs:ignore WordPress.DateTime.CurrentTimeTimestamp.Requested
+
+			if (
+				is_plugin_active( 'fooevents_multi_day/fooevents-multi-day.php' )
+				|| is_plugin_active_for_network( 'fooevents_multi_day/fooevents-multi-day.php' )
+			) {
+
+				$woocommerce_events_num_days = (int) get_post_meta( $event_id, 'WooCommerceEventsNumDays', true );
+
+				if ( $woocommerce_events_num_days > 1 ) {
+
+					$woocommerce_events_multiday_status = array();
+					for ( $day = 1; $day <= $woocommerce_events_num_days; $day++ ) {
+						$woocommerce_events_multiday_status[ $day ] = wp_strip_all_tags( $status );
+						$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+							$table_name,
+							array(
+								'tid'     => $tid,
+								'eid'     => $event_id,
+								'day'     => $day,
+								'uid'     => get_current_user_id(),
+								'status'  => $status,
+								'checkin' => $timestamp,
+							)
+						);
+					}
+					update_post_meta( $tid, 'WooCommerceEventsMultidayStatus', wp_strip_all_tags( wp_json_encode( $woocommerce_events_multiday_status ) ) );
+				} else {
+					$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+						$table_name,
+						array(
+							'tid'     => $tid,
+							'eid'     => $event_id,
+							'day'     => 1,
+							'uid'     => get_current_user_id(),
+							'status'  => $status,
+							'checkin' => $timestamp,
+						)
+					);
+				}
+			} else {
+				$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					$table_name,
+					array(
+						'tid'     => $tid,
+						'eid'     => $event_id,
+						'day'     => 1,
+						'uid'     => get_current_user_id(),
+						'status'  => $status,
+						'checkin' => $timestamp,
+					)
+				);
+			}
+
+			do_action( 'fooevents_check_in_ticket', array( $tid, $status, time() ) );
+			$done_ids[] = $tid;
+		}
+
+		return array_values( array_unique( array_map( 'intval', $done_ids ) ) );
 	}
 
 	/**
