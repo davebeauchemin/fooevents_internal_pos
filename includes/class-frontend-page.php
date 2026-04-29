@@ -20,6 +20,9 @@ class Frontend_Page {
 	public function init() {
 		add_filter( 'template_include', array( $this, 'template_include' ), 1001 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ), 5 );
+		add_action( 'wp_enqueue_scripts', array( $this, 'isolate_internal_pos_frontend_assets' ), PHP_INT_MAX );
+		add_action( 'wp_print_styles', array( $this, 'isolate_internal_pos_frontend_assets' ), 1 );
+		add_action( 'wp_print_scripts', array( $this, 'isolate_internal_pos_frontend_assets' ), 1 );
 		add_filter( 'show_admin_bar', array( $this, 'hide_admin_bar' ), 100 );
 		add_filter( 'script_loader_tag', array( $this, 'script_loader_tag' ), 10, 3 );
 	}
@@ -121,6 +124,46 @@ class Frontend_Page {
 						$ver
 					);
 					++$j;
+				}
+			}
+		}
+	}
+
+	/**
+	 * Strip theme/plugin CSS and JS on the Internal POS page so only this plugin's Vite assets load.
+	 *
+	 * Run late on `wp_enqueue_scripts` and early on `wp_print_*` so late-queued handles are removed too.
+	 */
+	public function isolate_internal_pos_frontend_assets() {
+		if ( ! $this->is_internal_pos_page() || is_admin() ) {
+			return;
+		}
+		if ( ! Access_Helper::can_use_pos() ) {
+			return;
+		}
+
+		global $wp_styles, $wp_scripts;
+
+		if ( $wp_styles instanceof \WP_Styles ) {
+			$style_queue = is_array( $wp_styles->queue ) ? $wp_styles->queue : array();
+			foreach ( $style_queue as $handle ) {
+				if ( ! is_string( $handle ) ) {
+					continue;
+				}
+				if ( 0 !== strpos( $handle, 'fooevents-internal-pos-style-' ) ) {
+					wp_dequeue_style( $handle );
+				}
+			}
+		}
+
+		if ( $wp_scripts instanceof \WP_Scripts ) {
+			$script_queue = is_array( $wp_scripts->queue ) ? $wp_scripts->queue : array();
+			foreach ( $script_queue as $handle ) {
+				if ( ! is_string( $handle ) ) {
+					continue;
+				}
+				if ( 0 !== strpos( $handle, 'fooevents-internal-pos-app-' ) ) {
+					wp_dequeue_script( $handle );
 				}
 			}
 		}

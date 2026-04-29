@@ -14,6 +14,35 @@ defined( 'ABSPATH' ) || exit;
 	<meta charset="<?php bloginfo( 'charset' ); ?>" />
 	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 	<title><?php echo esc_html( get_bloginfo( 'name' ) . ' — ' . __( 'Internal POS', 'fooevents-internal-pos' ) ); ?></title>
+	<style id="fooevents-internal-pos-critical-reset">
+		html,
+		body.fooevents-internal-pos-body {
+			margin: 0;
+			padding: 0;
+			min-height: 100%;
+			width: 100%;
+			height: 100%;
+			background: #f8fafc;
+			color: #0f172a;
+			font-family: 'Inter Variable', Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+			line-height: 1.5;
+			-webkit-font-smoothing: antialiased;
+			-moz-osx-font-smoothing: grayscale;
+		}
+		body.fooevents-internal-pos-body {
+			display: block;
+		}
+		#root {
+			min-height: 100vh;
+			min-height: 100dvh;
+			width: 100%;
+		}
+		#root *,
+		#root *::before,
+		#root *::after {
+			box-sizing: border-box;
+		}
+	</style>
 	<?php wp_head(); ?>
 	<script>
 	(function() {

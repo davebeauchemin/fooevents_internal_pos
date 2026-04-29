@@ -1,12 +1,15 @@
-import { useDeferredValue, useEffect, useId, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useRef, useState } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
 	ArrowLeft,
 	Camera,
+	CheckCircle2,
+	CircleAlert,
 	Loader2,
 	ScanBarcode,
 	UserSearch,
 	X,
+	XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useTicketDetail, useTicketSearch, useUpdateTicketStatus } from '@/api/queries.js';
@@ -22,25 +25,181 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 
-const SCAN_REGION_ID = 'fooevents-validate-scan-region';
+const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
+const SCAN_REGION_CHECKIN = 'fooevents-checkin-scan-region';
 
 /** @param {unknown} s */
 function isNonEmptyStr( s: unknown ): s is string {
 	return typeof s === 'string' && s.trim().length > 0;
 }
 
-/** @param {string} status */
+type TicketTone = 'neutral' | 'blue' | 'green' | 'yellow' | 'red';
+
+/** Badge + search row accents aligned with ticket visual language. */
 function statusBadgeClass( status: string ) {
 	switch ( status ) {
-		case 'Checked In':
-			return 'border-green-700/40 bg-green-600/15 text-green-900 dark:border-green-600/45 dark:bg-green-950/40 dark:text-green-300';
 		case 'Not Checked In':
-			return 'border-amber-700/35 bg-amber-500/15 text-amber-950 dark:border-amber-600/35 dark:bg-amber-950/35 dark:text-amber-100';
+			return 'border-blue-600/50 bg-blue-500/15 text-blue-950 dark:border-blue-500/55 dark:bg-blue-950/45 dark:text-blue-100';
+		case 'Checked In':
+			return 'border-amber-600/50 bg-amber-500/15 text-amber-950 dark:border-amber-500/55 dark:bg-amber-950/35 dark:text-amber-100';
 		case 'Canceled':
 			return 'border-destructive/40 bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-red-300';
 		default:
 			return 'border-muted-foreground/35 bg-muted/40 text-muted-foreground';
+	}
+}
+
+function searchRowAccentClass( status: string ): string {
+	switch ( status ) {
+		case 'Not Checked In':
+			return 'border-blue-600/35 bg-blue-500/5 hover:bg-blue-500/15 dark:bg-blue-950/25';
+		case 'Checked In':
+			return 'border-amber-600/35 bg-amber-500/5 hover:bg-amber-500/12 dark:bg-amber-950/25';
+		case 'Canceled':
+			return 'border-destructive/30 bg-destructive/5 hover:bg-destructive/12';
+		default:
+			return 'border-transparent hover:bg-accent/75';
+	}
+}
+
+/**
+ * Builds API ticketId for mutate (matches existing applyStatus logic).
+ */
+function ticketLookupArg(
+	ticket: FooTicketPayload,
+	selectedId: string | null
+): string {
+	const formatted = ticket.WooCommerceEventsTicketNumberFormatted;
+	let lookup =
+		isNonEmptyStr( formatted ) && formatted.trim().length > 0
+			? formatted.trim()
+			: '';
+	if ( ! lookup && selectedId && selectedId.length > 0 ) {
+		lookup = selectedId.trim();
+	}
+	if ( ! lookup ) {
+		lookup = String( ticket.WooCommerceEventsTicketID ?? '' );
+	}
+	return lookup;
+}
+
+/** Card border/background tone for main ticket Card. */
+function ticketCardToneClass( tone: TicketTone ): string {
+	switch ( tone ) {
+		case 'blue':
+			return 'border-blue-600/65 bg-blue-500/12 shadow-sm dark:border-blue-500/55 dark:bg-blue-950/45';
+		case 'green':
+			return 'border-green-600/65 bg-green-500/12 shadow-md dark:border-green-500/55 dark:bg-green-950/40';
+		case 'yellow':
+			return 'border-amber-500/70 bg-amber-400/10 shadow-sm dark:border-amber-500/50 dark:bg-amber-950/35';
+		case 'red':
+			return 'border-destructive/60 bg-destructive/10 dark:bg-destructive/15';
+		default:
+			return '';
+	}
+}
+
+function resolveTicketTone( args: {
+	ticket?: FooTicketPayload;
+	loading: boolean;
+	error: boolean;
+	justCheckedInNumericId: string | null;
+} ): TicketTone {
+	if ( args.error ) {
+		return 'red';
+	}
+	if ( args.loading || ! args.ticket ) {
+		return 'neutral';
+	}
+	const t = args.ticket;
+	const nid = String( t.WooCommerceEventsTicketID ?? '' ).trim();
+	if (
+		args.justCheckedInNumericId
+		&& nid
+		&& args.justCheckedInNumericId === nid
+	) {
+		return 'green';
+	}
+	switch ( String( t.WooCommerceEventsStatus ?? '' ) ) {
+		case 'Not Checked In':
+			return 'blue';
+		case 'Checked In':
+			return 'yellow';
+		case 'Canceled':
+			return 'red';
+		default:
+			return 'neutral';
+	}
+}
+
+type ResultPanelCopy = {
+	ResultIcon:
+		| typeof CheckCircle2
+		| typeof CircleAlert
+		| typeof XCircle;
+	headline: string;
+	subtitle: string;
+};
+
+function ticketResultCopy( args: {
+	ticket?: FooTicketPayload;
+	error: boolean;
+	justCheckedInNumericId: string | null;
+} ): ResultPanelCopy {
+	if ( args.error ) {
+		return {
+			ResultIcon: XCircle,
+			headline: 'Ticket not found',
+			subtitle: 'Do not admit unless verified manually.',
+		};
+	}
+	if ( ! args.ticket ) {
+		return {
+			ResultIcon: CircleAlert,
+			headline: 'Review ticket',
+			subtitle: 'Status unavailable or unknown.',
+		};
+	}
+	const t = args.ticket;
+	const nid = String( t.WooCommerceEventsTicketID ?? '' ).trim();
+	if (
+		args.justCheckedInNumericId
+		&& nid
+		&& args.justCheckedInNumericId === nid
+	) {
+		return {
+			ResultIcon: CheckCircle2,
+			headline: 'Checked in',
+			subtitle: 'Entry confirmed for this attendee.',
+		};
+	}
+	switch ( String( t.WooCommerceEventsStatus ?? '' ) ) {
+		case 'Not Checked In':
+			return {
+				ResultIcon: CheckCircle2,
+				headline: 'Valid ticket',
+				subtitle: 'Ready to check in.',
+			};
+		case 'Checked In':
+			return {
+				ResultIcon: CircleAlert,
+				headline: 'Already checked in',
+				subtitle: 'This ticket has already been used.',
+			};
+		case 'Canceled':
+			return {
+				ResultIcon: XCircle,
+				headline: 'Canceled ticket',
+				subtitle: 'Do not admit.',
+			};
+		default:
+			return {
+				ResultIcon: CircleAlert,
+				headline: 'Review ticket',
+				subtitle: 'Status unavailable or unknown.',
+			};
 	}
 }
 
@@ -60,12 +219,21 @@ type FooTicketPayload = Record< string, unknown > & {
 	eventDisplayName?: string;
 };
 
+type ScanPurpose = 'validate' | 'checkin';
+
 export default function Validate() {
 	const formId = useId();
 	const [ searchInput, setSearchInput ] = useState( '' );
 	const deferredSearch = useDeferredValue( searchInput.trim() );
 	const [ selectedTicketId, setSelectedTicketId ] = useState< string | null >( null );
+	const [ scannerKind, setScannerKind ] = useState< ScanPurpose | null >( null );
 	const [ scannerOpen, setScannerOpen ] = useState( false );
+
+	const [ lastScanPurpose, setLastScanPurpose ] = useState< ScanPurpose | null >( null );
+	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
+
+	const scanRegionId =
+		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
 
 	const searchQuery = useTicketSearch( deferredSearch );
 	const detailQuery = useTicketDetail( selectedTicketId );
@@ -73,12 +241,18 @@ export default function Validate() {
 
 	const ticket = detailQuery.data?.ticket as FooTicketPayload | undefined;
 
+	const autoCheckInHandledKeyRef = useRef< string >( '' );
+
+	/** Stable lookup for mutate (same logic as mutation body). */
+	const getLookupFromTicket = ( t?: FooTicketPayload ) =>
+		t ? ticketLookupArg( t, selectedTicketId ) : '';
+
 	useEffect( () => {
 		if ( ! scannerOpen ) {
 			return;
 		}
 		const scanner = new Html5QrcodeScanner(
-			SCAN_REGION_ID,
+			scanRegionId,
 			{
 				fps: 10,
 				qrbox: { width: 280, height: 280 },
@@ -96,9 +270,16 @@ export default function Validate() {
 				if ( ! t ) {
 					return;
 				}
-				toast.success( 'Code captured' );
+				const purpose = scannerKind ?? 'validate';
+				if ( purpose === 'checkin' ) {
+					toast.message( 'Ticket scanned — checking in…' );
+				} else {
+					toast.message( 'Ticket scanned — loading result…' );
+				}
+				setLastScanPurpose( purpose );
 				setSelectedTicketId( t );
 				setScannerOpen( false );
+				autoCheckInHandledKeyRef.current = '';
 			},
 			() => {}
 		);
@@ -106,9 +287,87 @@ export default function Validate() {
 			ended = true;
 			void scanner.clear().catch( () => {} );
 		};
-	}, [ scannerOpen ] );
+	}, [ scannerOpen, scanRegionId, scannerKind ] );
 
-	const openTicket = ( id: string ) => {
+	/** Auto check-in once per scan+detail resolve when scan was check-in purpose. */
+	useEffect( () => {
+		if (
+			! ticket
+			|| detailQuery.isLoading
+			|| detailQuery.isError
+			|| selectedTicketId == null
+		) {
+			return;
+		}
+		if ( lastScanPurpose !== 'checkin' ) {
+			return;
+		}
+		const key = `${ selectedTicketId }::${ String( ticket.WooCommerceEventsTicketID ?? '' ) }`;
+		if ( autoCheckInHandledKeyRef.current === key ) {
+			return;
+		}
+
+		const st = String( ticket.WooCommerceEventsStatus ?? '' );
+		const lookup = getLookupFromTicket( ticket );
+
+		if ( st === 'Not Checked In' ) {
+			if ( ! lookup ) {
+				autoCheckInHandledKeyRef.current = key;
+				return;
+			}
+			if ( statusMutation.isPending ) {
+				return;
+			}
+			autoCheckInHandledKeyRef.current = key;
+			statusMutation.mutate(
+				{ ticketId: lookup, status: 'Checked In' },
+				{
+					onSuccess: () => {
+						setJustCheckedInNumericId(
+							String( ticket.WooCommerceEventsTicketID ?? '' ).trim()
+						);
+						toast.success(
+							`Checked in — ${ String( ticket.WooCommerceEventsTicketID ?? lookup ) }`
+						);
+					},
+					onError: ( err: Error ) => {
+						autoCheckInHandledKeyRef.current = '';
+						toast.error( err?.message ?? 'Check-in failed' );
+					},
+				}
+			);
+			return;
+		}
+
+		autoCheckInHandledKeyRef.current = key;
+		if ( st === 'Checked In' ) {
+			toast.warning( 'Already checked in — do not admit twice.' );
+			return;
+		}
+		if ( st === 'Canceled' ) {
+			toast.error( 'Canceled ticket — do not admit.' );
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- statusMutation object identity would retrigger this effect endlessly
+	}, [
+		lastScanPurpose,
+		ticket,
+		detailQuery.isLoading,
+		detailQuery.isError,
+		selectedTicketId,
+		statusMutation.isPending,
+	] );
+
+	const clearDetailSession = () => {
+		setSelectedTicketId( null );
+		setLastScanPurpose( null );
+		setJustCheckedInNumericId( null );
+		autoCheckInHandledKeyRef.current = '';
+	};
+
+	const openTicketFromSearchOrSibling = ( id: string ) => {
+		setJustCheckedInNumericId( null );
+		setLastScanPurpose( null );
+		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( id.trim() );
 		setScannerOpen( false );
 	};
@@ -117,21 +376,22 @@ export default function Validate() {
 		if ( ! ticket?.WooCommerceEventsTicketID ) {
 			return;
 		}
-		const formatted = ticket.WooCommerceEventsTicketNumberFormatted;
-		let lookup =
-			isNonEmptyStr( formatted ) && formatted.trim().length > 0
-				? formatted.trim()
-				: '';
-		if ( ! lookup && selectedTicketId && selectedTicketId.length > 0 ) {
-			lookup = selectedTicketId.trim();
-		}
-		if ( ! lookup ) {
-			lookup = String( ticket.WooCommerceEventsTicketID ?? '' );
-		}
+		const lookup = getLookupFromTicket( ticket );
+
 		statusMutation.mutate(
 			{ ticketId: lookup, status },
 			{
 				onSuccess: () => {
+					if ( status === 'Checked In' ) {
+						setJustCheckedInNumericId(
+							String( ticket.WooCommerceEventsTicketID ?? '' ).trim()
+						);
+					} else if (
+						status === 'Not Checked In'
+						|| status === 'Canceled'
+					) {
+						setJustCheckedInNumericId( null );
+					}
 					toast.success( `${ status } — ${ ticket.WooCommerceEventsTicketID ?? '' }` );
 				},
 				onError: ( err: Error ) => {
@@ -142,6 +402,32 @@ export default function Validate() {
 	};
 
 	if ( selectedTicketId ) {
+		const tone =
+			resolveTicketTone( {
+				ticket,
+				loading: detailQuery.isLoading,
+				error: detailQuery.isError,
+				justCheckedInNumericId,
+			} );
+		const resultCopy =
+			ticketResultCopy( {
+				ticket,
+				error: detailQuery.isError,
+				justCheckedInNumericId,
+			} );
+		const DisplayResultIcon = resultCopy.ResultIcon;
+		const displayIdLarge = ticket
+			? String(
+				isNonEmptyStr( ticket.WooCommerceEventsTicketNumberFormatted )
+					&& `${ ticket.WooCommerceEventsTicketNumberFormatted }`.trim() !== ''
+					? ticket.WooCommerceEventsTicketNumberFormatted
+					: ticket.WooCommerceEventsTicketID ?? selectedTicketId
+			)
+			: selectedTicketId;
+		const numericIdDisp = ticket
+			? String( ticket.WooCommerceEventsTicketID ?? '' )
+			: '';
+
 		return (
 			<div className="space-y-4">
 				<div className="flex flex-wrap items-center gap-2">
@@ -149,9 +435,7 @@ export default function Validate() {
 						type="button"
 						variant="outline"
 						size="sm"
-						onClick={ () => {
-							setSelectedTicketId( null );
-						} }
+						onClick={ clearDetailSession }
 						className="gap-1"
 					>
 						<ArrowLeft className="size-4" aria-hidden />
@@ -160,35 +444,90 @@ export default function Validate() {
 				</div>
 
 				{ detailQuery.isLoading && (
-					<Card>
+					<Card className="border-muted-foreground/35">
 						<CardContent className="flex items-center gap-3 py-8 text-muted-foreground">
-							<Loader2 className="size-8 animate-spin" aria-hidden />
-							<span>Loading ticket...</span>
+							<Loader2 className="size-8 shrink-0 animate-spin" aria-hidden />
+							<span>Checking ticket…</span>
 						</CardContent>
 					</Card>
 				) }
 
 				{ detailQuery.isError && (
-					<Card className="border-destructive/50">
+					<Card className={ cn( ticketCardToneClass( 'red' ), 'border-2' ) }>
 						<CardHeader>
-							<CardTitle>{ selectedTicketId }</CardTitle>
+							<CardTitle className="flex items-start gap-2">
+								<XCircle className="text-destructive mt-0.5 size-6 shrink-0" aria-hidden />
+								<span>Ticket not found</span>
+							</CardTitle>
 							<CardDescription className="text-destructive">
 								{ detailQuery.error instanceof Error
 									? detailQuery.error.message
 									: 'Ticket could not be loaded.' }
 							</CardDescription>
 						</CardHeader>
-						<CardContent>
-							<Button variant="outline" onClick={ () => void detailQuery.refetch() }>
-								Retry
-							</Button>
+						<CardContent className="space-y-3">
+							<p className="rounded-md bg-destructive/10 px-3 py-2 text-sm font-medium">
+								Do not admit unless manually verified.
+							</p>
+							<code className="bg-muted rounded px-2 py-1 font-mono text-sm">
+								{ selectedTicketId }
+							</code>
+							<div>
+								<Button variant="outline" onClick={ () => void detailQuery.refetch() }>
+									Retry
+								</Button>
+							</div>
 						</CardContent>
 					</Card>
 				) }
 
 				{ ticket && (
-					<Card>
-						<CardHeader>
+					<Card
+						className={ cn(
+							'overflow-hidden border-2 transition-colors',
+							ticketCardToneClass( tone ),
+						) }
+					>
+						<CardHeader className="pb-4">
+							<div
+								className={ cn(
+									'mb-4 flex flex-wrap items-start gap-3 rounded-lg border p-4',
+									tone === 'blue' &&
+										'border-blue-700/35 bg-blue-500/15 dark:bg-blue-950/50',
+									tone === 'green' &&
+										'border-green-700/35 bg-green-500/15 dark:bg-green-950/50',
+									tone === 'yellow' &&
+										'border-amber-600/35 bg-amber-500/12 dark:bg-amber-950/45',
+									tone === 'red' &&
+										'border-destructive/40 bg-destructive/15',
+									tone === 'neutral' && 'border-muted bg-muted/40',
+								) }
+							>
+								<div className="shrink-0">
+									<DisplayResultIcon
+										className={ cn(
+											'size-12 stroke-[1.75]',
+											tone === 'green' &&
+												'text-green-700 dark:text-green-400',
+											tone === 'yellow' &&
+												'text-amber-700 dark:text-amber-300',
+											tone === 'blue' &&
+												'text-blue-700 dark:text-blue-300',
+											tone === 'red' && 'text-destructive',
+										) }
+										aria-hidden
+									/>
+								</div>
+								<div className="min-w-0 flex-1">
+									<p className="text-xl font-semibold tracking-tight">
+										{ resultCopy.headline }
+									</p>
+									<p className="text-muted-foreground mt-1 max-w-prose text-sm">
+										{ resultCopy.subtitle }
+									</p>
+								</div>
+							</div>
+
 							<div className="flex flex-wrap items-start justify-between gap-3">
 								<div>
 									<CardTitle className="text-xl leading-tight">
@@ -211,24 +550,25 @@ export default function Validate() {
 									{ String( ticket.WooCommerceEventsStatus ?? '—' ) }
 								</Badge>
 							</div>
-						</CardHeader>
-						<CardContent className="space-y-5">
-							<div>
-								<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-									Ticket #
-								</p>
-								<p className="font-mono text-sm">
-									{ String(
-										( ticket.WooCommerceEventsTicketNumberFormatted && `${ ticket.WooCommerceEventsTicketNumberFormatted }`.trim() !== ''
-											? ticket.WooCommerceEventsTicketNumberFormatted
-											: ticket.WooCommerceEventsTicketID ) ?? ''
-									) }
-								</p>
-								<p className="font-mono text-xs text-muted-foreground tabular-nums">
-									{ String( ticket.WooCommerceEventsTicketID ?? '' ) }
-								</p>
-							</div>
 
+							<div className="pt-2">
+								<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+									Ticket ID
+								</p>
+								<p className="font-mono text-2xl font-semibold tracking-tight tabular-nums">
+									{ displayIdLarge }
+								</p>
+								{ numericIdDisp &&
+									String( displayIdLarge ).trim()
+										!== numericIdDisp.trim() && (
+									<p className="font-mono text-muted-foreground text-sm tabular-nums">
+										#{ numericIdDisp }
+									</p>
+								) }
+							</div>
+						</CardHeader>
+
+						<CardContent className="space-y-5">
 							<div className="grid gap-2 sm:grid-cols-2">
 								<div>
 									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
@@ -256,13 +596,19 @@ export default function Validate() {
 								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
 									Set status
 								</p>
-								<div className="flex flex-wrap gap-2">
+								<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
 									<Button
 										type="button"
+										className={ cn(
+											'w-full sm:min-h-11 sm:min-w-[11rem]',
+											ticket.WooCommerceEventsStatus === 'Not Checked In' &&
+												'shadow-md ring-2 ring-blue-600/35 dark:ring-blue-400/30',
+										) }
+										size="lg"
 										disabled={ statusMutation.isPending || ticket.WooCommerceEventsStatus === 'Checked In' }
 										onClick={ () => applyStatus( 'Checked In' ) }
 									>
-										Check In
+										Check in now
 									</Button>
 									<Button
 										type="button"
@@ -273,7 +619,7 @@ export default function Validate() {
 										}
 										onClick={ () => applyStatus( 'Not Checked In' ) }
 									>
-										Undo Check-In
+										Undo check-in
 									</Button>
 									<Button
 										type="button"
@@ -284,7 +630,7 @@ export default function Validate() {
 										Cancel ticket
 									</Button>
 									{ statusMutation.isPending && (
-										<Loader2 className="size-5 animate-spin text-muted-foreground" aria-hidden />
+										<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
 									) }
 								</div>
 							</div>
@@ -293,7 +639,7 @@ export default function Validate() {
 								currentNumericId={ String( ticket.WooCommerceEventsTicketID ?? '' ) }
 								rawIds={ ticket.WooCommerceEventsOrderTickets }
 								labels={ ticket.WooCommerceEventsOrderTicketsData }
-								onPick={ openTicket }
+								onPick={ openTicketFromSearchOrSibling }
 							/>
 						</CardContent>
 					</Card>
@@ -309,7 +655,7 @@ export default function Validate() {
 					Validate tickets
 				</h1>
 				<p className="text-muted-foreground mt-1 max-w-prose text-sm leading-relaxed">
-					Scan a QR or barcode, or search by attendee email, phone number, or ticket ID.
+					Validate only (lookup) or check in on scan — or search by email, phone number, or ticket ID.
 				</p>
 			</div>
 
@@ -367,29 +713,56 @@ export default function Validate() {
 												attendeeName?: string;
 												eventName?: string;
 												WooCommerceEventsStatus?: string;
-											}
-										) => (
-											<li key={ `${ row.ticketId ?? row.ticketNumericId }` }>
-												<button
-													type="button"
-													onClick={ () => openTicket( String( row.ticketId ) ) }
-													className="hover:bg-accent/75 flex w-full flex-col gap-1 px-3 py-2.5 text-left text-sm transition-colors"
+											},
+										) => {
+											const rs = String( row.WooCommerceEventsStatus ?? '' );
+											return (
+												<li
+													key={ `${ row.ticketId ?? row.ticketNumericId }` }
+													className={ cn( 'border-l-4', searchRowAccentClass( rs ) ) }
 												>
-													<span className="flex flex-wrap items-center justify-between gap-2 font-medium">
-														{ row.attendeeName ?? row.ticketId }
-														<Badge className={ statusBadgeClass( String( row.WooCommerceEventsStatus ?? '' ) ) }>
-															{ String( row.WooCommerceEventsStatus ?? '—' ) }
-														</Badge>
-													</span>
-													<span className="text-muted-foreground truncate text-xs">
-														{ row.eventName ?? '\u2014' }
-														<span className="font-mono text-[11px] text-muted-foreground/90">
-															&nbsp; · { String( row.ticketId ?? row.ticketNumericId ?? '' ) }
+													<button
+														type="button"
+														onClick={ () =>
+															openTicketFromSearchOrSibling(
+																String(
+																	row.ticketId ??
+																		row.ticketNumericId ??
+																		'',
+																),
+															) }
+														className={ cn(
+															'flex w-full flex-col gap-1 px-3 py-2.5 text-left text-sm transition-colors',
+															'relative',
+														) }
+													>
+														<span className="flex flex-wrap items-center justify-between gap-2 font-medium">
+															<span>{ row.attendeeName ?? row.ticketId }</span>
+															<span className="flex flex-wrap items-center gap-2">
+																{ rs === 'Not Checked In' && (
+																	<span className="text-blue-700 dark:text-blue-400 text-[10px] font-semibold uppercase tracking-wide">
+																		Ready
+																	</span>
+																) }
+																<Badge className={ statusBadgeClass( rs ) }>
+																	{ rs || '\u2014' }
+																</Badge>
+															</span>
 														</span>
-													</span>
-												</button>
-											</li>
-										)
+														<span className="text-muted-foreground truncate text-xs">
+															{ row.eventName ?? '\u2014' }
+															<span className="font-mono text-[11px] text-muted-foreground/90">
+																&nbsp; · { String(
+																	row.ticketId ??
+																		row.ticketNumericId ??
+																		'',
+																) }
+															</span>
+														</span>
+													</button>
+												</li>
+											);
+										},
 									) }
 								</ul>
 							) }
@@ -405,29 +778,63 @@ export default function Validate() {
 								Camera
 							</CardTitle>
 							{ scannerOpen && (
-								<Button type="button" variant="outline" size="sm" className="gap-1" onClick={ () => setScannerOpen( false ) }>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									className="gap-1"
+									onClick={ () => setScannerOpen( false ) }
+								>
 									<X className="size-4" aria-hidden />
 									Close
 								</Button>
 							) }
 						</div>
-						<CardDescription>Use the device camera to read QR codes and barcodes printed on FooEvents tickets.</CardDescription>
+						<CardDescription>
+							Two modes: lookup only without changing status, or scan to check in automatically when the ticket is unused.
+						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
 						{ scannerOpen ? (
 							<>
 								<div className="bg-muted overflow-hidden rounded-lg">
-									<div id={ SCAN_REGION_ID } />
+									<div id={ scanRegionId } />
 								</div>
-								<p className="text-muted-foreground text-xs leading-relaxed" role="status" aria-live="polite">
-									Grant camera access if prompted; the ticket opens automatically after a successful read.
+								<p
+									className="text-muted-foreground text-xs leading-relaxed"
+									role="status"
+									aria-live="polite"
+								>
+									{ scannerKind === 'checkin'
+										? 'Grant camera access if prompted; valid unused tickets check in automatically after the read.'
+										: 'Grant camera access if prompted; ticket details load after a successful read.' }
 								</p>
 							</>
 						) : (
-							<Button type="button" className="w-full gap-2 sm:w-auto" onClick={ () => setScannerOpen( true ) }>
-								<Camera className="size-4 shrink-0" aria-hidden />
-								Start scanner
-							</Button>
+							<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+								<Button
+									type="button"
+									className="gap-2"
+									onClick={ () => {
+										setScannerKind( 'validate' );
+										setScannerOpen( true );
+									} }
+								>
+									<Camera className="size-4 shrink-0" aria-hidden />
+									Validate ticket (scan)
+								</Button>
+								<Button
+									type="button"
+									className="gap-2 bg-amber-600 text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
+									onClick={ () => {
+										setScannerKind( 'checkin' );
+										setScannerOpen( true );
+									} }
+								>
+									<ScanBarcode className="size-4 shrink-0" aria-hidden />
+									Check-in ticket (scan)
+								</Button>
+							</div>
 						) }
 					</CardContent>
 				</Card>
@@ -497,5 +904,3 @@ function SiblingTicketsBlock( props: {
 		</>
 	);
 }
-
-
