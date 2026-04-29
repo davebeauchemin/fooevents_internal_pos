@@ -1,6 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import EventDaySchedule from '@/components/EventDaySchedule';
+import EventSlotOverview from '@/components/EventSlotOverview';
 import { useEvent } from '../api/queries.js';
 
 export default function EventDetail() {
@@ -8,13 +8,13 @@ export default function EventDetail() {
 	const { data, isLoading, isError, error } = useEvent( id );
 
 	if ( isLoading ) {
-		return <p className="text-slate-500">Loading event…</p>;
+		return <p className="text-muted-foreground">Loading event…</p>;
 	}
 	if ( isError ) {
 		return (
 			<div className="space-y-2">
 				<Link to="/events" className="text-primary hover:underline">← Back</Link>
-				<div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
+				<div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
 					{ String( error?.message || error || 'Error' ) }
 				</div>
 			</div>
@@ -24,7 +24,7 @@ export default function EventDetail() {
 		return (
 			<div>
 				<Link to="/events" className="text-primary hover:underline">← Back</Link>
-				<p className="mt-2 text-slate-600">Event not found.</p>
+				<p className="text-muted-foreground mt-2">Event not found.</p>
 			</div>
 		);
 	}
@@ -37,9 +37,9 @@ export default function EventDetail() {
 				</Button>
 			</div>
 			<div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-				<h1 className="text-2xl font-bold text-slate-900">{ data.title }</h1>
+				<h1 className="text-2xl font-bold tracking-tight">{ data.title }</h1>
 				<div className="flex flex-wrap items-center gap-2">
-					<span className="rounded bg-slate-200 px-2 py-0.5 text-xs font-mono text-slate-700">
+					<span className="bg-muted rounded px-2 py-0.5 font-mono text-xs">
 						{ data.bookingMethod }
 					</span>
 					<Button variant="secondary" asChild>
@@ -47,10 +47,10 @@ export default function EventDetail() {
 					</Button>
 				</div>
 			</div>
-			<p className="text-slate-500 text-sm">
-				Pick a day, expand an hour, then add slots to your order or open checkout (WooCommerce order + FooEvents tickets).
+			<p className="text-muted-foreground text-sm">
+				Review upcoming dates and slot availability for this event. Book tickets from Calendar (checkout in cart).
 			</p>
-			<EventDaySchedule detail={ data } />
+			<EventSlotOverview detail={ data } />
 		</div>
 	);
 }

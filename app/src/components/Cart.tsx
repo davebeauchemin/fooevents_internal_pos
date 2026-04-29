@@ -1,51 +1,77 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Trash2 } from 'lucide-react';
+import { Minus, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { cartLineKey, useCart, type CartLine } from '@/context/CartContext';
+import { htmlToPlainText } from '@/lib/htmlPlain';
 import { cn } from '@/lib/utils';
 
 type Props = {
-	variant?: 'compact' | 'full';
+	variant?: 'full' | 'panel';
 	className?: string;
 };
 
-export default function Cart( { variant = 'compact', className }: Props ) {
+export default function Cart( { variant = 'panel', className }: Props ) {
 	const { items, totalQty, lineCount, updateQty, removeLine, clearCart } = useCart();
 
-	if ( variant === 'compact' ) {
+	const subtotalDisplay = useMemo( () => cartSubtotalDisplay( items ), [ items ] );
+
+	if ( variant === 'panel' ) {
 		return (
-			<div
-				className={ cn(
-					'border-border bg-muted/40 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm',
-					className,
-				) }
-			>
-				<span className="text-muted-foreground">
-					Order: <strong className="text-foreground">{ lineCount }</strong> line{ lineCount === 1 ? '' : 's' }
-					{ ' · ' }
-					<strong className="text-foreground">{ totalQty }</strong> ticket{ totalQty === 1 ? '' : 's' }
-				</span>
-				<div className="ml-auto flex flex-wrap items-center gap-2">
-					{ lineCount > 0 && (
-						<Button type="button" variant="ghost" size="sm" className="h-8 text-destructive" onClick={ clearCart }>
-							<Trash2 className="mr-1 size-3.5" />
-							Clear order
-						</Button>
-					) }
-					{ lineCount === 0 ? (
-						<Button type="button" size="sm" variant="secondary" disabled>
-							Go to checkout
-						</Button>
+			<Card className={ cn( 'shadow-sm', className ) }>
+				<CardHeader className="space-y-1 pb-3">
+					<div className="flex flex-wrap items-baseline justify-between gap-2">
+						<CardTitle className="text-lg">Cart</CardTitle>
+						<p className="text-muted-foreground text-xs tabular-nums">
+							{ lineCount === 0
+								? 'Empty'
+								: `${ lineCount } line${ lineCount === 1 ? '' : 's' } · ${ totalQty } ticket${ totalQty === 1 ? '' : 's' }` }
+						</p>
+					</div>
+				</CardHeader>
+				<CardContent className="space-y-4 pt-0">
+					{ items.length === 0 ? (
+						<p className="text-muted-foreground border-border rounded-lg border border-dashed p-4 text-center text-sm">
+							Your cart is empty. Select a time slot to start.
+						</p>
 					) : (
-						<Button type="button" size="sm" variant="secondary" asChild>
-							<Link to="/checkout">Go to checkout</Link>
-						</Button>
+						<ul className="max-h-[min(60vh,28rem)] space-y-3 overflow-y-auto pr-1">
+							{ items.map( ( line ) => (
+								<li key={ cartLineKey( line ) }>
+									<CartLineRow
+										line={ line }
+										onQty={ ( q ) => updateQty( cartLineKey( line ), q ) }
+										onRemove={ () => removeLine( cartLineKey( line ) ) }
+									/>
+								</li>
+							) ) }
+						</ul>
 					) }
-				</div>
-			</div>
+					{ lineCount > 0 && (
+						<CartSubtotalRow display={ subtotalDisplay } />
+					) }
+					<Separator />
+					<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+						{ lineCount > 0 && (
+							<Button type="button" variant="outline" size="sm" onClick={ clearCart }>
+								Clear cart
+							</Button>
+						) }
+						{ lineCount === 0 ? (
+							<Button type="button" size="sm" className="sm:ml-auto" disabled>
+								Checkout
+							</Button>
+						) : (
+							<Button type="button" size="sm" className="sm:ml-auto" asChild>
+								<Link to="/checkout">Checkout</Link>
+							</Button>
+						) }
+					</div>
+				</CardContent>
+			</Card>
 		);
 	}
 
@@ -68,6 +94,9 @@ export default function Cart( { variant = 'compact', className }: Props ) {
 					) )
 				) }
 				{ items.length > 0 && (
+					<CartSubtotalRow display={ subtotalDisplay } className="pt-1" />
+				) }
+				{ items.length > 0 && (
 					<>
 						<Separator />
 						<div className="flex justify-end gap-2">
@@ -79,6 +108,88 @@ export default function Cart( { variant = 'compact', className }: Props ) {
 				) }
 			</CardContent>
 		</Card>
+	);
+}
+
+function unitPriceFromLine( line: CartLine ): number | null {
+	if ( typeof line.price === 'number' && Number.isFinite( line.price ) ) {
+		return line.price;
+	}
+	const plain = htmlToPlainText( line.priceHtml );
+	if ( ! plain ) {
+		return null;
+	}
+	const normalized = plain.replace( /,/g, '' ).replace( /[^\d.-]/g, '' );
+	const n = parseFloat( normalized );
+	return Number.isFinite( n ) ? n : null;
+}
+
+type SubtotalDisplay = {
+	text: string;
+	note?: string;
+};
+
+function cartSubtotalDisplay( items: CartLine[] ): SubtotalDisplay {
+	if ( items.length === 0 ) {
+		return { text: '' };
+	}
+	let sum = 0;
+	let pricedLines = 0;
+	const firstSample = items
+		.map( ( line ) => htmlToPlainText( line.priceHtml ) )
+		.find( Boolean ) ?? '';
+	for ( const line of items ) {
+		const u = unitPriceFromLine( line );
+		if ( u != null ) {
+			sum += u * line.qty;
+			pricedLines++;
+		}
+	}
+	if ( pricedLines === 0 ) {
+		return { text: '—', note: 'No unit prices on file' };
+	}
+	const sym = currencyPrefixGuess( firstSample || String( items[ 0 ]?.price ?? '' ) );
+	const text = `${ sym }${ sum.toFixed( 2 ) }`;
+	if ( pricedLines < items.length ) {
+		return { text, note: `${ pricedLines } of ${ items.length } lines priced` };
+	}
+	return { text };
+}
+
+function currencyPrefixGuess( sample: string ): string {
+	const t = sample.trim();
+	if ( t.includes( '€' ) ) {
+		return '€';
+	}
+	if ( t.includes( '£' ) ) {
+		return '£';
+	}
+	if ( t.startsWith( '$' ) || t.includes( '$' ) ) {
+		return '$';
+	}
+	return '$';
+}
+
+function CartSubtotalRow( {
+	display,
+	className,
+}: {
+	display: SubtotalDisplay;
+	className?: string;
+} ) {
+	if ( ! display.text ) {
+		return null;
+	}
+	return (
+		<div className={ cn( 'space-y-0.5', className ) }>
+			<div className="text-foreground flex items-center justify-between gap-3 text-sm font-medium tabular-nums">
+				<span className="text-muted-foreground font-normal">Subtotal</span>
+				<span>{ display.text }</span>
+			</div>
+			{ display.note ? (
+				<p className="text-muted-foreground text-xs">{ display.note }</p>
+			) : null }
+		</div>
 	);
 }
 
@@ -96,36 +207,68 @@ function CartLineRow( {
 			? 20
 			: Math.min( 20, Math.max( 1, line.remaining ) );
 
+	const priceEach = htmlToPlainText( line.priceHtml );
+
 	return (
-		<div className="border-border space-y-2 rounded-lg border p-3 text-sm">
+		<div className="border-border bg-card space-y-2 rounded-lg border p-3 text-sm shadow-sm">
 			<div className="flex flex-wrap items-start justify-between gap-2">
 				<div className="min-w-0 flex-1">
-					<p className="font-medium leading-snug">{ line.eventTitle }</p>
+					<p className="font-medium leading-snug">{ htmlToPlainText( line.eventTitle ) }</p>
 					<p className="text-muted-foreground text-xs">{ line.dateLabel }</p>
-					<p className="font-mono text-xs tabular-nums">
-						{ line.slotTime ? `${ line.slotTime } · ` : '' }
-						{ line.slotLabel }
-					</p>
-					{ line.priceHtml ? (
-						<p className="text-muted-foreground mt-1 text-xs">{ line.priceHtml } each</p>
+					{ line.slotTime ? (
+						<p className="font-mono text-xs tabular-nums">{ line.slotTime }</p>
+					) : null }
+					{ priceEach ? (
+						<p className="text-muted-foreground mt-1 text-xs">{ priceEach } each</p>
 					) : null }
 				</div>
 				<Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 text-destructive" onClick={ onRemove } aria-label="Remove line">
 					<Trash2 className="size-4" />
 				</Button>
 			</div>
-			<div className="flex flex-wrap items-center gap-2">
-				<label className="text-muted-foreground text-xs">Qty</label>
-				<Input
-					className="h-8 w-20"
-					type="number"
-					min={ 1 }
-					max={ cap }
-					value={ line.qty }
-					onChange={ ( e ) =>
-						onQty( Math.max( 1, Math.min( cap, parseInt( e.target.value, 10 ) || 1 ) ) )
-					}
-				/>
+			<div className="flex flex-wrap items-center gap-2 border-t border-border pt-2">
+				<label className="text-muted-foreground shrink-0 text-xs" htmlFor={ `cart-qty-${ cartLineKey( line ) }` }>
+					Qty
+				</label>
+				<div className="flex items-center gap-1">
+					<Button
+						type="button"
+						variant="outline"
+						size="icon"
+						className="size-8 shrink-0"
+						disabled={ line.qty <= 1 }
+						onClick={ () =>
+							onQty( Math.max( 1, line.qty - 1 ) )
+						}
+						aria-label="Decrease quantity"
+					>
+						<Minus className="size-4" />
+					</Button>
+					<Input
+						id={ `cart-qty-${ cartLineKey( line ) }` }
+						className="h-8 w-14 text-center tabular-nums"
+						type="number"
+						min={ 1 }
+						max={ cap }
+						value={ line.qty }
+						onChange={ ( e ) =>
+							onQty( Math.max( 1, Math.min( cap, parseInt( e.target.value, 10 ) || 1 ) ) )
+						}
+					/>
+					<Button
+						type="button"
+						variant="outline"
+						size="icon"
+						className="size-8 shrink-0"
+						disabled={ line.qty >= cap }
+						onClick={ () =>
+							onQty( Math.min( cap, line.qty + 1 ) )
+						}
+						aria-label="Increase quantity"
+					>
+						<Plus className="size-4" />
+					</Button>
+				</div>
 				<span className="text-muted-foreground text-xs">max { cap }</span>
 			</div>
 		</div>

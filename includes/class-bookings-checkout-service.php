@@ -639,30 +639,27 @@ class Bookings_Checkout_Service {
 	 * @return int
 	 */
 	private function count_event_magic_ticket_posts_for_order( $order_id ) {
+		global $wpdb;
+
 		$order_id = absint( $order_id );
 		if ( $order_id <= 0 ) {
 			return 0;
 		}
 
-		$q = new \WP_Query(
-			array(
-				'post_type'              => 'event_magic_tickets',
-				'post_status'            => 'any',
-				'posts_per_page'         => -1,
-				'fields'                 => 'ids',
-				'no_found_rows'          => true,
-				'suppress_filters'       => true,
-				'update_post_term_cache' => false,
-				'meta_query'             => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-					array(
-						'key'   => 'WooCommerceEventsOrderID',
-						'value' => (string) $order_id,
-					),
-				),
+		$sql = "SELECT COUNT(*) FROM {$wpdb->posts} p"
+			. " INNER JOIN {$wpdb->postmeta} m ON ( m.post_id = p.ID )"
+			. " WHERE p.post_type = %s"
+			. " AND m.meta_key = %s AND m.meta_value = %s";
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Prepared from fixed table names and %s placeholders below.
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				$sql,
+				'event_magic_tickets',
+				'WooCommerceEventsOrderID',
+				(string) $order_id
 			)
 		);
-
-		return is_array( $q->posts ) ? count( $q->posts ) : 0;
 	}
 
 	/**

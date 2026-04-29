@@ -47,6 +47,9 @@ type CartContextValue = {
 	lineCount: number;
 	totalQty: number;
 	addOrMergeLine: ( line: CartLine ) => void;
+	getLine: ( sel: Pick<POSSelection, 'eventId' | 'slotId' | 'dateId' | 'viewDateYmd' > ) => CartLine | undefined;
+	hasLine: ( sel: Pick<POSSelection, 'eventId' | 'slotId' | 'dateId' | 'viewDateYmd' > ) => boolean;
+	toggleLine: ( line: POSSelection, qty?: number ) => void;
 	updateQty: ( key: string, qty: number ) => void;
 	removeLine: ( key: string ) => void;
 	clearCart: () => void;
@@ -119,6 +122,39 @@ export function CartProvider( { children }: { children: ReactNode } ) {
 		setItemsPersist( [] );
 	}, [ setItemsPersist ] );
 
+	const getLine = useCallback(
+		( sel: Pick<POSSelection, 'eventId' | 'slotId' | 'dateId' | 'viewDateYmd' > ) => {
+			const key = cartLineKey( sel );
+			return items.find( ( p ) => cartLineKey( p ) === key );
+		},
+		[ items ],
+	);
+
+	const hasLine = useCallback(
+		( sel: Pick<POSSelection, 'eventId' | 'slotId' | 'dateId' | 'viewDateYmd' > ) => {
+			const key = cartLineKey( sel );
+			return items.some( ( p ) => cartLineKey( p ) === key );
+		},
+		[ items ],
+	);
+
+	const toggleLine = useCallback(
+		( line: POSSelection, qty?: number ) => {
+			const key = cartLineKey( line );
+			setItemsPersist( ( prev ) => {
+				const idx = prev.findIndex( ( p ) => cartLineKey( p ) === key );
+				if ( idx !== -1 ) {
+					return prev.filter( ( _, i ) => i !== idx );
+				}
+				const want = qty ?? 1;
+				const draft: CartLine = { ...line, qty: want };
+				const q = clampQty( draft, want );
+				return [ ...prev, { ...draft, qty: q } ];
+			} );
+		},
+		[ setItemsPersist ],
+	);
+
 	const lineCount = items.length;
 	const totalQty = useMemo( () => items.reduce( ( acc, x ) => acc + x.qty, 0 ), [ items ] );
 
@@ -128,11 +164,14 @@ export function CartProvider( { children }: { children: ReactNode } ) {
 			lineCount,
 			totalQty,
 			addOrMergeLine,
+			getLine,
+			hasLine,
+			toggleLine,
 			updateQty,
 			removeLine,
 			clearCart,
 		} ),
-		[ items, lineCount, totalQty, addOrMergeLine, updateQty, removeLine, clearCart ],
+		[ items, lineCount, totalQty, addOrMergeLine, getLine, hasLine, toggleLine, updateQty, removeLine, clearCart ],
 	);
 
 	return <CartContext.Provider value={ value }>{ children }</CartContext.Provider>;

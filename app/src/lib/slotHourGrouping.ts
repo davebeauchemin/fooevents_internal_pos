@@ -120,8 +120,88 @@ export function groupSlotsByHour( slots: SlotLike[] ): HourSlotGroup[] {
 	return [ ...map.values() ].sort( ( a, b ) => a.hour - b.hour );
 }
 
+/**
+ * When the calendar is on “today” (`viewYmd === siteTodayYmd`), remove hour buckets that
+ * fall before the browser’s current clock hour (whole hours 0–23). Other days unchanged.
+ */
+export function hidePastHourBucketsForToday(
+	groups: HourSlotGroup[],
+	viewYmd: string,
+	siteTodayYmd: string,
+): HourSlotGroup[] {
+	if ( viewYmd !== siteTodayYmd || groups.length === 0 ) {
+		return groups;
+	}
+	const currentHour = new Date().getHours();
+	return groups.filter( ( g ) => g.hour >= currentHour );
+}
+
+/**
+ * Hour bucket (`g.key`) to open first: viewing “today” uses the browser’s local hour,
+ * then next bucket ≥ that hour; other days opens the earliest hour group.
+ */
+export function defaultAccordionHourKey(
+	groups: HourSlotGroup[],
+	viewYmd: string,
+	siteTodayYmd: string,
+) {
+	if ( groups.length === 0 ) {
+		return undefined;
+	}
+	if ( viewYmd !== siteTodayYmd ) {
+		return groups[ 0 ].key;
+	}
+	const nowHour = new Date().getHours();
+	const exact = groups.find( ( g ) => g.hour === nowHour );
+	if ( exact ) {
+		return exact.key;
+	}
+	const next = groups.find( ( g ) => g.hour >= nowHour );
+	if ( next ) {
+		return next.key;
+	}
+	return groups[ groups.length - 1 ].key;
+}
+
 export function hourRangeTitle( hour: number ) {
 	return `${ String( hour ).padStart( 2, '0' ) }:00 – ${ String( hour ).padStart( 2, '0' ) }:59`;
+}
+
+/** Past days and zero-stock slots are not selectable for booking. */
+export function slotSelectable(
+	viewDateYmd: string,
+	remaining: number | null,
+	siteTodayYmd: string,
+) {
+	if ( viewDateYmd < siteTodayYmd ) {
+		return false;
+	}
+	if ( remaining !== null && remaining !== undefined && remaining <= 0 ) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Slot is bookable for the viewed day and has enough remaining tickets for the requested qty.
+ * Unlimited stock (`null`) always satisfies any positive qty when otherwise selectable.
+ */
+export function slotMeetsTicketQuantity(
+	viewDateYmd: string,
+	stock: number | null,
+	siteTodayYmd: string,
+	ticketQty: number,
+) {
+	if ( ! slotSelectable( viewDateYmd, stock, siteTodayYmd ) ) {
+		return false;
+	}
+	if ( ticketQty < 1 ) {
+		return false;
+	}
+	if ( stock === null || stock === undefined ) {
+		return true;
+	}
+	return stock >= ticketQty;
 }
 
 /** Total remaining stock for a set of slots; "Unlimited" if any slot is unlimited. */

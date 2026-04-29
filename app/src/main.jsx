@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
+import { AuthProvider } from '@/context/AuthContext';
 import { CartProvider } from '@/context/CartContext';
 import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import './styles.css';
 
 const queryClient = new QueryClient( {
@@ -33,14 +35,18 @@ if ( root ) {
 	createRoot( root ).render(
 		<StrictMode>
 			<ThemeProvider attribute="class" defaultTheme="light" enableSystem={ false }>
-				<QueryClientProvider client={ queryClient }>
-					<BrowserRouter basename={ getBasename() }>
-						<CartProvider>
-							<App />
-							<Toaster />
-						</CartProvider>
-					</BrowserRouter>
-				</QueryClientProvider>
+				<TooltipProvider>
+					<QueryClientProvider client={ queryClient }>
+						<BrowserRouter basename={ getBasename() }>
+							<AuthProvider>
+								<CartProvider>
+									<App />
+									<Toaster />
+								</CartProvider>
+							</AuthProvider>
+						</BrowserRouter>
+					</QueryClientProvider>
+				</TooltipProvider>
 			</ThemeProvider>
 		</StrictMode>
 	);

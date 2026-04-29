@@ -125,3 +125,57 @@ export function useCreateBooking() {
 		},
 	} );
 }
+
+/**
+ * Ticket validation: search by email, phone, or ticket id (min 3 chars).
+ *
+ * @param {string} q
+ */
+export function useTicketSearch( q ) {
+	const trimmed = typeof q === 'string' ? q.trim() : '';
+	return useQuery( {
+		queryKey: [ 'internalpos', 'validateSearch', trimmed ],
+		queryFn: () =>
+			restFetch( `${ prefix }/validate/search?q=${ encodeURIComponent( trimmed ) }` ),
+		enabled: trimmed.length >= 3,
+		staleTime: 30_000,
+	} );
+}
+
+/**
+ * Full ticket payload via FooEvents `get_single_ticket`.
+ *
+ * @param {string|undefined|null} ticketId Scanner / lookup id (WooCommerceEventsTicketID or productId-formatted)
+ */
+export function useTicketDetail( ticketId ) {
+	const id = typeof ticketId === 'string' ? ticketId.trim() : '';
+	return useQuery( {
+		queryKey: [ 'internalpos', 'validateTicket', id ],
+		queryFn: () => restFetch( `${ prefix }/validate/ticket/${ encodeURIComponent( id ) }` ),
+		enabled: id.length > 0,
+	} );
+}
+
+/**
+ * @returns {import('@tanstack/react-query').UseMutationResult<
+ *   unknown,
+ *   Error,
+ *   { ticketId: string, status: string }
+ * >}
+ */
+export function useUpdateTicketStatus() {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'validateTicketStatus' ],
+		mutationFn: ( { ticketId, status } ) =>
+			restFetch( `${ prefix }/validate/ticket/${ encodeURIComponent( ticketId ) }`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( { status } ),
+			} ),
+		onSuccess: ( _data, variables ) => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', variables.ticketId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
+		},
+	} );
+}

@@ -408,24 +408,10 @@ class Rest_API {
 			return new WP_Error( 'rest_invalid_param', __( 'Query q must be at least 3 characters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
-		$like_any = '%' . $wpdb->esc_like( $q ) . '%';
+		$like_any     = '%' . $wpdb->esc_like( $q ) . '%';
+		$hyphen_parts = preg_split( '/-/', $q );
 
-		// Match `get_single_ticket()`: `{productId}-{WooCommerceEventsTicketNumberFormatted}` when split yields exactly two parts.
-		$hyphen_parts                 = preg_split( '/-/', $q );
-		$formatted_product_ticket_sql = '';
-		if ( is_array( $hyphen_parts ) && 2 === count( $hyphen_parts ) ) {
-			$pid_maybe = isset( $hyphen_parts[0] ) ? sanitize_text_field( (string) $hyphen_parts[0] ) : '';
-			$fmt_maybe = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
-			if ( '' !== $pid_maybe && '' !== $fmt_maybe && absint( $pid_maybe ) > 0 ) {
-				$formatted_product_ticket_sql = '('
-					. " EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e1 WHERE e1.post_id = p.ID AND e1.meta_key = %s AND e1.meta_value = %s )"
-					. " AND EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e2 WHERE e2.post_id = p.ID AND e2.meta_key = %s AND e2.meta_value = %s )"
-				. ')';
-			}
-		}
-
-		// Use plain SQL matching FooEvents' own ticket CPT (publish) — same defaults as apihelper.php `get_single_ticket()`.
-		// A broad `WP_Query` with `meta_query` OR + `post_status` any intermittently matched nothing on production while `/validate/ticket/{id}` still worked.
+		// Direct SQL for publish `event_magic_tickets` only (FooEvents / get_single_ticket() behavior); avoids empty results from WP_Query meta_query OR + post_status any on some installs.
 		$like_keys = array(
 			'WooCommerceEventsAttendeeEmail',
 			'WooCommerceEventsPurchaserEmail',
@@ -445,21 +431,20 @@ class Rest_API {
 			$prepare[]   = $like_any;
 		}
 
-		// Exact ticket id (mirrors `get_single_ticket()` numeric branch); helps when LIKE is problematic for very long ids.
-		if ( preg_match( '/^\d+$/', $q ) ) {
-			$or_chunks[] = '( m.meta_key = %s AND m.meta_value = %s )';
-			$prepare[]   = 'WooCommerceEventsTicketID';
-			$prepare[]   = $q;
-		}
-
-		if ( '' !== $formatted_product_ticket_sql ) {
-			$pid_abs = absint( $hyphen_parts[0] );
-			$fmt_raw = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
-			$or_chunks[] = $formatted_product_ticket_sql;
-			$prepare[]     = 'WooCommerceEventsProductID';
-			$prepare[]     = (string) $pid_abs;
-			$prepare[]     = 'WooCommerceEventsTicketNumberFormatted';
-			$prepare[]     = $fmt_raw;
+		// `{productId}-{WooCommerceEventsTicketNumberFormatted}` (see FooEvents `get_single_ticket()`).
+		if ( is_array( $hyphen_parts ) && 2 === count( $hyphen_parts ) ) {
+			$pid_maybe = isset( $hyphen_parts[0] ) ? sanitize_text_field( (string) $hyphen_parts[0] ) : '';
+			$fmt_maybe = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
+			if ( absint( $pid_maybe ) > 0 && '' !== $fmt_maybe ) {
+				$or_chunks[] = '('
+					. " EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e1 WHERE e1.post_id = p.ID AND e1.meta_key = %s AND e1.meta_value = %s )"
+					. " AND EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e2 WHERE e2.post_id = p.ID AND e2.meta_key = %s AND e2.meta_value = %s )"
+					. ')';
+				$prepare[] = 'WooCommerceEventsProductID';
+				$prepare[] = (string) absint( $pid_maybe );
+				$prepare[] = 'WooCommerceEventsTicketNumberFormatted';
+				$prepare[] = $fmt_maybe;
+			}
 		}
 
 		$sql = "SELECT DISTINCT p.ID FROM {$wpdb->posts} p"
@@ -481,10 +466,10 @@ class Rest_API {
 				$name = (string) get_post_meta( $post_id, 'WooCommerceEventsProductName', true );
 			}
 			$results[] = array(
-				'ticketId'           => $lookup['ticketId'],
-				'ticketNumericId'   => $lookup['numericId'],
-				'attendeeName'      => $name,
-				'eventName'          => (string) get_post_meta( $post_id, 'WooCommerceEventsProductName', true ),
+				'ticketId'                => $lookup['ticketId'],
+				'ticketNumericId'         => $lookup['numericId'],
+				'attendeeName'            => $name,
+				'eventName'               => (string) get_post_meta( $post_id, 'WooCommerceEventsProductName', true ),
 				'WooCommerceEventsStatus' => (string) get_post_meta( $post_id, 'WooCommerceEventsStatus', true ),
 			);
 		}

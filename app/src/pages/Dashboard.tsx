@@ -1,34 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { addDays, format, formatDistanceToNow, isSameDay, parseISO } from 'date-fns';
-import { CalendarIcon, Clock3, Loader2 } from 'lucide-react';
+import { CalendarIcon, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useDashboard } from '../api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import SlotCartToggleButton from '@/components/SlotCartToggleButton';
+import TicketQuantitySelector from '@/components/TicketQuantitySelector';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from '@/components/ui/popover';
-import POSCheckoutPanel from '@/components/POSCheckoutPanel';
-import type { POSSelection } from '@/types/posSelection';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
 	Accordion,
 	AccordionContent,
 	AccordionItem,
 	AccordionTrigger,
 } from '@/components/ui/accordion';
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from '@/components/ui/popover';
+import Cart from '@/components/Cart';
+import { cartLineKey, useCart } from '@/context/CartContext';
+import { useAuth } from '@/context/AuthContext';
+import type { POSSelection } from '@/types/posSelection';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
+	defaultAccordionHourKey,
 	formatSlotTime,
 	groupSlotsByHour,
+	hidePastHourBucketsForToday,
 	hourRangeTitle,
 	hourRemainingSpotsLabel,
+	slotMeetsTicketQuantity,
+	slotSelectable,
 } from '@/lib/slotHourGrouping';
 
 type SlotRow = {
@@ -54,39 +62,6 @@ type DashboardResponse = {
 	events: DayEvent[];
 };
 
-function StockBadge( { stock }: { stock: number | null } ) {
-	if ( stock === null || stock === undefined ) {
-		return <Badge variant="secondary">Unlimited</Badge>;
-	}
-	if ( stock === 0 ) {
-		return <Badge variant="destructive">FULL</Badge>;
-	}
-	if ( stock <= 2 ) {
-		return (
-			<Badge
-				className="border-amber-500/50 bg-amber-100 text-amber-900 hover:bg-amber-100"
-			>
-				{ stock } left
-			</Badge>
-		);
-	}
-	return <Badge>{ stock } left</Badge>;
-}
-
-function slotSelectable(
-	viewDateYmd: string,
-	remaining: number | null,
-	siteTodayYmd: string,
-) {
-	if ( viewDateYmd < siteTodayYmd ) {
-		return false;
-	}
-	if ( remaining !== null && remaining !== undefined && remaining <= 0 ) {
-		return false;
-	}
-	return true;
-}
-
 export default function Dashboard() {
 	/** '' = use WordPress site-local today. */
 	const [ ymd, setYmd ] = useState( '' );
@@ -95,8 +70,24 @@ export default function Dashboard() {
 	 * `data.date` is always the *viewed* day, so it must not drive Today/Tomorrow labels after the user picks another date.
 	 */
 	const [ siteTodayYmd, setSiteTodayYmd ] = useState<string | null>( null );
-	const [ checkoutSelection, setCheckoutSelection ] = useState<POSSelection | null>(
-		null,
+	const [ ticketQtyByEventId, setTicketQtyByEventId ] = useState<
+		Record<number, number>
+	>( {} );
+	const { toggleLine, hasLine, items, updateQty } = useCart();
+	const { canManageEvents } = useAuth();
+
+	const syncCartQtyForEventDay = useCallback(
+		( eventId: number, viewDateYmd: string, nextQty: number ) => {
+			items
+				.filter(
+					( line ) =>
+						line.eventId === eventId && line.viewDateYmd === viewDateYmd,
+				)
+				.forEach( ( line ) =>
+					updateQty( cartLineKey( line ), nextQty ),
+				);
+		},
+		[ items, updateQty ],
 	);
 	const {
 		data,
@@ -155,10 +146,6 @@ export default function Dashboard() {
 	}, [ ymd, data?.date ] );
 
 	useEffect( () => {
-		setCheckoutSelection( null );
-	}, [ displayYmd ] );
-
-	useEffect( () => {
 		if ( isError && error ) {
 			toast.error( String( ( error as Error )?.message || error || 'Failed to load dashboard' ) );
 		}
@@ -172,12 +159,13 @@ export default function Dashboard() {
 		isFetching && ( isLoading || isPlaceholderData || ! data );
 
 	return (
-		<div className="space-y-6">
+		<div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:items-start lg:gap-8">
+		<div className="min-w-0 space-y-6">
 			<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
 				<div className="w-full min-w-0 text-left sm:flex-1">
 					<h1 className="text-2xl font-bold tracking-tight">Today’s schedule</h1>
 					<p className="text-muted-foreground text-sm">
-						Live schedule · select slots and build an order (checkout link in header) · WooCommerce orders · auto refresh every 30s
+						Live schedule · select slots and build an order (checkout in cart) · WooCommerce orders · auto refresh every 30s
 					</p>
 					{ /* Below subtitle (not in toolbar) so date row height stays fixed */ }
 					<div className="text-muted-foreground mt-1 flex min-h-5 max-w-sm items-center justify-start gap-2 text-xs">
@@ -311,14 +299,30 @@ export default function Dashboard() {
 			{ ! ( isLoading && ! data ) && data && data.events.length > 0 && (
 				<div
 					className={ cn(
-						'lg:grid lg:grid-cols-[1fr_minmax(280px,360px)] lg:items-start lg:gap-6',
-						'space-y-6 lg:space-y-0 transition-opacity duration-200',
+						'space-y-6 transition-opacity duration-200',
 						isPlaceholderData && isFetching ? 'opacity-60' : 'opacity-100',
 					) }
 					aria-busy={ isPlaceholderData && isFetching }
 				>
 					<div className="min-w-0 space-y-6">
-					{ data.events.map( ( ev, i ) => (
+					{ data.events.map( ( ev, i ) => {
+						const ticketQty = ticketQtyByEventId[ ev.eventId ] ?? 1;
+						const slotsForQty = ev.slots.filter( ( s ) =>
+							slotMeetsTicketQuantity(
+								data.date,
+								s.stock,
+								effectiveSiteTodayYmd,
+								ticketQty,
+							),
+						);
+						const hasAnyBookable = ev.slots.some( ( s ) =>
+							slotSelectable(
+								data.date,
+								s.stock,
+								effectiveSiteTodayYmd,
+							),
+						);
+						return (
 						<div key={ `${ ev.eventId }-${ ev.dateLabel }` }>
 							{ i > 0 && <Separator className="mb-6" /> }
 							<Card>
@@ -337,156 +341,166 @@ export default function Dashboard() {
 										) }
 										<div className="min-w-0 flex-1">
 											<CardTitle className="text-lg">
-												<Link
-													to={ `/event/${ ev.eventId }` }
-													className="text-primary hover:underline"
-												>
-													{ ev.eventTitle }
-												</Link>
+												{ canManageEvents ? (
+													<Link
+														to={ `/event/${ ev.eventId }` }
+														className="text-primary hover:underline"
+													>
+														{ ev.eventTitle }
+													</Link>
+												) : (
+													<span>{ ev.eventTitle }</span>
+												) }
 											</CardTitle>
 											<p className="text-muted-foreground text-xs">{ ev.dateLabel }</p>
 										</div>
 									</div>
 								</CardHeader>
-								<CardContent className="pt-0">
-									<Accordion
-										key={ `${ ev.eventId }-${ displayYmd }` }
-										type="multiple"
-										defaultValue={ [] }
-										className="w-full"
-									>
-										{ groupSlotsByHour( ev.slots ).map( ( g ) => {
-											const leftLabel = hourRemainingSpotsLabel( g.slots );
+								<CardContent className="space-y-4 pt-0">
+									<TicketQuantitySelector
+										value={ ticketQty }
+										onChange={ ( n ) => {
+											setTicketQtyByEventId( ( prev ) => ( {
+												...prev,
+												[ ev.eventId ]: n,
+											} ) );
+											if ( data?.date ) {
+												syncCartQtyForEventDay(
+													ev.eventId,
+													data.date,
+													n,
+												);
+											}
+										} }
+									/>
+									{ slotsForQty.length === 0 ? (
+										<p className="text-muted-foreground text-sm">
+											{ hasAnyBookable
+												? `No slots available for ${ ticketQty } ticket${ ticketQty === 1 ? '' : 's' } on this day.`
+												: `No bookable slots on ${ displayYmd || 'this day' }.` }
+										</p>
+									) : ( () => {
+										const hourGroups = hidePastHourBucketsForToday(
+											groupSlotsByHour( slotsForQty ),
+											displayYmd,
+											effectiveSiteTodayYmd,
+										);
+										if ( hourGroups.length === 0 ) {
 											return (
-												<AccordionItem key={ g.key } value={ g.key }>
-													<AccordionTrigger className="text-left hover:no-underline">
-														<span className="flex w-full min-w-0 items-center justify-between gap-2 pr-1">
-															<span className="shrink-0 font-mono text-sm">
-																{ hourRangeTitle( g.hour ) }
-															</span>
-															<span className="flex shrink-0 items-center gap-2">
-																<Badge
-																	variant={
-																		leftLabel === 'Unlimited'
-																			? 'secondary'
-																			: leftLabel === '0 left'
-																				? 'destructive'
-																				: 'outline'
-																	}
-																	className="font-mono text-xs"
-																>
-																	{ leftLabel }
-																</Badge>
-																<span className="text-muted-foreground text-xs tabular-nums">
-																	{ g.slots.length } slot{ g.slots.length === 1 ? '' : 's' }
-																</span>
-															</span>
-														</span>
-													</AccordionTrigger>
-													<AccordionContent>
-														<div className="space-y-2 pl-0 sm:pl-1">
-															{ g.slots.map( ( s ) => {
-																const selectable = slotSelectable(
-																	data.date,
-																	s.stock,
-																	effectiveSiteTodayYmd,
-																);
-																const rowKey = `${ ev.eventId }|${ s.id }|${ s.dateId }|${ data.date }`;
-																const selKey = checkoutSelection
-																	? `${ checkoutSelection.eventId }|${ checkoutSelection.slotId }|${ checkoutSelection.dateId }|${ checkoutSelection.viewDateYmd }`
-																	: '';
-																const selected = selectable && rowKey === selKey;
-																const pickSlot = () => {
-																	if ( ! selectable ) {
-																		return;
-																	}
-																	setCheckoutSelection( {
-																		eventId: ev.eventId,
-																		eventTitle: ev.eventTitle,
-																		dateLabel: ev.dateLabel,
-																		viewDateYmd: data.date,
-																		slotId: s.id,
-																		dateId: s.dateId,
-																		slotLabel: s.label,
-																		slotTime: formatSlotTime( s ),
-																		remaining: s.stock,
-																		price: ev.price ?? null,
-																		priceHtml: ev.priceHtml ?? '',
-																	} );
-																};
-																return (
-																<div
-																	key={ `${ s.id }-${ s.dateId }` }
-																	role={ selectable ? 'button' : undefined }
-																	tabIndex={ selectable ? 0 : undefined }
-																	onClick={ selectable ? pickSlot : undefined }
-																	onKeyDown={
-																		selectable
-																			? ( e ) => {
-																				if (
-																					e.key === 'Enter'
-																					|| e.key === ' '
-																				) {
-																					e.preventDefault();
-																					pickSlot();
-																				}
-																			}
-																			: undefined
-																	}
-																	className={ cn(
-																		'flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5',
-																		selected
-																			&& 'border-primary bg-primary/5 ring-2 ring-primary/30',
-																		selectable && 'cursor-pointer hover:bg-muted/50',
-																	) }
-																>
-																	<div className="flex min-w-0 items-center gap-3">
-																		<div className="text-muted-foreground flex w-14 shrink-0 items-center gap-1 font-mono text-sm">
-																			<Clock3 className="h-3.5 w-3.5" />
-																			{ formatSlotTime( s ) }
-																		</div>
-																		<div className="min-w-0 truncate text-sm">
-																			{ s.label }
-																		</div>
-																	</div>
-																	<div className="flex shrink-0 items-center gap-2">
-																		<StockBadge stock={ s.stock } />
-																		<Button
-																			type="button"
-																			variant={ selected ? 'default' : 'outline' }
-																			size="sm"
-																			disabled={ ! selectable }
-																			onClick={ ( e ) => {
-																				e.stopPropagation();
-																				pickSlot();
-																			} }
-																		>
-																			Checkout
-																		</Button>
-																	</div>
-																</div>
-																);
-															} ) }
-														</div>
-													</AccordionContent>
-												</AccordionItem>
+												<p className="text-muted-foreground text-sm">
+													{ displayYmd === effectiveSiteTodayYmd
+														? 'No upcoming time slots from the current hour onward today.'
+														: `No bookable slots on ${ displayYmd || 'this day' }.` }
+												</p>
 											);
-										} ) }
-									</Accordion>
+										}
+										const openHourKey = defaultAccordionHourKey(
+											hourGroups,
+											displayYmd,
+											effectiveSiteTodayYmd,
+										);
+										return (
+											<Accordion
+												key={ `slots-${ ev.eventId }-${ displayYmd }` }
+												type="single"
+												collapsible
+												defaultValue={ openHourKey }
+												className="w-full space-y-0"
+											>
+												{ hourGroups.map( ( g ) => {
+													const leftLabel = hourRemainingSpotsLabel( g.slots );
+													return (
+														<AccordionItem
+															key={ g.key }
+															value={ g.key }
+															className="border-border not-last:border-b"
+														>
+															<AccordionTrigger
+																className="items-center py-3 hover:no-underline"
+																id={ `hour-${ ev.eventId }-${ g.key }` }
+															>
+																<span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 pr-2">
+																	<span className="shrink-0 font-mono text-sm">
+																		{ hourRangeTitle( g.hour ) }
+																	</span>
+																	<span className="flex shrink-0 flex-wrap items-center gap-2">
+																		<Badge
+																			variant={
+																				leftLabel === 'Unlimited'
+																					? 'secondary'
+																					: leftLabel === '0 left'
+																						? 'destructive'
+																						: 'outline'
+																			}
+																			className="font-mono text-xs"
+																		>
+																			{ leftLabel }
+																		</Badge>
+																		<span className="text-muted-foreground text-xs tabular-nums">
+																			{ g.slots.length } slot
+																			{ g.slots.length === 1 ? '' : 's' }
+																		</span>
+																	</span>
+																</span>
+															</AccordionTrigger>
+															<AccordionContent>
+																<div className="grid grid-cols-1 gap-2 pt-2 pl-0 sm:grid-cols-2 xl:grid-cols-3 sm:pl-1">
+																	{ g.slots.map( ( s ) => {
+																		const selectable = slotSelectable(
+																			data.date,
+																			s.stock,
+																			effectiveSiteTodayYmd,
+																		);
+																		const lineSel: POSSelection = {
+																			eventId: ev.eventId,
+																			eventTitle: ev.eventTitle,
+																			dateLabel: ev.dateLabel,
+																			viewDateYmd: data.date,
+																			slotId: s.id,
+																			dateId: s.dateId,
+																			slotLabel: s.label,
+																			slotTime: formatSlotTime( s ),
+																			remaining: s.stock,
+																			price: ev.price ?? null,
+																			priceHtml: ev.priceHtml ?? '',
+																		};
+																		const inCart = hasLine( lineSel );
+																		return (
+																			<SlotCartToggleButton
+																				key={ `${ s.id }-${ s.dateId }` }
+																				timeText={ formatSlotTime( s ) }
+																				stock={ s.stock }
+																				disabled={ ! selectable }
+																				inCart={ inCart }
+																				onToggle={ () => {
+																					if ( ! selectable ) {
+																						return;
+																					}
+																					toggleLine( lineSel, ticketQty );
+																				} }
+																			/>
+																		);
+																	} ) }
+																</div>
+															</AccordionContent>
+														</AccordionItem>
+													);
+												} ) }
+											</Accordion>
+										);
+									} )() }
 								</CardContent>
 							</Card>
 						</div>
-					) ) }
-					</div>
-					<div className="min-w-0">
-						<POSCheckoutPanel
-							selection={ checkoutSelection }
-							siteTodayYmd={ effectiveSiteTodayYmd }
-							onClear={ () => setCheckoutSelection( null ) }
-						/>
+						);
+					} ) }
 					</div>
 				</div>
 			) }
+		</div>
+		<aside className="mt-8 min-w-0 lg:sticky lg:top-20 lg:mt-0 lg:self-start">
+			<Cart variant="panel" />
+		</aside>
 		</div>
 	);
 }

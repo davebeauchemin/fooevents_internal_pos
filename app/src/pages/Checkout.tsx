@@ -17,6 +17,8 @@ import {
 	SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Checkbox } from '@/components/ui/checkbox';
+import { htmlToPlainText } from '@/lib/htmlPlain';
 
 type PreviewTaxRow = {
 	id?: string;
@@ -68,6 +70,7 @@ export default function Checkout() {
 	const [ last, setLast ] = useState( '' );
 	const [ email, setEmail ] = useState( '' );
 	const [ paymentMethodKey, setPaymentMethodKey ] = useState( '' );
+	const [ checkInNow, setCheckInNow ] = useState( false );
 
 	const effectivePaymentKey = useMemo( () => {
 		if ( ! paymentMethods?.length ) {
@@ -97,6 +100,7 @@ export default function Checkout() {
 			const res = ( await mutation.mutateAsync( {
 				lines: previewLines,
 				paymentMethodKey: effectivePaymentKey,
+				checkInNow,
 				attendee: {
 					firstName: first.trim(),
 					lastName: last.trim(),
@@ -108,16 +112,25 @@ export default function Checkout() {
 				totalQty?: number;
 				totalFormatted?: string;
 				paymentMethodLabel?: string;
+				checkedInCount?: number;
+				checkedInTicketIds?: number[];
 			};
 			const q = res.totalQty ?? res.qty ?? 0;
 			const ticketPart = q > 1 ? `${ q } tickets` : '1 ticket';
 			const methodPart = res.paymentMethodLabel ? ` · ${ res.paymentMethodLabel }` : '';
-			const totalPart = res.totalFormatted ? ` · Total ${ res.totalFormatted }` : '';
-			toast.success( `Booked order #${ res.orderId } · ${ ticketPart }${ methodPart }${ totalPart }` );
+			const totalPart = res.totalFormatted
+				? ` · Total ${ htmlToPlainText( res.totalFormatted ) }`
+				: '';
+			const checkInPart =
+				( res.checkedInCount ?? 0 ) > 0
+					? ` · Checked in (${ res.checkedInCount } ticket${ res.checkedInCount === 1 ? '' : 's' })`
+					: '';
+			toast.success( `Booked order #${ res.orderId } · ${ ticketPart }${ methodPart }${ totalPart }${ checkInPart }` );
 			clearCart();
 			setFirst( '' );
 			setLast( '' );
 			setEmail( '' );
+			setCheckInNow( false );
 			navigate( '/' );
 		} catch ( err: unknown ) {
 			const m = err instanceof Error ? err.message : String( err );
@@ -216,6 +229,23 @@ export default function Checkout() {
 										</SelectContent>
 									</Select>
 								</div>
+								<div className="flex flex-col gap-2 sm:col-span-2">
+									<label className="flex cursor-pointer items-start gap-3">
+										<Checkbox
+											id={ `${ formId }-checkin` }
+											checked={ checkInNow }
+											onCheckedChange={ ( v ) => setCheckInNow( v === true ) }
+											disabled={ mutation.isPending }
+											className="mt-0.5"
+										/>
+										<span className="leading-snug">
+											<span className="font-medium">Check-in right now</span>
+											<span className="text-muted-foreground block text-xs">
+												New tickets are emailed to the customer already marked checked in—they cannot validate again later.
+											</span>
+										</span>
+									</label>
+								</div>
 							</CardContent>
 						</Card>
 						<div className="flex flex-wrap gap-2">
@@ -247,19 +277,24 @@ export default function Checkout() {
 								) }
 
 								{ ! previewBusy && preview?.lines && preview.lines.length > 0 && (
+									<>
+									<p className="text-muted-foreground mb-2 text-xs">Line amounts before tax.</p>
 									<ul className="space-y-2 text-sm">
 										{ preview.lines.map( ( ln, i ) => (
 											<li key={ i } className="flex justify-between gap-4">
 												<span className="min-w-0 flex-1">
-													<span className="font-medium">{ ln.name }</span>
+													<span className="font-medium">{ htmlToPlainText( ln.name ) }</span>
 													{ ln.qty ? (
 														<span className="text-muted-foreground"> × { ln.qty }</span>
 													) : null }
 												</span>
-												<span className="shrink-0 tabular-nums">{ ln.lineTotalFormatted }</span>
+												<span className="shrink-0 tabular-nums">
+													{ htmlToPlainText( ln.lineTotalFormatted ) }
+												</span>
 											</li>
 										) ) }
 									</ul>
+									</>
 								) }
 
 								<Separator />
@@ -267,17 +302,21 @@ export default function Checkout() {
 								<div className="space-y-1 text-sm">
 									<div className="flex justify-between gap-4">
 										<span className="text-muted-foreground">Subtotal</span>
-										<span className="tabular-nums">{ preview?.subtotalFormatted ?? '—' }</span>
+										<span className="tabular-nums">
+											{ preview?.subtotalFormatted ? htmlToPlainText( preview.subtotalFormatted ) : '—' }
+										</span>
 									</div>
 									{ preview?.taxes?.map( ( t ) => (
 										<div key={ t.id ?? t.label } className="flex justify-between gap-4">
-											<span className="text-muted-foreground">{ t.label || 'Tax' }</span>
-											<span className="tabular-nums">{ t.amountFormatted }</span>
+											<span className="text-muted-foreground">{ htmlToPlainText( t.label ) || 'Tax' }</span>
+											<span className="tabular-nums">{ htmlToPlainText( t.amountFormatted ) }</span>
 										</div>
 									) ) }
 									<div className="flex justify-between gap-4">
 										<span className="text-muted-foreground">Tax total</span>
-										<span className="tabular-nums">{ preview?.taxTotalFormatted ?? '—' }</span>
+										<span className="tabular-nums">
+											{ preview?.taxTotalFormatted ? htmlToPlainText( preview.taxTotalFormatted ) : '—' }
+										</span>
 									</div>
 								</div>
 
@@ -286,7 +325,7 @@ export default function Checkout() {
 										Total to charge on Interac
 									</p>
 									<p className="text-foreground mt-1 text-3xl font-bold tabular-nums">
-										{ preview?.totalFormatted ?? '—' }
+										{ preview?.totalFormatted ? htmlToPlainText( preview.totalFormatted ) : '—' }
 									</p>
 								</div>
 							</CardContent>
