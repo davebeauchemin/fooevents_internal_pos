@@ -427,6 +427,11 @@ class Rest_API {
 						'compare' => 'LIKE',
 					),
 					array(
+						'key'     => 'WooCommerceEventsPurchaserEmail',
+						'value'   => $like_any,
+						'compare' => 'LIKE',
+					),
+					array(
 						'key'     => 'WooCommerceEventsAttendeeTelephone',
 						'value'   => $like_any,
 						'compare' => 'LIKE',
