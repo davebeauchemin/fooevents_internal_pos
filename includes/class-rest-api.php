@@ -411,87 +411,65 @@ class Rest_API {
 		$like_any = '%' . $wpdb->esc_like( $q ) . '%';
 
 		// Match `get_single_ticket()`: `{productId}-{WooCommerceEventsTicketNumberFormatted}` when split yields exactly two parts.
-		$hyphen_parts             = preg_split( '/-/', $q );
-		$formatted_product_ticket = null;
+		$hyphen_parts                 = preg_split( '/-/', $q );
+		$formatted_product_ticket_sql = '';
 		if ( is_array( $hyphen_parts ) && 2 === count( $hyphen_parts ) ) {
 			$pid_maybe = isset( $hyphen_parts[0] ) ? sanitize_text_field( (string) $hyphen_parts[0] ) : '';
 			$fmt_maybe = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
-			if ( '' !== $pid_maybe && '' !== $fmt_maybe ) {
-				$formatted_product_ticket = array(
-					array(
-						'key'   => 'WooCommerceEventsProductID',
-						'value' => absint( $pid_maybe ),
-					),
-					array(
-						'key'     => 'WooCommerceEventsTicketNumberFormatted',
-						'value'   => $fmt_maybe,
-						'compare' => '=',
-					),
-				);
+			if ( '' !== $pid_maybe && '' !== $fmt_maybe && absint( $pid_maybe ) > 0 ) {
+				$formatted_product_ticket_sql = '('
+					. " EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e1 WHERE e1.post_id = p.ID AND e1.meta_key = %s AND e1.meta_value = %s )"
+					. " AND EXISTS ( SELECT 1 FROM {$wpdb->postmeta} e2 WHERE e2.post_id = p.ID AND e2.meta_key = %s AND e2.meta_value = %s )"
+				. ')';
 			}
 		}
 
-		$meta_or = array(
-			'relation' => 'OR',
-			array(
-				'key'     => 'WooCommerceEventsAttendeeEmail',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsPurchaserEmail',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsAttendeeTelephone',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsTicketID',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsTicketNumberFormatted',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsAttendeeName',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
-			array(
-				'key'     => 'WooCommerceEventsAttendeeLastName',
-				'value'   => $like_any,
-				'compare' => 'LIKE',
-			),
+		// Use plain SQL matching FooEvents' own ticket CPT (publish) — same defaults as apihelper.php `get_single_ticket()`.
+		// A broad `WP_Query` with `meta_query` OR + `post_status` any intermittently matched nothing on production while `/validate/ticket/{id}` still worked.
+		$like_keys = array(
+			'WooCommerceEventsAttendeeEmail',
+			'WooCommerceEventsPurchaserEmail',
+			'WooCommerceEventsAttendeeTelephone',
+			'WooCommerceEventsTicketID',
+			'WooCommerceEventsTicketNumberFormatted',
+			'WooCommerceEventsAttendeeName',
+			'WooCommerceEventsAttendeeLastName',
 		);
 
-		if ( is_array( $formatted_product_ticket ) ) {
-			$meta_or[] = array(
-				'relation' => 'AND',
-				$formatted_product_ticket[0],
-				$formatted_product_ticket[1],
-			);
+		$or_chunks = array();
+		$prepare   = array( 'event_magic_tickets', 'publish' );
+
+		foreach ( $like_keys as $meta_key ) {
+			$or_chunks[] = '( m.meta_key = %s AND m.meta_value LIKE %s )';
+			$prepare[]   = $meta_key;
+			$prepare[]   = $like_any;
 		}
 
-		$ticket_query = new \WP_Query(
-			array(
-				'post_type'              => 'event_magic_tickets',
-				'post_status'            => 'any',
-				'posts_per_page'         => 50,
-				'fields'                 => 'ids',
-				'no_found_rows'          => true,
-				'suppress_filters'       => true,
-				'update_post_term_cache' => false,
-				'meta_query'             => $meta_or, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-			)
-		);
+		// Exact ticket id (mirrors `get_single_ticket()` numeric branch); helps when LIKE is problematic for very long ids.
+		if ( preg_match( '/^\d+$/', $q ) ) {
+			$or_chunks[] = '( m.meta_key = %s AND m.meta_value = %s )';
+			$prepare[]   = 'WooCommerceEventsTicketID';
+			$prepare[]   = $q;
+		}
 
-		$ticket_post_ids = $ticket_query->get_posts();
+		if ( '' !== $formatted_product_ticket_sql ) {
+			$pid_abs = absint( $hyphen_parts[0] );
+			$fmt_raw = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
+			$or_chunks[] = $formatted_product_ticket_sql;
+			$prepare[]     = 'WooCommerceEventsProductID';
+			$prepare[]     = (string) $pid_abs;
+			$prepare[]     = 'WooCommerceEventsTicketNumberFormatted';
+			$prepare[]     = $fmt_raw;
+		}
+
+		$sql = "SELECT DISTINCT p.ID FROM {$wpdb->posts} p"
+			. " INNER JOIN {$wpdb->postmeta} m ON ( m.post_id = p.ID )"
+			. ' WHERE p.post_type = %s AND p.post_status = %s'
+			. ' AND ( ' . implode( ' OR ', $or_chunks ) . ' )'
+			. ' ORDER BY p.ID DESC'
+			. ' LIMIT 50';
+
+		$ticket_post_ids = $wpdb->get_col( $wpdb->prepare( $sql, ...$prepare ) );
 		$results         = array();
 
 		foreach ( $ticket_post_ids as $post_id ) {
