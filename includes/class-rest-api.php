@@ -410,6 +410,74 @@ class Rest_API {
 
 		$like_any = '%' . $wpdb->esc_like( $q ) . '%';
 
+		// Match `get_single_ticket()`: `{productId}-{WooCommerceEventsTicketNumberFormatted}` when split yields exactly two parts.
+		$hyphen_parts             = preg_split( '/-/', $q );
+		$formatted_product_ticket = null;
+		if ( is_array( $hyphen_parts ) && 2 === count( $hyphen_parts ) ) {
+			$pid_maybe = isset( $hyphen_parts[0] ) ? sanitize_text_field( (string) $hyphen_parts[0] ) : '';
+			$fmt_maybe = isset( $hyphen_parts[1] ) ? sanitize_text_field( (string) $hyphen_parts[1] ) : '';
+			if ( '' !== $pid_maybe && '' !== $fmt_maybe ) {
+				$formatted_product_ticket = array(
+					array(
+						'key'   => 'WooCommerceEventsProductID',
+						'value' => absint( $pid_maybe ),
+					),
+					array(
+						'key'     => 'WooCommerceEventsTicketNumberFormatted',
+						'value'   => $fmt_maybe,
+						'compare' => '=',
+					),
+				);
+			}
+		}
+
+		$meta_or = array(
+			'relation' => 'OR',
+			array(
+				'key'     => 'WooCommerceEventsAttendeeEmail',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsPurchaserEmail',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsAttendeeTelephone',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsTicketID',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsTicketNumberFormatted',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsAttendeeName',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+			array(
+				'key'     => 'WooCommerceEventsAttendeeLastName',
+				'value'   => $like_any,
+				'compare' => 'LIKE',
+			),
+		);
+
+		if ( is_array( $formatted_product_ticket ) ) {
+			$meta_or[] = array(
+				'relation' => 'AND',
+				$formatted_product_ticket[0],
+				$formatted_product_ticket[1],
+			);
+		}
+
 		$ticket_query = new \WP_Query(
 			array(
 				'post_type'              => 'event_magic_tickets',
@@ -419,29 +487,7 @@ class Rest_API {
 				'no_found_rows'          => true,
 				'suppress_filters'       => true,
 				'update_post_term_cache' => false,
-				'meta_query'             => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-					'relation' => 'OR',
-					array(
-						'key'     => 'WooCommerceEventsAttendeeEmail',
-						'value'   => $like_any,
-						'compare' => 'LIKE',
-					),
-					array(
-						'key'     => 'WooCommerceEventsPurchaserEmail',
-						'value'   => $like_any,
-						'compare' => 'LIKE',
-					),
-					array(
-						'key'     => 'WooCommerceEventsAttendeeTelephone',
-						'value'   => $like_any,
-						'compare' => 'LIKE',
-					),
-					array(
-						'key'     => 'WooCommerceEventsTicketID',
-						'value'   => $like_any,
-						'compare' => 'LIKE',
-					),
-				),
+				'meta_query'             => $meta_or, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
 			)
 		);
 

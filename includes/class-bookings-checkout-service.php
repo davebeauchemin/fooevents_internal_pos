@@ -523,6 +523,8 @@ class Bookings_Checkout_Service {
 				}
 			}
 
+			$this->repair_missing_fooevents_ticket_posts_if_needed( $order_id );
+
 			if ( $check_in_now ) {
 				$ticket_ids_after = $this->get_order_ticket_ids( $order_id );
 				$missing          = array_diff( $ticket_ids_after, $checked_in_ticket_ids );
@@ -588,6 +590,79 @@ class Bookings_Checkout_Service {
 			$this->unstash_post( $post_copy );
 			$this->reset_cart_safely();
 		}
+	}
+
+	/**
+	 * FooEvents `FooEvents_Woo_Helper::create_tickets()` can mark `WooCommerceEventsTicketsGenerated` while inserting
+	 * zero `event_magic_tickets` rows (e.g. empty `WooCommerceEventsOrderID` loops). WooHelper then skips subsequent
+	 * regeneration while order meta looks "complete". Restore ticket CPT posts once when there are zero rows.
+	 *
+	 * @param int $order_id WooCommerce order ID.
+	 * @return void
+	 */
+	private function repair_missing_fooevents_ticket_posts_if_needed( $order_id ) {
+		$order_id = absint( $order_id );
+		if ( $order_id <= 0 || ! function_exists( 'wc_get_order' ) ) {
+			return;
+		}
+
+		$order = wc_get_order( $order_id );
+		if ( ! $order instanceof WC_Order ) {
+			return;
+		}
+
+		$blueprint = $order->get_meta( 'WooCommerceEventsOrderTickets', true );
+		if ( empty( $blueprint ) || ! is_array( $blueprint ) ) {
+			return;
+		}
+
+		$existing = $this->count_event_magic_ticket_posts_for_order( $order_id );
+
+		if ( $existing > 0 ) {
+			return;
+		}
+
+		if ( ! class_exists( '\\FooEvents_Config' ) || ! class_exists( '\\FooEvents_Woo_Helper' ) ) {
+			return;
+		}
+
+		$order->delete_meta_data( 'WooCommerceEventsTicketsGenerated' );
+		$order->save();
+
+		$config = new \FooEvents_Config();
+		$woo    = new \FooEvents_Woo_Helper( $config );
+		$woo->create_tickets( $order_id );
+	}
+
+	/**
+	 * @param int $order_id WooCommerce order id.
+	 * @return int
+	 */
+	private function count_event_magic_ticket_posts_for_order( $order_id ) {
+		$order_id = absint( $order_id );
+		if ( $order_id <= 0 ) {
+			return 0;
+		}
+
+		$q = new \WP_Query(
+			array(
+				'post_type'              => 'event_magic_tickets',
+				'post_status'            => 'any',
+				'posts_per_page'         => -1,
+				'fields'                 => 'ids',
+				'no_found_rows'          => true,
+				'suppress_filters'       => true,
+				'update_post_term_cache' => false,
+				'meta_query'             => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+					array(
+						'key'   => 'WooCommerceEventsOrderID',
+						'value' => (string) $order_id,
+					),
+				),
+			)
+		);
+
+		return is_array( $q->posts ) ? count( $q->posts ) : 0;
 	}
 
 	/**
