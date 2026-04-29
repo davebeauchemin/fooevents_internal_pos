@@ -483,12 +483,6 @@ class Bookings_Checkout_Service {
 				}
 			}
 
-			$checked_in_ticket_ids = array();
-			if ( $check_in_now ) {
-				$ticket_candidates = $this->get_order_ticket_ids( $order_id );
-				$checked_in_ticket_ids = $this->check_in_ticket_posts_native( $ticket_candidates );
-			}
-
 			if ( WC()->cart ) {
 				WC()->cart->empty_cart();
 			}
@@ -500,7 +494,43 @@ class Bookings_Checkout_Service {
 			if ( ! $order instanceof WC_Order ) {
 				throw new \Exception( 'Order could not be reloaded for completion.' );
 			}
-			$order->update_status( 'completed', __( 'Booked via Internal POS', 'fooevents-internal-pos' ), true );
+
+			// Tickets are created when the order moves to completed (FooEvents `create_tickets()` on status change).
+			// Hook ticket creation so "check in now" runs as each `event_magic_tickets` post is created.
+			$checked_in_ticket_ids   = array();
+			$immediate_check_in_cb     = null;
+			$current_order_id_for_hook = (int) $order_id;
+			if ( $check_in_now ) {
+				$immediate_check_in_cb = function ( $ticket_post_id ) use ( $current_order_id_for_hook, &$checked_in_ticket_ids ) {
+					$tid = absint( $ticket_post_id );
+					if ( $tid <= 0 ) {
+						return;
+					}
+					$oid = (int) get_post_meta( $tid, 'WooCommerceEventsOrderID', true );
+					if ( $oid !== $current_order_id_for_hook ) {
+						return;
+					}
+					$more = $this->check_in_ticket_posts_native( array( $tid ) );
+					$checked_in_ticket_ids = array_values( array_unique( array_merge( $checked_in_ticket_ids, $more ) ) );
+				};
+				add_action( 'fooevents_create_ticket', $immediate_check_in_cb, 10, 1 );
+			}
+			try {
+				$order->update_status( 'completed', __( 'Booked via Internal POS', 'fooevents-internal-pos' ), true );
+			} finally {
+				if ( null !== $immediate_check_in_cb ) {
+					remove_action( 'fooevents_create_ticket', $immediate_check_in_cb, 10 );
+				}
+			}
+
+			if ( $check_in_now ) {
+				$ticket_ids_after = $this->get_order_ticket_ids( $order_id );
+				$missing          = array_diff( $ticket_ids_after, $checked_in_ticket_ids );
+				if ( ! empty( $missing ) ) {
+					$more = $this->check_in_ticket_posts_native( array_values( array_map( 'intval', $missing ) ) );
+					$checked_in_ticket_ids = array_values( array_unique( array_merge( $checked_in_ticket_ids, $more ) ) );
+				}
+			}
 
 			$total_qty = 0;
 			foreach ( $lines as $ln ) {
