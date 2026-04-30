@@ -20,10 +20,40 @@ import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
 import { htmlToPlainText } from '@/lib/htmlPlain';
 
+const MAX_POS_COUPONS = 20;
+
+function parseCouponCodesInput( raw: string ): string[] {
+	const parts = raw.split( /[\s,;]+/ );
+	const out: string[] = [];
+	for ( const p of parts ) {
+		const t = p.trim();
+		if ( ! t ) {
+			continue;
+		}
+		out.push( t );
+		if ( out.length >= MAX_POS_COUPONS ) {
+			break;
+		}
+	}
+	return out;
+}
+
 type PreviewTaxRow = {
 	id?: string;
 	label?: string;
 	amountFormatted?: string;
+};
+
+type PreviewCouponApplied = {
+	code?: string;
+	discountExTaxFormatted?: string;
+	discountTaxFormatted?: string;
+};
+
+type PreviewCouponError = {
+	code?: string;
+	message?: string;
+	manualEntry?: boolean;
 };
 
 type CheckoutPreviewResponse = {
@@ -31,6 +61,11 @@ type CheckoutPreviewResponse = {
 	subtotalTaxFormatted?: string;
 	taxTotalFormatted?: string;
 	totalFormatted?: string;
+	discountTotal?: string;
+	discountTotalFormatted?: string;
+	discountIncludingTaxFormatted?: string;
+	appliedCoupons?: PreviewCouponApplied[];
+	couponErrors?: PreviewCouponError[];
 	taxes?: PreviewTaxRow[];
 	lines?: Array<{
 		name?: string;
@@ -55,14 +90,24 @@ export default function Checkout() {
 		[ items ],
 	);
 
+	const [ couponInput, setCouponInput ] = useState( '' );
+	const couponCodesForApi = useMemo(
+		() => parseCouponCodesInput( couponInput ),
+		[ couponInput ],
+	);
+
 	const {
 		data: previewRaw,
 		isLoading: previewLoading,
 		isFetching: previewFetching,
 		error: previewError,
-	} = useCheckoutPreview( items.length ? previewLines : null );
+	} = useCheckoutPreview( items.length ? previewLines : null, couponCodesForApi );
 
-	const preview = previewRaw;
+	const preview = previewRaw as CheckoutPreviewResponse | undefined;
+
+	const couponBlocking = Boolean(
+		preview?.couponErrors?.some( ( row ) => row?.manualEntry && row?.message ),
+	);
 
 	const mutation = useCreateBooking();
 	const { data: paymentMethods, isLoading: paymentMethodsLoading } = usePaymentMethods();
@@ -91,7 +136,8 @@ export default function Checkout() {
 		|| ! first.trim()
 		|| ! last.trim()
 		|| ! email.trim()
-		|| ! postalCode.trim();
+		|| ! postalCode.trim()
+		|| couponBlocking;
 
 	const onSubmit = async ( e: FormEvent ) => {
 		e.preventDefault();
@@ -111,6 +157,7 @@ export default function Checkout() {
 				billing: {
 					postalCode: postalCode.trim(),
 				},
+				couponCodes: couponCodesForApi,
 			} ) ) as {
 				orderId: number;
 				qty?: number;
@@ -136,6 +183,7 @@ export default function Checkout() {
 			setLast( '' );
 			setEmail( '' );
 			setPostalCode( '' );
+			setCouponInput( '' );
 			setCheckInNow( false );
 			navigate( '/' );
 		} catch ( err: unknown ) {
@@ -293,6 +341,55 @@ export default function Checkout() {
 								<CardDescription>Includes taxes per store settings.</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
+								<div className="grid gap-2">
+									<Label htmlFor={ `${ formId }-coupons` }>Coupon codes (optional)</Label>
+									<Input
+										id={ `${ formId }-coupons` }
+										type="text"
+										value={ couponInput }
+										onChange={ ( e ) => setCouponInput( e.target.value ) }
+										placeholder="e.g. SAVE10 or code1, code2"
+										autoComplete="off"
+										disabled={ mutation.isPending }
+										maxLength={ 400 }
+									/>
+									<p className="text-muted-foreground text-xs leading-relaxed">
+										WooCommerce validates codes like the storefront checkout. Bundle codes configured for auto-apply are tried automatically; enter extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
+									</p>
+								</div>
+
+								{ ! previewBusy && preview?.couponErrors && preview.couponErrors.length > 0 && (
+									<ul className="space-y-1 text-sm">
+										{ preview.couponErrors.map( ( err, idx ) => (
+											<li
+												key={ `${ err.code ?? 'c' }-${ idx }` }
+												className={ err.manualEntry ? 'text-destructive' : 'text-muted-foreground' }
+											>
+												{ err.code ? <span className="font-mono">{ err.code }</span> : null }
+												{ err.code && err.message ? ': ' : null }
+												{ err.message ?? '' }
+											</li>
+										) ) }
+									</ul>
+								) }
+
+								{ ! previewBusy &&
+									preview?.appliedCoupons &&
+									preview.appliedCoupons.length > 0 && (
+										<ul className="text-muted-foreground space-y-1 text-xs">
+											{ preview.appliedCoupons.map( ( c ) => (
+												<li key={ c.code } className="flex justify-between gap-2 tabular-nums">
+													<span>
+														Coupon <span className="font-mono">{ htmlToPlainText( c.code ?? '' ) }</span>
+													</span>
+													<span>
+														−{ htmlToPlainText( c.discountExTaxFormatted ?? '' ) }
+													</span>
+												</li>
+											) ) }
+										</ul>
+									) }
+
 								{ previewBusy && (
 									<div className="text-muted-foreground flex items-center gap-2 text-sm">
 										<Loader2 className="size-4 animate-spin" />
@@ -302,7 +399,7 @@ export default function Checkout() {
 
 								{ ! previewBusy && preview?.lines && preview.lines.length > 0 && (
 									<>
-									<p className="text-muted-foreground mb-2 text-xs">Line amounts before tax.</p>
+									<p className="text-muted-foreground mb-2 text-xs">Line totals exclude tax (after WooCommerce discounts).</p>
 									<ul className="space-y-2 text-sm">
 										{ preview.lines.map( ( ln, i ) => (
 											<li key={ i } className="flex justify-between gap-4">
@@ -330,6 +427,16 @@ export default function Checkout() {
 											{ preview?.subtotalFormatted ? htmlToPlainText( preview.subtotalFormatted ) : '—' }
 										</span>
 									</div>
+									{ preview?.discountTotal &&
+										Number.parseFloat( String( preview.discountTotal ) ) > 0 &&
+										preview.discountTotalFormatted && (
+										<div className="flex justify-between gap-4">
+											<span className="text-muted-foreground">Discount (ex tax)</span>
+											<span className="tabular-nums text-emerald-700 dark:text-emerald-400">
+												−{ htmlToPlainText( preview.discountTotalFormatted ) }
+											</span>
+										</div>
+									) }
 									{ preview?.taxes?.map( ( t ) => (
 										<div key={ t.id ?? t.label } className="flex justify-between gap-4">
 											<span className="text-muted-foreground">{ htmlToPlainText( t.label ) || 'Tax' }</span>

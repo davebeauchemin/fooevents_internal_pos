@@ -16,6 +16,10 @@ Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Sh
 
 Regional reporting (postal codes): checkout captures a billing postal/ZIP code for each POS booking. WooCommerce stores this in the native billing_postcode field (postmeta key _billing_postcode), so POS and storefront orders can be analyzed together. Internal POS orders also set order meta _fooevents_internal_pos_postal_code (same value) and _fooevents_internal_pos_postal_code_source = manual_pos to identify cashier-entered values. Values are trimmed and sanitized only (no enforced format).
 
+Coupons (WooCommerce): create standard coupons in WooCommerce > Marketing > Coupons; restrictions and stacking follow WooCommerce settings. Checkout preview (`POST checkout/preview`) and booking creation (`POST bookings`) accept a `couponCodes` array of cashier-entered codes. Internal POS automatically tries coupon codes registered via the PHP filter `fooevents_internal_pos_auto_coupon_codes` (default empty)—for example:
+
+`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function ( $codes ) { return array_merge( (array) $codes, array( 'BUNDLE2', 'BUNDLE4' ) ); } );`
+
 == Installation ==
 
 1. Install WooCommerce, FooEvents, and FooEvents Bookings.
@@ -26,6 +30,7 @@ Regional reporting (postal codes): checkout captures a billing postal/ZIP code f
 == Changelog ==
 
 = 0.1.1.20 =
+* POS checkout: WooCommerce coupons—auto-apply codes via `fooevents_internal_pos_auto_coupon_codes` filter; manual `couponCodes` on checkout preview and bookings; validated amounts and coupon lines persisted on POS orders via `$order->apply_coupon()` / WooCommerce totals.
 * POS checkout: require billing postal code; REST accepts billing.postalCode; orders save WooCommerce billing_postcode plus _fooevents_internal_pos_postal_code and _fooevents_internal_pos_postal_code_source for reporting.
 * Validate search: rewrite REST search to a direct SQL query against `event_magic_tickets` (`publish`), aligning behavior with `get_single_ticket()`. Fixes empty results for email, numeric ticket ID, and `{productId}-{formatted}` lookups.
 * Cleanup: streamline `get_validate_search` SQL builder, replace `WP_Query` row count in the booking-repair helper with `SELECT COUNT(*)`, refresh plugin description.

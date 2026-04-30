@@ -37,6 +37,54 @@ class Bookings_Checkout_Service {
 	const MAX_BOOKING_POSTAL_CODE_LENGTH = 50;
 
 	/**
+	 * Coupon codes POS tries automatically (create those coupons in WooCommerce). Extend via
+	 * `fooevents_internal_pos_auto_coupon_codes` filter — default empty.
+	 *
+	 * @return array<int, string>
+	 */
+	public static function get_auto_coupon_codes() {
+		$filtered = apply_filters( 'fooevents_internal_pos_auto_coupon_codes', array() );
+		return self::sanitize_coupon_code_list( is_array( $filtered ) ? $filtered : array() );
+	}
+
+	/** Max coupon codes attempted per POS request (auto + manual, unique codes). */
+	const MAX_BOOKING_COUPONS = 20;
+
+	/**
+	 * @param mixed $maybe_arr REST JSON `couponCodes` array or null/absent.
+	 * @return array<int,string>|WP_Error|null Sanitized codes, WP_Error when invalid shape, empty array acceptable.
+	 */
+	public static function parse_coupon_codes_from_rest_payload( $maybe_arr ) {
+		if ( null === $maybe_arr || false === $maybe_arr ) {
+			return array();
+		}
+		if ( ! is_array( $maybe_arr ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'couponCodes must be an array of strings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$list = array();
+		foreach ( $maybe_arr as $row ) {
+			if ( ! is_string( $row ) ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Each couponCodes entry must be a string.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			$list[] = $row;
+		}
+		$sanitized = self::sanitize_coupon_code_list( $list );
+		if ( count( $sanitized ) > self::MAX_BOOKING_COUPONS ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: %d max coupons */
+					__( 'Too many coupons (maximum %d).', 'fooevents-internal-pos' ),
+					self::MAX_BOOKING_COUPONS
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		return $sanitized;
+	}
+
+	/**
 	 * Plain formatted money for JSON REST consumers (wc_price outputs HTML markup).
 	 *
 	 * @param float|string $amount Amount.
@@ -53,12 +101,303 @@ class Bookings_Checkout_Service {
 	}
 
 	/**
+	 * @param array<int, mixed> $codes Raw coupon strings.
+	 * @return array<int, string> Woo-formatted coupon codes, unique order preserved (max Woo length).
+	 */
+	private static function sanitize_coupon_code_list( array $codes ) {
+		$seen = array();
+		$out  = array();
+		foreach ( $codes as $c ) {
+			if ( ! is_string( $c ) ) {
+				continue;
+			}
+			$trim = sanitize_text_field( trim( $c ) );
+			if ( '' === $trim ) {
+				continue;
+			}
+			$formatted = function_exists( 'wc_format_coupon_code' )
+				? wc_format_coupon_code( $trim )
+				: strtoupper( $trim );
+
+			if ( '' === $formatted || mb_strlen( $formatted ) > 200 ) {
+				continue;
+			}
+			$key = strtolower( $formatted );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$out[]        = $formatted;
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Auto coupons first (filter), then manual — unique codes, capped by MAX_BOOKING_COUPONS.
+	 *
+	 * @param array<int, string|mixed> $manual_codes Already-sanitized optional manual list.
+	 * @return array<int, string>
+	 */
+	private static function build_pos_coupon_attempt_codes( array $manual_codes ) {
+		$list   = array();
+		$seen   = array();
+		$san_manual = self::sanitize_coupon_code_list( array_values( array_map( 'strval', $manual_codes ) ) );
+
+		foreach ( self::get_auto_coupon_codes() as $code ) {
+			if ( mb_strlen( (string) $code ) <= 0 ) {
+				continue;
+			}
+			$key = strtolower( (string) $code );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$list[]       = $code;
+		}
+		foreach ( $san_manual as $code ) {
+			$key = strtolower( (string) $code );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$list[]       = $code;
+		}
+
+		if ( count( $list ) <= self::MAX_BOOKING_COUPONS ) {
+			return $list;
+		}
+
+		return array_slice( $list, 0, self::MAX_BOOKING_COUPONS );
+	}
+
+	/**
+	 * Try apply one coupon via WooCommerce cart validation; clears notices so REST stays clean.
+	 *
+	 * @param \WC_Cart $cart          Cart session.
+	 * @param string   $coupon_code Woo-formatted code.
+	 * @return array{applied:bool, message:string}
+	 */
+	private static function try_cart_apply_coupon_notice_clean( $cart, $coupon_code ) {
+		if ( ! $cart instanceof \WC_Cart || '' === $coupon_code ) {
+			return array(
+				'applied' => false,
+				'message' => __( 'Invalid coupon.', 'fooevents-internal-pos' ),
+			);
+		}
+
+		wc_clear_notices();
+		$ok = false;
+		if ( method_exists( $cart, 'apply_coupon' ) ) {
+			$maybe = $cart->apply_coupon( $coupon_code );
+			if ( true === $maybe ) {
+				$ok = true;
+			} elseif ( is_wp_error( $maybe ) ) {
+				return array(
+					'applied' => false,
+					'message' => wp_strip_all_tags( $maybe->get_error_message() ),
+				);
+			}
+		}
+
+		if ( ! $ok || ! method_exists( $cart, 'has_discount' ) || ! $cart->has_discount( $coupon_code ) ) {
+			$errs = wc_get_notices( 'error' );
+			wc_clear_notices();
+			$msg = '';
+			if ( is_array( $errs ) && isset( $errs[0]['notice'] ) ) {
+				$msg = wp_strip_all_tags( (string) $errs[0]['notice'] );
+			}
+			if ( '' === $msg ) {
+				$msg = __( 'This coupon cannot be applied to this basket.', 'fooevents-internal-pos' );
+			}
+
+			return array(
+				'applied' => false,
+				'message' => $msg,
+			);
+		}
+
+		wc_clear_notices();
+
+		return array(
+			'applied' => true,
+			'message' => '',
+		);
+	}
+
+	/**
+	 * Apply configured auto coupons + cashier manual coupons to the hydrated cart session.
+	 *
+	 * @param \WC_Cart $cart Cart.
+	 * @param array    $cashier_manual_sanitized Sanitized cashier coupon codes only.
+	 * @param array<int, string> Manual codes for detecting blocking rejects.
+	 * @return array{coupon_errors:array<int,array{code:string,manual:bool,message:string}>}
+	 */
+	private function attempt_pos_cart_discounts_for_session( $cart, array $cashier_manual_sanitized ) {
+		$coupon_errors = array();
+		$manual_map    = array();
+		foreach ( $cashier_manual_sanitized as $m ) {
+			$manual_map[ strtolower( (string) $m ) ] = true;
+		}
+
+		foreach ( self::build_pos_coupon_attempt_codes( $cashier_manual_sanitized ) as $code ) {
+			$res = self::try_cart_apply_coupon_notice_clean( $cart, $code );
+			if ( $res['applied'] ) {
+				continue;
+			}
+			$is_manual = isset( $manual_map[ strtolower( (string) $code ) ] );
+			$coupon_errors[] = array(
+				'code'    => (string) $code,
+				'manual'  => $is_manual,
+				'message' => (string) $res['message'],
+			);
+		}
+
+		if ( method_exists( $cart, 'calculate_totals' ) ) {
+			$cart->calculate_totals();
+		}
+
+		return array( 'coupon_errors' => $coupon_errors );
+	}
+
+	/**
+	 * Build booking lines into WooCommerce cart.
+	 *
+	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Parsed lines.
+	 * @param bool                                                                   $enforce_availability When false, skips `check_availability` (booking already gated).
+	 * @return WP_Error|null Null on OK.
+	 */
+	private function hydrate_booking_cart( array $lines, $enforce_availability = true ) {
+		if ( null === WC()->cart ) {
+			return new WP_Error( 'cart', __( 'Cart is unavailable.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
+		}
+
+		foreach ( $lines as $ln ) {
+			$event_id = (int) $ln['event_id'];
+			$slot_id  = (string) $ln['slot_id'];
+			$date_id  = (string) $ln['date_id'];
+			$qty      = (int) $ln['qty'];
+
+			if ( $enforce_availability ) {
+				$pre = $this->bookings->check_availability( $event_id, $slot_id, $date_id, $qty );
+				if ( 'not_found' === $pre['reason'] ) {
+					return new WP_Error( 'not_found', __( 'Slot or date not found for this event.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+				}
+				if ( 'past_date' === $pre['reason'] ) {
+					return new WP_Error( 'past_date', __( 'That date is in the past.', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
+				}
+				if ( 'insufficient' === $pre['reason'] || ! $pre['available'] ) {
+					return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
+				}
+			}
+
+			$product = wc_get_product( $event_id );
+			if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+				return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+			}
+
+			$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
+			if ( null === $norm ) {
+				return new WP_Error(
+					'booking_resolve',
+					__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
+					array( 'status' => 400 )
+				);
+			}
+
+			$cart_item_data = $this->build_cart_item_data(
+				(string) $norm['method'],
+				$event_id,
+				(string) $norm['slot_id'],
+				(string) $norm['internal_date_id'],
+				isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
+			);
+
+			if ( null === WC()->cart ) {
+				return new WP_Error( 'cart', __( 'Cart is unavailable.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
+			}
+
+			$add = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
+			if ( ! $add ) {
+				return new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Build REST snippets for WooCommerce coupons on the hydrated cart session.
+	 *
+	 * @param \WC_Cart                                                                           $cart          Cart session.
+	 * @param array<int, array{code:string,manual:bool,message:string}> $coupon_errors Rejected attempts.
+	 * @return array{couponErrors:array,appliedCoupons:array,discountTotal:string,discountTotalFormatted:string,discountTax:string,discountTaxFormatted:string,discountIncludingTax:string,discountIncludingTaxFormatted:string}
+	 */
+	private function build_rest_coupon_payload_from_cart( $cart, array $coupon_errors ) {
+		$applied_coupons = array();
+
+		if ( $cart instanceof \WC_Cart && method_exists( $cart, 'get_applied_coupons' ) && method_exists( $cart, 'get_coupon_discount_totals' ) ) {
+			$disc_map = (array) $cart->get_coupon_discount_totals();
+			$tax_map  = method_exists( $cart, 'get_coupon_discount_tax_totals' ) ? (array) $cart->get_coupon_discount_tax_totals() : array();
+
+			foreach ( $cart->get_applied_coupons() as $raw_code ) {
+				$key    = strtolower( wc_format_coupon_code( $raw_code ) );
+				$d_ex   = isset( $disc_map[ $key ] ) ? (float) $disc_map[ $key ] : 0.0;
+				if ( isset( $disc_map[ $raw_code ] ) ) {
+					$d_ex = (float) $disc_map[ $raw_code ];
+				}
+
+				if ( isset( $tax_map[ $key ] ) ) {
+					$d_tax = (float) $tax_map[ $key ];
+				} elseif ( isset( $tax_map[ $raw_code ] ) ) {
+					$d_tax = (float) $tax_map[ $raw_code ];
+				} else {
+					$d_tax = 0.0;
+				}
+
+				$applied_coupons[] = array(
+					'code'                   => wc_format_coupon_code( $raw_code ),
+					'discountExTax'          => wc_format_decimal( $d_ex, wc_get_price_decimals() ),
+					'discountExTaxFormatted' => self::format_price_plain_for_rest( $d_ex ),
+					'discountTax'            => wc_format_decimal( $d_tax, wc_get_price_decimals() ),
+					'discountTaxFormatted'   => self::format_price_plain_for_rest( $d_tax ),
+				);
+			}
+		}
+
+		$coupon_messages = array();
+		foreach ( $coupon_errors as $row ) {
+			$coupon_messages[] = array(
+				'code'       => isset( $row['code'] ) ? (string) $row['code'] : '',
+				'manualEntry' => ! empty( $row['manual'] ),
+				'message'    => isset( $row['message'] ) ? (string) $row['message'] : '',
+			);
+		}
+
+		$disc_tot      = $cart instanceof \WC_Cart && method_exists( $cart, 'get_discount_total' ) ? (float) $cart->get_discount_total() : 0.0;
+		$disc_tax      = $cart instanceof \WC_Cart && method_exists( $cart, 'get_discount_tax' ) ? (float) $cart->get_discount_tax() : 0.0;
+		$disc_incl_tax = $disc_tot + $disc_tax;
+
+		return array(
+			'couponErrors'                   => $coupon_messages,
+			'appliedCoupons'                 => $applied_coupons,
+			'discountTotal'                  => wc_format_decimal( $disc_tot, wc_get_price_decimals() ),
+			'discountTotalFormatted'          => self::format_price_plain_for_rest( $disc_tot ),
+			'discountTax'                     => wc_format_decimal( $disc_tax, wc_get_price_decimals() ),
+			'discountTaxFormatted'            => self::format_price_plain_for_rest( $disc_tax ),
+			'discountIncludingTax'            => wc_format_decimal( $disc_incl_tax, wc_get_price_decimals() ),
+			'discountIncludingTaxFormatted'   => self::format_price_plain_for_rest( $disc_incl_tax ),
+		);
+	}
+
+	/**
 	 * Preview WooCommerce-calculated totals from booking lines without creating an order.
 	 *
 	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Booking lines.
+	 * @param array<int, string|mixed>                                                $coupon_codes_manual Cashier coupons (in addition to auto coupons from filter).
 	 * @return array|WP_Error
 	 */
-	public function preview_checkout_lines( array $lines ) {
+	public function preview_checkout_lines( array $lines, array $coupon_codes_manual = array() ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
@@ -74,57 +413,20 @@ class Bookings_Checkout_Service {
 			return new WP_Error( 'no_cart', __( 'Could not initialize WooCommerce cart session.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
 
+		$manual_sanitized = self::sanitize_coupon_code_list( array_map( 'strval', array_values( $coupon_codes_manual ) ) );
+
 		try {
 			if ( WC()->cart ) {
 				WC()->cart->empty_cart();
 			}
 
-			foreach ( $lines as $ln ) {
-				$event_id = (int) $ln['event_id'];
-				$slot_id  = (string) $ln['slot_id'];
-				$date_id  = (string) $ln['date_id'];
-				$qty      = (int) $ln['qty'];
-
-				$pre = $this->bookings->check_availability( $event_id, $slot_id, $date_id, $qty );
-				if ( 'not_found' === $pre['reason'] ) {
-					return new WP_Error( 'not_found', __( 'Slot or date not found for this event.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
-				}
-				if ( 'past_date' === $pre['reason'] ) {
-					return new WP_Error( 'past_date', __( 'That date is in the past.', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
-				}
-				if ( 'insufficient' === $pre['reason'] || ! $pre['available'] ) {
-					return new WP_Error( 'insufficient', __( 'Not enough capacity for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
-				}
-
-				$product = wc_get_product( $event_id );
-				if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
-					return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
-				}
-
-				$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
-				if ( null === $norm ) {
-					return new WP_Error(
-						'booking_resolve',
-						__( 'Could not resolve booking slot and date for cart.', 'fooevents-internal-pos' ),
-						array( 'status' => 400 )
-					);
-				}
-
-				$cart_item_data = $this->build_cart_item_data(
-					(string) $norm['method'],
-					$event_id,
-					(string) $norm['slot_id'],
-					(string) $norm['internal_date_id'],
-					isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
-				);
-
-				$add = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
-				if ( ! $add ) {
-					return new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-				}
+			$hydrate_err = $this->hydrate_booking_cart( $lines, true );
+			if ( is_wp_error( $hydrate_err ) ) {
+				return $hydrate_err;
 			}
 
-			WC()->cart->calculate_totals();
+			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $manual_sanitized );
+			$coupon_extra = $this->build_rest_coupon_payload_from_cart( WC()->cart, $coupon_apply['coupon_errors'] );
 
 			$cart       = WC()->cart;
 			$tax_totals = $cart->get_tax_totals();
@@ -143,34 +445,34 @@ class Bookings_Checkout_Service {
 			}
 
 			$line_rows = array();
-			foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) {
+			foreach ( $cart->get_cart() as $cart_item ) {
 				$_product = isset( $cart_item['data'] ) ? $cart_item['data'] : null;
 				if ( ! $_product || ! is_a( $_product, WC_Product::class ) ) {
 					continue;
 				}
-				$cqty             = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 1;
-				$pid              = isset( $cart_item['product_id'] ) ? (int) $cart_item['product_id'] : 0;
-				$line_subtotal_ex = isset( $cart_item['line_subtotal'] ) ? (float) $cart_item['line_subtotal'] : 0.0;
-				$line_tax_amt     = isset( $cart_item['line_subtotal_tax'] ) ? (float) $cart_item['line_subtotal_tax'] : 0.0;
-				$unit_ex          = $cqty > 0 ? $line_subtotal_ex / (float) $cqty : 0.0;
+				$cqty = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 1;
+				$pid  = isset( $cart_item['product_id'] ) ? (int) $cart_item['product_id'] : 0;
 
-				// Line list in POS shows amounts before tax; taxes appear in the breakdown below.
+				$line_ex_excl = isset( $cart_item['line_total'] ) ? (float) $cart_item['line_total'] : ( isset( $cart_item['line_subtotal'] ) ? (float) $cart_item['line_subtotal'] : 0.0 );
+				$line_tax_amt = isset( $cart_item['line_tax'] ) ? (float) $cart_item['line_tax'] : ( isset( $cart_item['line_subtotal_tax'] ) ? (float) $cart_item['line_subtotal_tax'] : 0.0 );
+				$unit_ex      = $cqty > 0 ? $line_ex_excl / (float) $cqty : 0.0;
+
 				$line_rows[] = array(
-					'eventId'           => $pid,
-					'name'              => wp_strip_all_tags( (string) $_product->get_name() ),
-					'qty'               => $cqty,
-					'unitPriceExclTax'  => wc_format_decimal( $unit_ex, wc_get_price_decimals() ),
-					'unitPriceFormatted'=> self::format_price_plain_for_rest( $unit_ex ),
-					'lineSubtotalExclTax'=> wc_format_decimal( $line_subtotal_ex, wc_get_price_decimals() ),
-					'lineTax'           => wc_format_decimal( $line_tax_amt, wc_get_price_decimals() ),
-					'lineTotalInclTax' => wc_format_decimal( $line_subtotal_ex + $line_tax_amt, wc_get_price_decimals() ),
-					'lineTotalFormatted'=> self::format_price_plain_for_rest( $line_subtotal_ex ),
+					'eventId'             => $pid,
+					'name'                => wp_strip_all_tags( (string) $_product->get_name() ),
+					'qty'                 => $cqty,
+					'unitPriceExclTax'    => wc_format_decimal( $unit_ex, wc_get_price_decimals() ),
+					'unitPriceFormatted'  => self::format_price_plain_for_rest( $unit_ex ),
+					'lineSubtotalExclTax' => wc_format_decimal( $line_ex_excl, wc_get_price_decimals() ),
+					'lineTax'             => wc_format_decimal( $line_tax_amt, wc_get_price_decimals() ),
+					'lineTotalInclTax'    => wc_format_decimal( $line_ex_excl + $line_tax_amt, wc_get_price_decimals() ),
+					'lineTotalFormatted'  => self::format_price_plain_for_rest( $line_ex_excl ),
 				);
 			}
 
 			$availability = array();
 			foreach ( $lines as $ln ) {
-				$chk          = $this->bookings->check_availability( (int) $ln['event_id'], (string) $ln['slot_id'], (string) $ln['date_id'], 1 );
+				$chk            = $this->bookings->check_availability( (int) $ln['event_id'], (string) $ln['slot_id'], (string) $ln['date_id'], 1 );
 				$availability[] = array(
 					'eventId'   => (int) $ln['event_id'],
 					'slotId'    => (string) $ln['slot_id'],
@@ -180,20 +482,23 @@ class Bookings_Checkout_Service {
 				);
 			}
 
-			return array(
-				'currency'           => (string) get_woocommerce_currency(),
-				'currencySymbol'     => html_entity_decode( (string) get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ),
-				'subtotal'           => wc_format_decimal( (float) $cart->get_subtotal(), wc_get_price_decimals() ),
-				'subtotalFormatted'  => self::format_price_plain_for_rest( (float) $cart->get_subtotal() ),
-				'subtotalTax'        => wc_format_decimal( (float) $cart->get_subtotal_tax(), wc_get_price_decimals() ),
-				'subtotalTaxFormatted'=> self::format_price_plain_for_rest( (float) $cart->get_subtotal_tax() ),
-				'taxTotal'           => wc_format_decimal( (float) $cart->get_total_tax(), wc_get_price_decimals() ),
-				'taxTotalFormatted'  => self::format_price_plain_for_rest( (float) $cart->get_total_tax() ),
-				'total'              => wc_format_decimal( (float) $cart->get_total( 'edit' ), wc_get_price_decimals() ),
-				'totalFormatted'     => self::format_price_plain_for_rest( (float) $cart->get_total( 'edit' ) ),
-				'taxes'              => $tax_rows,
-				'lines'              => $line_rows,
-				'availability'       => $availability,
+			return array_merge(
+				array(
+					'currency'             => (string) get_woocommerce_currency(),
+					'currencySymbol'       => html_entity_decode( (string) get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ),
+					'subtotal'             => wc_format_decimal( (float) $cart->get_subtotal(), wc_get_price_decimals() ),
+					'subtotalFormatted'    => self::format_price_plain_for_rest( (float) $cart->get_subtotal() ),
+					'subtotalTax'          => wc_format_decimal( (float) $cart->get_subtotal_tax(), wc_get_price_decimals() ),
+					'subtotalTaxFormatted' => self::format_price_plain_for_rest( (float) $cart->get_subtotal_tax() ),
+					'taxTotal'             => wc_format_decimal( (float) $cart->get_total_tax(), wc_get_price_decimals() ),
+					'taxTotalFormatted'    => self::format_price_plain_for_rest( (float) $cart->get_total_tax() ),
+					'total'                => wc_format_decimal( (float) $cart->get_total( 'edit' ), wc_get_price_decimals() ),
+					'totalFormatted'       => self::format_price_plain_for_rest( (float) $cart->get_total( 'edit' ) ),
+					'taxes'                => $tax_rows,
+					'lines'                => $line_rows,
+					'availability'         => $availability,
+				),
+				$coupon_extra
 			);
 		} finally {
 			$this->reset_cart_safely();
@@ -232,6 +537,25 @@ class Bookings_Checkout_Service {
 			return new WP_Error( 'rest_invalid_param', __( 'Billing postal code is too long.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
+		$coupon_manual = array();
+		if ( isset( $args['coupon_codes'] ) ) {
+			if ( ! is_array( $args['coupon_codes'] ) ) {
+				return new WP_Error( 'rest_invalid_param', __( 'coupon_codes must be an array of coupon code strings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			$coupon_manual = self::sanitize_coupon_code_list( array_map( 'strval', $args['coupon_codes'] ) );
+			if ( count( $coupon_manual ) > self::MAX_BOOKING_COUPONS ) {
+				return new WP_Error(
+					'rest_invalid_param',
+					sprintf(
+						/* translators: %d max coupons */
+						__( 'Too many coupons (maximum %d).', 'fooevents-internal-pos' ),
+						self::MAX_BOOKING_COUPONS
+					),
+					array( 'status' => 400 )
+				);
+			}
+		}
+
 		if ( isset( $args['lines'] ) && is_array( $args['lines'] ) && count( $args['lines'] ) > 0 ) {
 			$parsed = $this->normalize_booking_lines_array( $args['lines'] );
 		} else {
@@ -251,7 +575,7 @@ class Bookings_Checkout_Service {
 			return $parsed;
 		}
 
-		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note, $check_in_now, $postal_pc );
+		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note, $check_in_now, $postal_pc, $coupon_manual );
 	}
 
 	/**
@@ -313,9 +637,10 @@ class Bookings_Checkout_Service {
 	 * @param string                                                                     $note Customer note.
 	 * @param bool                                                                       $check_in_now Mark emitted tickets Checked In immediately.
 	 * @param string                                                                     $billing_postal_code Postal/ZIP captured at POS (trimmed, sanitized, max length enforced earlier).
+	 * @param array<int, string>                                                       $coupon_codes_manual Cashier coupon codes sanitised upstream.
 	 * @return array|WP_Error
 	 */
-	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note, $check_in_now, $billing_postal_code ) {
+	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note, $check_in_now, $billing_postal_code, array $coupon_codes_manual = array() ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) || ! class_exists( 'FooEvents_Config' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce or FooEvents is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
@@ -360,14 +685,17 @@ class Bookings_Checkout_Service {
 				WC()->cart->empty_cart();
 			}
 
-			$slot_pairs           = array();
-			$norm_slots_for_remain = array();
+			$hydrate_err = $this->hydrate_booking_cart( $lines, false );
+			if ( is_wp_error( $hydrate_err ) ) {
+				return $hydrate_err;
+			}
 
+			$slot_pairs            = array();
+			$norm_slots_for_remain = array();
 			foreach ( $lines as $ln ) {
 				$event_id = (int) $ln['event_id'];
 				$slot_id  = (string) $ln['slot_id'];
 				$date_id  = (string) $ln['date_id'];
-				$qty      = (int) $ln['qty'];
 
 				$norm = $this->bookings->normalize_booking_ids_for_cart( $event_id, $slot_id, $date_id );
 				if ( null === $norm ) {
@@ -378,25 +706,23 @@ class Bookings_Checkout_Service {
 					);
 				}
 
-				$cart_item_data = $this->build_cart_item_data(
-					(string) $norm['method'],
-					$event_id,
-					(string) $norm['slot_id'],
-					(string) $norm['internal_date_id'],
-					isset( $norm['dateslot_date_bucket'] ) ? (string) $norm['dateslot_date_bucket'] : ''
-				);
-
-				$add = WC()->cart->add_to_cart( $event_id, $qty, 0, array(), $cart_item_data );
-				if ( ! $add ) {
-					return new WP_Error( 'cart_refused', __( 'Could not add the booking to cart (availability or validation).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-				}
-
 				$slot_pairs[] = (string) $norm['slot_id'] . '|' . (string) $norm['internal_date_id'];
 				$norm_slots_for_remain[] = array(
 					'event_id' => $event_id,
 					'slot_id'  => (string) $norm['slot_id'],
 					'date_id'  => $date_id,
 				);
+			}
+
+			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $coupon_codes_manual );
+			foreach ( $coupon_apply['coupon_errors'] as $row ) {
+				if ( ! empty( $row['manual'] ) ) {
+					return new WP_Error(
+						'invalid_coupon',
+						isset( $row['message'] ) ? (string) $row['message'] : __( 'Invalid coupon.', 'fooevents-internal-pos' ),
+						array( 'status' => 400 )
+					);
+				}
 			}
 
 			$order = wc_create_order(
@@ -432,8 +758,8 @@ class Bookings_Checkout_Service {
 				}
 				$cqty = isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 1;
 
-				$line_excl = (float) wc_get_price_excluding_tax( $_product, array( 'qty' => $cqty ) );
-				$per_excl  = $cqty > 0 ? $line_excl / (float) $cqty : 0.0;
+				$line_pre_discount = isset( $cart_item['line_subtotal'] ) ? (float) $cart_item['line_subtotal'] : (float) wc_get_price_excluding_tax( $_product, array( 'qty' => $cqty ) );
+				$per_excl          = $cqty > 0 ? $line_pre_discount / (float) $cqty : 0.0;
 
 				if ( $cqty > 1 ) {
 					for ( $i = 0; $i < $cqty; $i++ ) {
@@ -455,6 +781,17 @@ class Bookings_Checkout_Service {
 							'total'    => $per_excl,
 						)
 					);
+				}
+			}
+
+			foreach ( WC()->cart->get_applied_coupons() as $coupon_code_apply ) {
+				$coupon_code_apply = (string) $coupon_code_apply;
+				if ( '' === $coupon_code_apply ) {
+					continue;
+				}
+				$applied_order = $order->apply_coupon( $coupon_code_apply );
+				if ( is_wp_error( $applied_order ) ) {
+					throw new \Exception( wp_strip_all_tags( $applied_order->get_error_message() ) );
 				}
 			}
 
@@ -570,20 +907,34 @@ class Bookings_Checkout_Service {
 			$completed_order = wc_get_order( $order_id );
 			$order_total     = $completed_order instanceof WC_Order ? (float) $completed_order->get_total() : 0.0;
 
+			$applied_coupon_codes = array();
+			$discount_order       = 0.0;
+			if ( $completed_order instanceof WC_Order ) {
+				if ( method_exists( $completed_order, 'get_coupon_codes' ) ) {
+					$applied_coupon_codes = array_values( array_map( 'strval', (array) $completed_order->get_coupon_codes() ) );
+				}
+				if ( method_exists( $completed_order, 'get_discount_total' ) ) {
+					$discount_order = (float) $completed_order->get_discount_total();
+				}
+			}
+
 			return array(
-				'orderId'             => (int) $order_id,
-				'ticketIds'           => $ids,
-				'checkedInTicketIds' => $checked_in_ticket_ids,
-				'checkedInCount'      => count( $checked_in_ticket_ids ),
-				'remaining'           => $last_remain,
-				'remainingByLine'     => $remaining_by_line,
-				'qty'                 => $total_qty,
-				'totalQty'            => $total_qty,
-				'paymentMethodKey'    => $pm_key,
-				'paymentMethodLabel'  => $pm_label,
-				'cashierId'           => (int) get_current_user_id(),
-				'total'               => wc_format_decimal( $order_total, wc_get_price_decimals() ),
-				'totalFormatted'      => self::format_price_plain_for_rest( $order_total ),
+				'orderId'              => (int) $order_id,
+				'ticketIds'            => $ids,
+				'checkedInTicketIds'   => $checked_in_ticket_ids,
+				'checkedInCount'       => count( $checked_in_ticket_ids ),
+				'remaining'            => $last_remain,
+				'remainingByLine'      => $remaining_by_line,
+				'qty'                  => $total_qty,
+				'totalQty'             => $total_qty,
+				'paymentMethodKey'     => $pm_key,
+				'paymentMethodLabel'   => $pm_label,
+				'cashierId'            => (int) get_current_user_id(),
+				'total'                => wc_format_decimal( $order_total, wc_get_price_decimals() ),
+				'totalFormatted'       => self::format_price_plain_for_rest( $order_total ),
+				'appliedCouponCodes'   => $applied_coupon_codes,
+				'discountTotal'        => wc_format_decimal( $discount_order, wc_get_price_decimals() ),
+				'discountTotalFormatted' => self::format_price_plain_for_rest( $discount_order ),
 			);
 		} catch ( Throwable $e ) {
 			$result = new WP_Error(

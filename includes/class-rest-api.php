@@ -394,7 +394,12 @@ class Rest_API {
 			return $lines_snake;
 		}
 
-		$out = $this->booking_checkout->preview_checkout_lines( $lines_snake );
+		$coupon_parse = Bookings_Checkout_Service::parse_coupon_codes_from_rest_payload( isset( $params['couponCodes'] ) ? $params['couponCodes'] : null );
+		if ( is_wp_error( $coupon_parse ) ) {
+			return $coupon_parse;
+		}
+
+		$out = $this->booking_checkout->preview_checkout_lines( $lines_snake, is_array( $coupon_parse ) ? $coupon_parse : array() );
 		if ( is_wp_error( $out ) ) {
 			return $out;
 		}
@@ -865,6 +870,14 @@ class Rest_API {
 		}
 		if ( mb_strlen( $postal_pc ) > 50 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode must be 50 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$coupon_parse = Bookings_Checkout_Service::parse_coupon_codes_from_rest_payload( isset( $params['couponCodes'] ) ? $params['couponCodes'] : null );
+		if ( is_wp_error( $coupon_parse ) ) {
+			return $coupon_parse;
+		}
+		if ( is_array( $coupon_parse ) && ! empty( $coupon_parse ) ) {
+			$booking_args['coupon_codes'] = $coupon_parse;
 		}
 
 		$out = $this->booking_checkout->create_booking( $booking_args );

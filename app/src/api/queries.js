@@ -65,16 +65,18 @@ export function usePaymentMethods() {
  * Preview WooCommerce subtotal/taxes/total for booking lines (cart simulation only).
  *
  * @param {Array<{eventId:number,slotId:string,dateId:string,qty:number}>|null|undefined} lines
+ * @param {string[]|undefined} couponCodes - Cashier coupon codes; auto-coupons are applied server-side via filter.
  */
-export function useCheckoutPreview( lines ) {
-	const key = lines?.length ? JSON.stringify( lines ) : '';
+export function useCheckoutPreview( lines, couponCodes ) {
+	const codes = Array.isArray( couponCodes ) ? couponCodes : [];
+	const key = lines?.length ? JSON.stringify( lines ) + '::' + JSON.stringify( codes ) : '';
 	return useQuery( {
 		queryKey: [ 'internalpos', 'checkoutPreview', key ],
 		queryFn: () =>
 			restFetch( `${ prefix }/checkout/preview`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify( { lines } ),
+				body: JSON.stringify( { lines, couponCodes: codes } ),
 			} ),
 		enabled: Boolean( lines?.length ),
 		staleTime: 0,
@@ -119,8 +121,7 @@ export function useGenerateSlots( eventId ) {
 /**
  * Book FooEvents booking slot(s) (creates WC order + tickets).
  *
- * @param {object} body - Legacy single slot: { eventId, slotId, dateId, qty, paymentMethodKey?, attendee, billing: { postalCode }, note? }
- *                        Multi-line: { lines: [{ eventId, slotId, dateId, qty }], paymentMethodKey?, attendee, billing: { postalCode }, note? }
+ * @param {object} body - Legacy single-slot or multi-line booking JSON; include `billing.postalCode` and optional `couponCodes` (string[]).
  */
 export function useCreateBooking() {
 	const qc = useQueryClient();
