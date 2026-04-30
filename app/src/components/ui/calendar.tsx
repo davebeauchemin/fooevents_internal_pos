@@ -77,7 +77,8 @@ function Calendar({
           defaultClassNames.dropdown_root
         ),
         dropdown: cn(
-          "absolute inset-0 bg-popover opacity-0",
+          // Native month/year selects are visually hidden but must still receive clicks.
+          "pointer-events-auto absolute inset-0 cursor-pointer bg-popover opacity-0",
           defaultClassNames.dropdown
         ),
         caption_label: cn(

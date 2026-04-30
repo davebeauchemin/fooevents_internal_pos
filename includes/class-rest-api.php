@@ -815,6 +815,10 @@ class Rest_API {
 		$note   = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
 		$pm_key = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
 
+		$billing_pc = isset( $params['billing'] ) && is_array( $params['billing'] ) ? $params['billing'] : array();
+		$postal_raw = isset( $billing_pc['postalCode'] ) ? trim( (string) $billing_pc['postalCode'] ) : '';
+		$postal_pc  = sanitize_text_field( $postal_raw );
+
 		$check_in_now = false;
 		if ( isset( $params['checkInNow'] ) ) {
 			$boo = filter_var( $params['checkInNow'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
@@ -826,6 +830,7 @@ class Rest_API {
 			'attendee_first'     => $fn,
 			'attendee_last'      => $ln,
 			'attendee_email'     => $em,
+			'billing_postal_code' => $postal_pc,
 			'note'               => $note,
 			'check_in_now'       => $check_in_now,
 		);
@@ -854,6 +859,12 @@ class Rest_API {
 		}
 		if ( ! is_email( $em ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'A valid attendee.email is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( '' === $postal_pc ) {
+			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode is required for POS bookings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( mb_strlen( $postal_pc ) > 50 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode must be 50 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
 		$out = $this->booking_checkout->create_booking( $booking_args );

@@ -69,6 +69,7 @@ export default function Checkout() {
 	const [ first, setFirst ] = useState( '' );
 	const [ last, setLast ] = useState( '' );
 	const [ email, setEmail ] = useState( '' );
+	const [ postalCode, setPostalCode ] = useState( '' );
 	const [ paymentMethodKey, setPaymentMethodKey ] = useState( '' );
 	const [ checkInNow, setCheckInNow ] = useState( false );
 
@@ -89,7 +90,8 @@ export default function Checkout() {
 		|| ! effectivePaymentKey
 		|| ! first.trim()
 		|| ! last.trim()
-		|| ! email.trim();
+		|| ! email.trim()
+		|| ! postalCode.trim();
 
 	const onSubmit = async ( e: FormEvent ) => {
 		e.preventDefault();
@@ -105,6 +107,9 @@ export default function Checkout() {
 					firstName: first.trim(),
 					lastName: last.trim(),
 					email: email.trim(),
+				},
+				billing: {
+					postalCode: postalCode.trim(),
 				},
 			} ) ) as {
 				orderId: number;
@@ -130,6 +135,7 @@ export default function Checkout() {
 			setFirst( '' );
 			setLast( '' );
 			setEmail( '' );
+			setPostalCode( '' );
 			setCheckInNow( false );
 			navigate( '/' );
 		} catch ( err: unknown ) {
@@ -209,6 +215,24 @@ export default function Checkout() {
 										autoComplete="email"
 										disabled={ mutation.isPending }
 									/>
+								</div>
+								<div className="grid gap-2 sm:col-span-2">
+									<Label htmlFor={ `${ formId }-postal` }>Postal code</Label>
+									<Input
+										id={ `${ formId }-postal` }
+										type="text"
+										value={ postalCode }
+										onChange={ ( e ) => setPostalCode( e.target.value ) }
+										required
+										maxLength={ 50 }
+										autoComplete="postal-code"
+										inputMode="text"
+										placeholder="Customer postal / ZIP code"
+										disabled={ mutation.isPending }
+									/>
+									<p className="text-muted-foreground text-xs leading-relaxed">
+										Required for regional reporting. Enter exactly as the customer states it.
+									</p>
 								</div>
 								<div className="grid gap-2 sm:col-span-2">
 									<Label htmlFor={ `${ formId }-pm` }>Payment method</Label>

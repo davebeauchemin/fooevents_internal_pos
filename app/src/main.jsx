@@ -37,7 +37,13 @@ if ( root ) {
 			<ThemeProvider attribute="class" defaultTheme="light" enableSystem={ false }>
 				<TooltipProvider>
 					<QueryClientProvider client={ queryClient }>
-						<BrowserRouter basename={ getBasename() }>
+						<BrowserRouter
+							basename={ getBasename() }
+							future={ {
+								v7_startTransition: true,
+								v7_relativeSplatPath: true,
+							} }
+						>
 							<AuthProvider>
 								<CartProvider>
 									<App />

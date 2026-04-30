@@ -1,9 +1,10 @@
-import { useDeferredValue, useEffect, useId, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
 	ArrowLeft,
 	CalendarClock,
+	CalendarIcon,
 	Camera,
 	CheckCircle2,
 	CircleAlert,
@@ -38,8 +39,14 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from '@/components/ui/dialog';
+import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import {
 	formatSlotTime,
@@ -300,6 +307,7 @@ function TicketRescheduleDialog( props: {
 	ticketLookup: string;
 	eventProductId: number;
 } ) {
+	const datePickerId = useId();
 	const { open, onOpenChange, ticket, ticketLookup, eventProductId } = props;
 	const eventQ = useValidateEvent( eventProductId, { enabled: open } );
 	const rescheduleMut = useRescheduleTicket();
@@ -307,6 +315,7 @@ function TicketRescheduleDialog( props: {
 
 	const siteTodayYmd = format( new Date(), 'yyyy-MM-dd' );
 	const [ viewYmd, setViewYmd ] = useState( '' );
+	const [ datePickerOpen, setDatePickerOpen ] = useState( false );
 	const [ picked, setPicked ] = useState< {
 		slotId: string;
 		dateParam: string;
@@ -316,6 +325,18 @@ function TicketRescheduleDialog( props: {
 	const bookingMethod = detail?.bookingMethod ?? 'slotdate';
 	const isDateSlot = bookingMethod === 'dateslot';
 	const dates = detail?.dates ?? [];
+
+	const bookableYmdSet = useMemo(
+		() => new Set( dates.map( ( d ) => d.date ) ),
+		[ dates ],
+	);
+
+	const calendarSelected = useMemo( () => {
+		if ( ! viewYmd || ! /^\d{4}-\d{2}-\d{2}$/.test( viewYmd ) ) {
+			return undefined;
+		}
+		return parseISO( `${ viewYmd }T12:00:00` );
+	}, [ viewYmd ] );
 
 	useEffect( () => {
 		if ( ! open || ! dates.length ) {
@@ -329,6 +350,12 @@ function TicketRescheduleDialog( props: {
 		} );
 		setPicked( null );
 	}, [ open, dates ] );
+
+	useEffect( () => {
+		if ( ! open ) {
+			setDatePickerOpen( false );
+		}
+	}, [ open ] );
 
 	const selectedDay = dates.find( ( d ) => d.date === viewYmd );
 	const slots = selectedDay?.slots ?? [];
@@ -429,6 +456,62 @@ function TicketRescheduleDialog( props: {
 						<div>
 							<p className="text-muted-foreground mb-2 text-xs font-semibold uppercase tracking-wide">
 								{ detail.labels?.date ?? 'Date' }
+							</p>
+							<div className="mb-3">
+								<Label htmlFor={ datePickerId } className="sr-only">
+									Pick date with calendar
+								</Label>
+								<Popover open={ datePickerOpen } onOpenChange={ setDatePickerOpen }>
+									<PopoverTrigger asChild>
+										<Button
+											id={ datePickerId }
+											type="button"
+											variant="outline"
+											className={ cn(
+												'w-full justify-start text-left font-normal sm:w-[min(100%,280px)]',
+											) }
+										>
+											<CalendarIcon className="mr-2 size-4 shrink-0" aria-hidden />
+											{ viewYmd && bookableYmdSet.has( viewYmd )
+												? format( parseISO( `${ viewYmd }T12:00:00` ), 'PP' )
+												: 'Choose date…' }
+										</Button>
+									</PopoverTrigger>
+									<PopoverContent
+										className="w-auto p-0"
+										align="start"
+										onOpenAutoFocus={ ( e ) => e.preventDefault() }
+									>
+										<Calendar
+											mode="single"
+											selected={ calendarSelected }
+											defaultMonth={
+												calendarSelected
+												?? ( dates[ 0 ]
+													? parseISO( `${ dates[ 0 ].date }T12:00:00` )
+													: undefined )
+											}
+											disabled={ ( d ) =>
+												! bookableYmdSet.has( format( d, 'yyyy-MM-dd' ) ) }
+											onSelect={ ( d ) => {
+												if ( ! d ) {
+													return;
+												}
+												const y = format( d, 'yyyy-MM-dd' );
+												if ( ! bookableYmdSet.has( y ) ) {
+													return;
+												}
+												setViewYmd( y );
+												setPicked( null );
+												setDatePickerOpen( false );
+											} }
+											initialFocus
+										/>
+									</PopoverContent>
+								</Popover>
+							</div>
+							<p className="text-muted-foreground mb-2 text-xs font-medium">
+								Quick picks
 							</p>
 							<div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto pb-1">
 								{ dates.map( ( d ) => (

@@ -119,8 +119,8 @@ export function useGenerateSlots( eventId ) {
 /**
  * Book FooEvents booking slot(s) (creates WC order + tickets).
  *
- * @param {object} body - Legacy single slot: { eventId, slotId, dateId, qty, paymentMethodKey?, attendee, note? }
- *                        Multi-line: { lines: [{ eventId, slotId, dateId, qty }], paymentMethodKey?, attendee, note? }
+ * @param {object} body - Legacy single slot: { eventId, slotId, dateId, qty, paymentMethodKey?, attendee, billing: { postalCode }, note? }
+ *                        Multi-line: { lines: [{ eventId, slotId, dateId, qty }], paymentMethodKey?, attendee, billing: { postalCode }, note? }
  */
 export function useCreateBooking() {
 	const qc = useQueryClient();

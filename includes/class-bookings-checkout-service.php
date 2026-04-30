@@ -33,6 +33,9 @@ class Bookings_Checkout_Service {
 
 	const MAX_BOOKING_LINES = 40;
 
+	/** Max stored length for POS billing postcode (sanitized string, no format validation). */
+	const MAX_BOOKING_POSTAL_CODE_LENGTH = 50;
+
 	/**
 	 * Plain formatted money for JSON REST consumers (wc_price outputs HTML markup).
 	 *
@@ -211,6 +214,7 @@ class Bookings_Checkout_Service {
 		$al     = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
 		$em     = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
 		$note   = isset( $args['note'] ) ? sanitize_text_field( (string) $args['note'] ) : '';
+		$postal_pc = isset( $args['billing_postal_code'] ) ? sanitize_text_field( trim( (string) $args['billing_postal_code'] ) ) : '';
 		if ( isset( $args['check_in_now'] ) ) {
 			$b               = filter_var( $args['check_in_now'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
 			$check_in_now = null === $b ? (bool) $args['check_in_now'] : (bool) $b;
@@ -220,6 +224,12 @@ class Bookings_Checkout_Service {
 
 		if ( ! is_email( $em ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'Invalid booking parameters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( '' === $postal_pc ) {
+			return new WP_Error( 'rest_invalid_param', __( 'A billing postal code is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( mb_strlen( $postal_pc ) > self::MAX_BOOKING_POSTAL_CODE_LENGTH ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Billing postal code is too long.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
 		if ( isset( $args['lines'] ) && is_array( $args['lines'] ) && count( $args['lines'] ) > 0 ) {
@@ -241,7 +251,7 @@ class Bookings_Checkout_Service {
 			return $parsed;
 		}
 
-		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note, $check_in_now );
+		return $this->create_booking_from_lines( $parsed, $pm_raw, $af, $al, $em, $note, $check_in_now, $postal_pc );
 	}
 
 	/**
@@ -302,9 +312,10 @@ class Bookings_Checkout_Service {
 	 * @param string                                                                   $em Email.
 	 * @param string                                                                     $note Customer note.
 	 * @param bool                                                                       $check_in_now Mark emitted tickets Checked In immediately.
+	 * @param string                                                                     $billing_postal_code Postal/ZIP captured at POS (trimmed, sanitized, max length enforced earlier).
 	 * @return array|WP_Error
 	 */
-	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note, $check_in_now = false ) {
+	private function create_booking_from_lines( array $lines, $pm_raw, $af, $al, $em, $note, $check_in_now, $billing_postal_code ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) || ! class_exists( 'FooEvents_Config' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce or FooEvents is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
@@ -403,6 +414,9 @@ class Bookings_Checkout_Service {
 			$order->set_billing_first_name( $af );
 			$order->set_billing_last_name( $al );
 			$order->set_billing_email( $em );
+			$order->set_billing_postcode( $billing_postal_code );
+			$order->update_meta_data( '_fooevents_internal_pos_postal_code', $billing_postal_code );
+			$order->update_meta_data( '_fooevents_internal_pos_postal_code_source', 'manual_pos' );
 			$order->set_billing_phone( '' );
 			if ( '' !== $note ) {
 				$order->set_customer_note( $note );
