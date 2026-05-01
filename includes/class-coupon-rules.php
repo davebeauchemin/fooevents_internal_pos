@@ -212,7 +212,7 @@ class Coupon_Rules {
 	 *
 	 * @param string        $channel pos|storefront.
 	 * @param WC_Cart|null  $cart    Optional cart for tax class guess.
-	 * @return array<int, array{code:string,qty:int,amount:float,tax_class:string,coupon_id:int}>
+	 * @return array<int, array{code:string,display_code:string,qty:int,amount:float,tax_class:string,coupon_id:int}>
 	 */
 	public static function get_bundle_tiers_sorted( $channel, $cart = null ) {
 		$tiers = array();
@@ -228,16 +228,18 @@ class Coupon_Rules {
 			if ( $amount <= 0 ) {
 				continue;
 			}
-			$code = $c->get_code();
-			if ( '' === $code ) {
+			$display_code = trim( (string) $c->get_code() );
+			if ( '' === $display_code ) {
 				continue;
 			}
+			$code = function_exists( 'wc_format_coupon_code' ) ? wc_format_coupon_code( $display_code ) : strtoupper( $display_code );
 			$tiers[] = array(
-				'code'      => function_exists( 'wc_format_coupon_code' ) ? wc_format_coupon_code( $code ) : strtoupper( $code ),
-				'qty'       => $qty,
-				'amount'    => $amount,
-				'tax_class' => self::default_product_tax_class_from_cart( $cart ),
-				'coupon_id' => (int) $c->get_id(),
+				'code'          => $code,
+				'display_code'  => $display_code,
+				'qty'           => $qty,
+				'amount'        => $amount,
+				'tax_class'     => self::default_product_tax_class_from_cart( $cart ),
+				'coupon_id'     => (int) $c->get_id(),
 			);
 		}
 
@@ -250,6 +252,9 @@ class Coupon_Rules {
 
 		/**
 		 * Filter bundle tier definitions after DB resolution.
+		 *
+		 * Tier rows may include: code (canonical, e.g. lowercased for WC lookups), optional display_code
+		 * (as-shown labels; defaults to coupon post title), qty, amount, tax_class, coupon_id.
 		 *
 		 * @param array<int, array<string, mixed>> $tiers   Tier rows.
 		 * @param string                           $channel pos|storefront.
@@ -271,25 +276,38 @@ class Coupon_Rules {
 			if ( '' === $code || $qty < 1 ) {
 				continue;
 			}
-			$amount = isset( $row['amount'] ) ? (float) $row['amount'] : 0.0;
+			$coupon_id = isset( $row['coupon_id'] ) ? (int) $row['coupon_id'] : 0;
+			$amount    = isset( $row['amount'] ) ? (float) $row['amount'] : 0.0;
 			if ( $amount <= 0 && function_exists( 'wc_get_coupon_id_by_code' ) ) {
 				$id = (int) wc_get_coupon_id_by_code( $code );
 				if ( $id > 0 ) {
 					$c = new WC_Coupon( $id );
 					$amount = self::tier_flat_amount( $c, $cart );
+					if ( $coupon_id <= 0 ) {
+						$coupon_id = $id;
+					}
 				}
 			}
 			if ( $amount <= 0 ) {
 				continue;
 			}
 			$tax_class = isset( $row['tax_class'] ) ? (string) $row['tax_class'] : self::default_product_tax_class_from_cart( $cart );
-			$coupon_id = isset( $row['coupon_id'] ) ? (int) $row['coupon_id'] : 0;
+
+			$display_code = isset( $row['display_code'] ) ? trim( (string) $row['display_code'] ) : '';
+			if ( '' === $display_code && $coupon_id > 0 ) {
+				$display_code = trim( (string) ( new WC_Coupon( $coupon_id ) )->get_code() );
+			}
+			if ( '' === $display_code ) {
+				$display_code = $code;
+			}
+
 			$resolved[] = array(
-				'code'      => $code,
-				'qty'       => $qty,
-				'amount'    => $amount,
-				'tax_class' => $tax_class,
-				'coupon_id' => $coupon_id,
+				'code'          => $code,
+				'display_code'  => $display_code,
+				'qty'           => $qty,
+				'amount'        => $amount,
+				'tax_class'     => $tax_class,
+				'coupon_id'     => $coupon_id,
 			);
 		}
 
@@ -341,7 +359,7 @@ class Coupon_Rules {
 	 * @param int          $total_qty Total FooEvents booking ticket qty.
 	 * @param string       $channel   pos|storefront.
 	 * @param WC_Cart|null $cart      Cart for tax class.
-	 * @return array<int, array{code:string,name:string,qtyCovered:int,amount:float,taxable:bool,tax_class:string}>
+	 * @return array<int, array{code:string,code_display:string,name:string,qtyCovered:int,amount:float,taxable:bool,tax_class:string}>
 	 */
 	public static function compute_bundle_fee_lines( $total_qty, $channel, $cart = null ) {
 		$tiers   = self::get_bundle_tiers_sorted( $channel, $cart );
@@ -359,14 +377,19 @@ class Coupon_Rules {
 				continue;
 			}
 			$n = intdiv( $remain, $tq );
+			$display = isset( $tier['display_code'] ) ? trim( (string) $tier['display_code'] ) : '';
+			if ( '' === $display ) {
+				$display = (string) $tier['code'];
+			}
 			for ( $i = 0; $i < $n; $i++ ) {
 				$code = (string) $tier['code'];
 				$lines[] = array(
-					'code'       => $code,
-					'name'       => sprintf(
-						/* translators: 1: coupon code, 2: tickets per bundle */
+					'code'           => $code,
+					'code_display'   => $display,
+					'name'           => sprintf(
+						/* translators: 1: coupon code as stored (casing preserved), 2: tickets per bundle */
 						__( '%1$s (%2$d tickets)', 'fooevents-internal-pos' ),
-						$code,
+						$display,
 						$tq
 					),
 					'qtyCovered' => $tq,

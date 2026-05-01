@@ -137,7 +137,7 @@ class Bookings_Checkout_Service {
 	/**
 	 * REST payload for stacked bundle tiers (applied as WC cart/order fees).
 	 *
-	 * @param array<int, array{code:string,name:string,qtyCovered:int,amount:float,taxable:bool,tax_class:string}> $bundle_lines Lines from Coupon_Rules::compute_bundle_fee_lines.
+	 * @param array<int, array{code:string,code_display?:string,name:string,qtyCovered:int,amount:float,taxable:bool,tax_class:string}> $bundle_lines Lines from Coupon_Rules::compute_bundle_fee_lines.
 	 * @return array{bundleDiscounts:array<int,array<string,mixed>>,feesTotal:string,feesTotalFormatted:string}
 	 */
 	private static function build_bundle_discount_rest_payload( array $bundle_lines ) {
@@ -146,8 +146,14 @@ class Bookings_Checkout_Service {
 		foreach ( $bundle_lines as $line ) {
 			$a = isset( $line['amount'] ) ? (float) $line['amount'] : 0.0;
 			$sum_ex += $a;
+			$code_out = '';
+			if ( isset( $line['code_display'] ) && '' !== trim( (string) $line['code_display'] ) ) {
+				$code_out = trim( (string) $line['code_display'] );
+			} elseif ( isset( $line['code'] ) ) {
+				$code_out = (string) $line['code'];
+			}
 			$rows[] = array(
-				'code'             => isset( $line['code'] ) ? (string) $line['code'] : '',
+				'code'             => $code_out,
 				'name'             => isset( $line['name'] ) ? (string) $line['name'] : '',
 				'qtyCovered'       => isset( $line['qtyCovered'] ) ? (int) $line['qtyCovered'] : 0,
 				'amount'           => wc_format_decimal( $a, wc_get_price_decimals() ),
