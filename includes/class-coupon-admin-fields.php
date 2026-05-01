@@ -80,15 +80,26 @@ class Coupon_Admin_Fields {
 			)
 		);
 
-		echo '<p class="form-field form-field-wide">';
-		echo '<label for="fipos_is_bundle_tier">';
-		echo '<input type="checkbox" name="fipos_is_bundle_tier" id="fipos_is_bundle_tier" value="1" ' . checked( $is_tier, true, false ) . ' /> ';
-		echo '<span>' . esc_html__( 'Bundle tier', 'fooevents-internal-pos' ) . '</span>';
-		echo '</label>';
-		echo '</p>';
-		echo '<p class="form-field form-field-wide"><span class="description">';
-		echo esc_html__( 'When checked, stacking uses this coupon’s Fixed cart discount amount per bundle of the size below.', 'fooevents-internal-pos' );
-		echo '</span></p>';
+		if ( function_exists( 'woocommerce_wp_checkbox' ) ) {
+			woocommerce_wp_checkbox(
+				array(
+					'id'            => 'fipos_is_bundle_tier',
+					'label'         => __( 'Bundle tier', 'fooevents-internal-pos' ),
+					'name'          => 'fipos_is_bundle_tier',
+					'value'         => $is_tier ? 'yes' : 'no',
+					'cbvalue'       => 'yes',
+					'checked_value' => 'yes',
+					'description'   => __( 'When checked, stacking uses this coupon’s Fixed cart discount amount per bundle of the size below.', 'fooevents-internal-pos' ),
+					'desc_tip'      => false,
+				)
+			);
+		} else {
+			echo '<p class="form-field fipos_is_bundle_tier_field"><label for="fipos_is_bundle_tier">' . esc_html__( 'Bundle tier', 'fooevents-internal-pos' ) . '</label>';
+			echo '<input type="checkbox" name="fipos_is_bundle_tier" id="fipos_is_bundle_tier" value="1" ' . checked( $is_tier, true, false ) . ' /></p>';
+			echo '<p class="form-field form-field-wide"><span class="description">';
+			echo esc_html__( 'When checked, stacking uses this coupon’s Fixed cart discount amount per bundle of the size below.', 'fooevents-internal-pos' );
+			echo '</span></p>';
+		}
 
 		woocommerce_wp_text_input(
 			array(
