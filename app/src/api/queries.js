@@ -72,13 +72,15 @@ export function useCheckoutPreview( lines, couponCodes ) {
 	const key = lines?.length ? JSON.stringify( lines ) + '::' + JSON.stringify( codes ) : '';
 	return useQuery( {
 		queryKey: [ 'internalpos', 'checkoutPreview', key ],
-		queryFn: () =>
+		queryFn: ( { signal } ) =>
 			restFetch( `${ prefix }/checkout/preview`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify( { lines, couponCodes: codes } ),
+				signal,
 			} ),
 		enabled: Boolean( lines?.length ),
+		placeholderData: keepPreviousData,
 		staleTime: 0,
 	} );
 }

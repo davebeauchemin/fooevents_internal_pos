@@ -19,7 +19,7 @@ function getNonce() {
 
 /**
  * @param {string} path e.g. internalpos/v1/events
- * @param {RequestInit} init
+ * @param {RequestInit & { signal?: AbortSignal }} init Supports `signal` for cancel-in-flight requests.
  */
 export async function restFetch(path, init = {}) {
 	const base = getRestBase().replace(/\/?$/, '/');

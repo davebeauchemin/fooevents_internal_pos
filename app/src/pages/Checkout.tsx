@@ -106,7 +106,8 @@ export default function Checkout() {
 	const preview = previewRaw as CheckoutPreviewResponse | undefined;
 
 	const couponBlocking = Boolean(
-		preview?.couponErrors?.some( ( row ) => row?.manualEntry && row?.message ),
+		! previewFetching &&
+			preview?.couponErrors?.some( ( row ) => row?.manualEntry && row?.message ),
 	);
 
 	const mutation = useCreateBooking();
@@ -358,7 +359,9 @@ export default function Checkout() {
 									</p>
 								</div>
 
-								{ ! previewBusy && preview?.couponErrors && preview.couponErrors.length > 0 && (
+								{ ! previewFetching &&
+									preview?.couponErrors &&
+									preview.couponErrors.length > 0 && (
 									<ul className="space-y-1 text-sm">
 										{ preview.couponErrors.map( ( err, idx ) => (
 											<li
@@ -373,7 +376,7 @@ export default function Checkout() {
 									</ul>
 								) }
 
-								{ ! previewBusy &&
+								{ ! previewFetching &&
 									preview?.appliedCoupons &&
 									preview.appliedCoupons.length > 0 && (
 										<ul className="text-muted-foreground space-y-1 text-xs">
@@ -390,14 +393,21 @@ export default function Checkout() {
 										</ul>
 									) }
 
-								{ previewBusy && (
+								{ previewFetching && preview && (
+									<div className="text-muted-foreground flex items-center gap-2 border-b border-border pb-2 text-xs">
+										<Loader2 className="size-3 animate-spin shrink-0" aria-hidden />
+										Updating totals…
+									</div>
+								) }
+
+								{ previewBusy && ! preview && (
 									<div className="text-muted-foreground flex items-center gap-2 text-sm">
-										<Loader2 className="size-4 animate-spin" />
+										<Loader2 className="size-4 animate-spin" aria-hidden />
 										Calculating totals…
 									</div>
 								) }
 
-								{ ! previewBusy && preview?.lines && preview.lines.length > 0 && (
+								{ preview?.lines && preview.lines.length > 0 && (
 									<>
 									<p className="text-muted-foreground mb-2 text-xs">Line totals exclude tax (after WooCommerce discounts).</p>
 									<ul className="space-y-2 text-sm">

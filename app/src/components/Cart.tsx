@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Minus, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,9 @@ import { Separator } from '@/components/ui/separator';
 import { cartLineKey, useCart, type CartLine } from '@/context/CartContext';
 import { htmlToPlainText } from '@/lib/htmlPlain';
 import { cn } from '@/lib/utils';
+
+/** Numeric field only; ± buttons stay immediate to avoid racing preview while typing. */
+const QTY_INPUT_DEBOUNCE_MS = 320;
 
 type Props = {
 	variant?: 'full' | 'panel';
@@ -207,6 +210,66 @@ function CartLineRow( {
 			? 20
 			: Math.min( 20, Math.max( 1, line.remaining ) );
 
+	const clampQty = useCallback(
+		( q: number ) => Math.max( 1, Math.min( cap, q ) ),
+		[ cap ],
+	);
+
+	const debounceRef = useRef< ReturnType< typeof setTimeout > | null >( null );
+
+	const clearDebounce = useCallback( () => {
+		if ( debounceRef.current != null ) {
+			clearTimeout( debounceRef.current );
+			debounceRef.current = null;
+		}
+	}, [] );
+
+	useEffect( () => () => clearDebounce(), [ clearDebounce ] );
+
+	const commitQtyNow = useCallback(
+		( q: number ) => {
+			onQty( clampQty( q ) );
+		},
+		[ clampQty, onQty ],
+	);
+
+	const [ qtyDraft, setQtyDraft ] = useState( () => String( line.qty ) );
+	useEffect( () => setQtyDraft( String( line.qty ) ), [ line.qty ] );
+
+	const onQtyInputChange = ( e: ChangeEvent< HTMLInputElement > ) => {
+		const raw = e.target.value;
+		setQtyDraft( raw );
+		clearDebounce();
+		const n = parseInt( raw, 10 );
+		if ( ! Number.isFinite( n ) ) {
+			return;
+		}
+		debounceRef.current = setTimeout( () => {
+			debounceRef.current = null;
+			commitQtyNow( n );
+		}, QTY_INPUT_DEBOUNCE_MS );
+	};
+
+	const flushInputQty = useCallback( () => {
+		clearDebounce();
+		const parsed = parseInt( qtyDraft, 10 );
+		const next = clampQty( Number.isFinite( parsed ) ? parsed : line.qty );
+		commitQtyNow( next );
+		setQtyDraft( String( next ) );
+	}, [ clearDebounce, qtyDraft, line.qty, clampQty, commitQtyNow ] );
+
+	const stepQty = useCallback(
+		( delta: number ) => {
+			clearDebounce();
+			const parsed = parseInt( qtyDraft, 10 );
+			const base = Number.isFinite( parsed ) ? clampQty( parsed ) : line.qty;
+			const next = clampQty( base + delta );
+			commitQtyNow( next );
+			setQtyDraft( String( next ) );
+		},
+		[ clearDebounce, qtyDraft, line.qty, clampQty, commitQtyNow ],
+	);
+
 	const priceEach = htmlToPlainText( line.priceHtml );
 
 	return (
@@ -237,9 +300,7 @@ function CartLineRow( {
 						size="icon"
 						className="size-8 shrink-0"
 						disabled={ line.qty <= 1 }
-						onClick={ () =>
-							onQty( Math.max( 1, line.qty - 1 ) )
-						}
+						onClick={ () => stepQty( -1 ) }
 						aria-label="Decrease quantity"
 					>
 						<Minus className="size-4" />
@@ -250,10 +311,10 @@ function CartLineRow( {
 						type="number"
 						min={ 1 }
 						max={ cap }
-						value={ line.qty }
-						onChange={ ( e ) =>
-							onQty( Math.max( 1, Math.min( cap, parseInt( e.target.value, 10 ) || 1 ) ) )
-						}
+						value={ qtyDraft }
+						onChange={ onQtyInputChange }
+						onBlur={ flushInputQty }
+						aria-label="Quantity"
 					/>
 					<Button
 						type="button"
@@ -261,9 +322,7 @@ function CartLineRow( {
 						size="icon"
 						className="size-8 shrink-0"
 						disabled={ line.qty >= cap }
-						onClick={ () =>
-							onQty( Math.min( cap, line.qty + 1 ) )
-						}
+						onClick={ () => stepQty( 1 ) }
 						aria-label="Increase quantity"
 					>
 						<Plus className="size-4" />
