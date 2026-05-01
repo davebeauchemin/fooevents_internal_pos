@@ -34,24 +34,14 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-admin-menu.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-access-helper.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-coupon-rules.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-checkout-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-ticket-reschedule-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
-
-/**
- * Registers default WooCommerce coupon codes POS attempts automatically during preview/booking (higher-tier first).
- *
- * Sites can prepend or omit codes by using the same filter with priority lower than this one, or by removing/editing bundles.
- *
- * @param array<int, string|mixed> $codes Codes from upstream filters (initially empty array).
- * @return array<int, string>
- */
-function fooevents_internal_pos_default_bundle_auto_coupon_codes( $codes ) {
-	return array_merge( (array) $codes, array( 'BUNDLE4', 'BUNDLE2' ) );
-}
-add_filter( 'fooevents_internal_pos_auto_coupon_codes', 'fooevents_internal_pos_default_bundle_auto_coupon_codes', 10, 1 );
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-coupon-admin-fields.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-bundles.php';
 
 /**
  * Init plugin.
@@ -65,6 +55,9 @@ function fooevents_internal_pos_init() {
 	( new \FooEvents_Internal_POS\Frontend_Page() )->init();
 	( new \FooEvents_Internal_POS\Rest_API() )->init();
 	( new \FooEvents_Internal_POS\Storefront_Assets() )->init();
+
+	( new \FooEvents_Internal_POS\Coupon_Admin_Fields() )->init();
+	( new \FooEvents_Internal_POS\Storefront_Bundles() )->init();
 }
 add_action( 'plugins_loaded', 'fooevents_internal_pos_init', 20 );
 

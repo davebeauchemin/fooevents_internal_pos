@@ -16,13 +16,15 @@ Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Sh
 
 Regional reporting (postal codes): checkout captures a billing postal/ZIP code for each POS booking. WooCommerce stores this in the native billing_postcode field (postmeta key _billing_postcode), so POS and storefront orders can be analyzed together. Internal POS orders also set order meta _fooevents_internal_pos_postal_code (same value) and _fooevents_internal_pos_postal_code_source = manual_pos to identify cashier-entered values. Values are trimmed and sanitized only (no enforced format).
 
-Coupons (WooCommerce): create standard coupons in WooCommerce > Marketing > Coupons; restrictions and stacking follow WooCommerce settings. Checkout preview (`POST checkout/preview`) and booking creation (`POST bookings`) accept a `couponCodes` array of cashier-entered codes. Internal POS merges default bundle codes `BUNDLE4` then `BUNDLE2` via the PHP filter `fooevents_internal_pos_auto_coupon_codes` (tier order helps larger carts match the `$74`-tier coupon first). Customize or prepend other auto codes via the same filter—for example:
+Coupons (WooCommerce): each coupon lists a **FooEvents POS / storefront** panel in WooCommerce > Marketing > Coupons: **Auto-apply** (`Off`, `Internal POS checkout`, `Storefront checkout`, or `both`), **Channel restriction** (`both`, **POS only**, **Storefront only**), optional **Bundle tier** with **Tickets per bundle**. Bundle tiers stack as multiple WooCommerce cart/order fees (one line per grouped pack across total FooEvents booking ticket qty—largest tiers first—so e.g. 8 tickets applies two× four-packs). Tier amounts must use **Fixed cart discount** in WooCommerce.
 
-`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function ( $codes ) { return array_merge( (array) $codes, array( 'SUMMER10' ) ); }, 20 );`
+Checkout preview (`POST checkout/preview`) and bookings accept `couponCodes` for cashier-entered codes. Tier codes entered manually are skipped (tier fees still apply).
 
-Or remove bundles by overriding with priority `5`:
+Advanced fallback: legacy auto codes for POS-only `apply_coupon` flow may still merge via PHP filter:
 
-`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function () { return array( 'CUSTOM' ); }, 5 );`
+`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function ( $codes ) { return array_merge( (array) $codes, array( 'SUMMER10' ) ); } );`
+
+Alter bundle tier rows programmatically via `fooevents_internal_pos_bundle_tiers`.
 
 == Installation ==
 

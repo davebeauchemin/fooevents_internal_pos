@@ -56,6 +56,14 @@ type PreviewCouponError = {
 	manualEntry?: boolean;
 };
 
+type PreviewBundleDiscount = {
+	code?: string;
+	name?: string;
+	qtyCovered?: number;
+	amount?: string;
+	amountFormatted?: string;
+};
+
 type CheckoutPreviewResponse = {
 	subtotalFormatted?: string;
 	subtotalTaxFormatted?: string;
@@ -66,6 +74,9 @@ type CheckoutPreviewResponse = {
 	discountIncludingTaxFormatted?: string;
 	appliedCoupons?: PreviewCouponApplied[];
 	couponErrors?: PreviewCouponError[];
+	bundleDiscounts?: PreviewBundleDiscount[];
+	feesTotal?: string;
+	feesTotalFormatted?: string;
 	taxes?: PreviewTaxRow[];
 	lines?: Array<{
 		name?: string;
@@ -355,7 +366,7 @@ export default function Checkout() {
 										maxLength={ 400 }
 									/>
 									<p className="text-muted-foreground text-xs leading-relaxed">
-										WooCommerce validates codes like the storefront checkout. Bundle codes configured for auto-apply are tried automatically; enter extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
+										WooCommerce validates codes like the storefront checkout. Auto-apply and bundle tiers are configured on each coupon in WooCommerce (&quot;FooEvents POS / storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
 									</p>
 								</div>
 
@@ -445,6 +456,33 @@ export default function Checkout() {
 											<span className="tabular-nums text-emerald-700 dark:text-emerald-400">
 												−{ htmlToPlainText( preview.discountTotalFormatted ) }
 											</span>
+										</div>
+									) }
+
+									{ ! previewFetching &&
+										preview?.bundleDiscounts &&
+										preview.bundleDiscounts.length > 0 && (
+										<div className="space-y-1">
+											<p className="text-muted-foreground text-xs font-medium">Bundle discounts</p>
+											<ul className="space-y-1 text-xs">
+												{ preview.bundleDiscounts.map( ( row, ii ) => (
+													<li
+														key={ `${ row.code ?? 'b' }-${ ii }` }
+														className="flex justify-between gap-4 tabular-nums text-emerald-700 dark:text-emerald-400"
+													>
+														<span className="min-w-0">
+															{ htmlToPlainText( row.name || row.code || '' ) }
+														</span>
+														<span className="shrink-0">−{ htmlToPlainText( row.amountFormatted ?? '' ) }</span>
+													</li>
+												) ) }
+											</ul>
+											{ preview.feesTotalFormatted && (
+												<div className="text-muted-foreground flex justify-between gap-4 pt-1 text-xs tabular-nums">
+													<span>Bundle total</span>
+													<span className="text-emerald-700 dark:text-emerald-400">{ htmlToPlainText( preview.feesTotalFormatted ) }</span>
+												</div>
+											) }
 										</div>
 									) }
 									{ preview?.taxes?.map( ( t ) => (

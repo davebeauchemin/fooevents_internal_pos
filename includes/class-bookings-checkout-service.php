@@ -9,6 +9,7 @@ namespace FooEvents_Internal_POS;
 
 use Throwable;
 use WC_Order;
+use WC_Order_Item_Fee;
 use WC_Product;
 use WP_Error;
 
@@ -47,7 +48,7 @@ class Bookings_Checkout_Service {
 		return self::sanitize_coupon_code_list( is_array( $filtered ) ? $filtered : array() );
 	}
 
-	/** Max coupon codes attempted per POS request (auto + manual, unique codes). */
+	/** @deprecated Prefer Coupon_Rules::MAX_COUPONS_PER_REQUEST. */
 	const MAX_BOOKING_COUPONS = 20;
 
 	/**
@@ -69,13 +70,13 @@ class Bookings_Checkout_Service {
 			$list[] = $row;
 		}
 		$sanitized = self::sanitize_coupon_code_list( $list );
-		if ( count( $sanitized ) > self::MAX_BOOKING_COUPONS ) {
+		if ( count( $sanitized ) > Coupon_Rules::MAX_COUPONS_PER_REQUEST ) {
 			return new WP_Error(
 				'rest_invalid_param',
 				sprintf(
 					/* translators: %d max coupons */
 					__( 'Too many coupons (maximum %d).', 'fooevents-internal-pos' ),
-					self::MAX_BOOKING_COUPONS
+					Coupon_Rules::MAX_COUPONS_PER_REQUEST
 				),
 				array( 'status' => 400 )
 			);
@@ -134,41 +135,72 @@ class Bookings_Checkout_Service {
 	}
 
 	/**
-	 * Auto coupons first (filter), then manual — unique codes, capped by MAX_BOOKING_COUPONS.
+	 * REST payload for stacked bundle tiers (applied as WC cart/order fees).
 	 *
-	 * @param array<int, string|mixed> $manual_codes Already-sanitized optional manual list.
-	 * @return array<int, string>
+	 * @param array<int, array{code:string,name:string,qtyCovered:int,amount:float,taxable:bool,tax_class:string}> $bundle_lines Lines from Coupon_Rules::compute_bundle_fee_lines.
+	 * @return array{bundleDiscounts:array<int,array<string,mixed>>,feesTotal:string,feesTotalFormatted:string}
 	 */
-	private static function build_pos_coupon_attempt_codes( array $manual_codes ) {
-		$list   = array();
-		$seen   = array();
-		$san_manual = self::sanitize_coupon_code_list( array_values( array_map( 'strval', $manual_codes ) ) );
-
-		foreach ( self::get_auto_coupon_codes() as $code ) {
-			if ( mb_strlen( (string) $code ) <= 0 ) {
-				continue;
-			}
-			$key = strtolower( (string) $code );
-			if ( isset( $seen[ $key ] ) ) {
-				continue;
-			}
-			$seen[ $key ] = true;
-			$list[]       = $code;
-		}
-		foreach ( $san_manual as $code ) {
-			$key = strtolower( (string) $code );
-			if ( isset( $seen[ $key ] ) ) {
-				continue;
-			}
-			$seen[ $key ] = true;
-			$list[]       = $code;
+	private static function build_bundle_discount_rest_payload( array $bundle_lines ) {
+		$rows   = array();
+		$sum_ex = 0.0;
+		foreach ( $bundle_lines as $line ) {
+			$a = isset( $line['amount'] ) ? (float) $line['amount'] : 0.0;
+			$sum_ex += $a;
+			$rows[] = array(
+				'code'             => isset( $line['code'] ) ? (string) $line['code'] : '',
+				'name'             => isset( $line['name'] ) ? (string) $line['name'] : '',
+				'qtyCovered'       => isset( $line['qtyCovered'] ) ? (int) $line['qtyCovered'] : 0,
+				'amount'           => wc_format_decimal( $a, wc_get_price_decimals() ),
+				'amountFormatted'  => self::format_price_plain_for_rest( $a ),
+			);
 		}
 
-		if ( count( $list ) <= self::MAX_BOOKING_COUPONS ) {
-			return $list;
+		return array(
+			'bundleDiscounts'    => $rows,
+			'feesTotal'          => wc_format_decimal( -1 * $sum_ex, wc_get_price_decimals() ),
+			'feesTotalFormatted' => self::format_price_plain_for_rest( -1 * $sum_ex ),
+		);
+	}
+
+	/**
+	 * Negative cart fees transferred as order fee items before calculate_totals.
+	 *
+	 * @param \WC_Order $order Order instance.
+	 * @param \WC_Cart  $cart  Cart instance.
+	 * @return void
+	 */
+	private static function cart_fees_into_order_items( $order, $cart ) {
+		if ( ! $order instanceof WC_Order || ! $cart instanceof \WC_Cart || ! method_exists( $cart, 'get_fees' ) ) {
+			return;
 		}
 
-		return array_slice( $list, 0, self::MAX_BOOKING_COUPONS );
+		foreach ( (array) $cart->get_fees() as $fee ) {
+			if ( ! is_object( $fee ) || '' === trim( (string) ( $fee->name ?? '' ) ) ) {
+				continue;
+			}
+
+			if ( isset( $fee->amount ) && (float) $fee->amount === 0.0 ) {
+				continue;
+			}
+
+			$item = new WC_Order_Item_Fee();
+			$item->set_name( (string) $fee->name );
+			if ( isset( $fee->amount ) ) {
+				$item->set_amount( (float) $fee->amount );
+				$item->set_total( (float) $fee->amount );
+			}
+			if ( isset( $fee->tax_class ) ) {
+				$item->set_tax_class( (string) $fee->tax_class );
+			}
+			$tax_status = 'none';
+			if ( isset( $fee->tax_status ) ) {
+				$tax_status = (string) $fee->tax_status;
+			} elseif ( ! empty( $fee->taxable ) ) {
+				$tax_status = 'taxable';
+			}
+			$item->set_tax_status( $tax_status );
+			$order->add_item( $item );
+		}
 	}
 
 	/**
@@ -184,6 +216,16 @@ class Bookings_Checkout_Service {
 				'applied' => false,
 				'message' => __( 'Invalid coupon.', 'fooevents-internal-pos' ),
 			);
+		}
+
+		if ( $coupon_id > 0 ) {
+			$coupon_obj = new \WC_Coupon( $coupon_id );
+			if ( $coupon_obj->get_id() > 0 && ! Coupon_Rules::coupon_allowed_for_channel( $coupon_obj, 'pos' ) ) {
+				return array(
+					'applied' => false,
+					'message' => __( 'This coupon is only valid on the storefront checkout.', 'fooevents-internal-pos' ),
+				);
+			}
 		}
 
 		wc_clear_notices();
@@ -234,37 +276,73 @@ class Bookings_Checkout_Service {
 	 * @return array{coupon_errors:array<int,array{code:string,manual:bool,message:string}>}
 	 */
 	private function attempt_pos_cart_discounts_for_session( $cart, array $cashier_manual_sanitized ) {
-		$coupon_errors = array();
-		$manual_map    = array();
-		foreach ( $cashier_manual_sanitized as $m ) {
-			$manual_map[ strtolower( (string) $m ) ] = true;
-		}
-
-		/**
-		 * Pre-coupon totals help WooCommerce minimum-spend coupon validation on a hydrated POS cart session.
-		 */
-		if ( $cart instanceof \WC_Cart && method_exists( $cart, 'calculate_totals' ) ) {
-			$cart->calculate_totals();
-		}
-
-		foreach ( self::build_pos_coupon_attempt_codes( $cashier_manual_sanitized ) as $code ) {
-			$res = self::try_cart_apply_coupon_notice_clean( $cart, $code );
-			if ( $res['applied'] ) {
-				continue;
+		Coupon_Rules::set_pos_internal_session( true );
+		try {
+			$coupon_errors = array();
+			$manual_map    = array();
+			foreach ( $cashier_manual_sanitized as $m ) {
+				$manual_map[ strtolower( (string) $m ) ] = true;
 			}
-			$is_manual = isset( $manual_map[ strtolower( (string) $code ) ] );
-			$coupon_errors[] = array(
-				'code'    => (string) $code,
-				'manual'  => $is_manual,
-				'message' => (string) $res['message'],
-			);
-		}
 
-		if ( method_exists( $cart, 'calculate_totals' ) ) {
-			$cart->calculate_totals();
-		}
+			if ( ! $cart instanceof \WC_Cart ) {
+				return array( 'coupon_errors' => $coupon_errors );
+			}
 
-		return array( 'coupon_errors' => $coupon_errors );
+			/**
+			 * Pre-bundle totals populate line item prices/taxes before fee tier packing.
+			 */
+			if ( method_exists( $cart, 'calculate_totals' ) ) {
+				$cart->calculate_totals();
+			}
+
+			$booking_qty = Coupon_Rules::total_booking_ticket_qty_in_cart( $cart );
+
+			foreach ( Coupon_Rules::compute_bundle_fee_lines( $booking_qty, 'pos', $cart ) as $bundle_line ) {
+				$name    = isset( $bundle_line['name'] ) ? (string) $bundle_line['name'] : '';
+				$amount  = isset( $bundle_line['amount'] ) ? (float) $bundle_line['amount'] : 0.0;
+				$taxable = isset( $bundle_line['taxable'] ) ? (bool) $bundle_line['taxable'] : false;
+				$class   = isset( $bundle_line['tax_class'] ) ? (string) $bundle_line['tax_class'] : '';
+				if ( '' !== $name && $amount > 0 ) {
+					$cart->add_fee( $name, -1 * $amount, $taxable, $class );
+				}
+			}
+
+			if ( method_exists( $cart, 'calculate_totals' ) ) {
+				$cart->calculate_totals();
+			}
+
+			foreach ( Coupon_Rules::build_pos_coupon_apply_queue( $cashier_manual_sanitized ) as $code ) {
+				$res = self::try_cart_apply_coupon_notice_clean( $cart, $code );
+				if ( $res['applied'] ) {
+					continue;
+				}
+				$is_manual = isset( $manual_map[ strtolower( (string) $code ) ] );
+				if ( $is_manual && Coupon_Rules::coupon_code_is_bundle_tier( $code ) ) {
+					continue;
+				}
+
+				if ( ! $is_manual ) {
+					$low = strtolower( (string) $res['message'] );
+					if ( false !== strpos( $low, 'already' ) && ( false !== strpos( $low, 'applied' ) || false !== strpos( $low, 'entered' ) ) ) {
+						continue;
+					}
+				}
+
+				$coupon_errors[] = array(
+					'code'    => (string) $code,
+					'manual'  => $is_manual,
+					'message' => (string) $res['message'],
+				);
+			}
+
+			if ( method_exists( $cart, 'calculate_totals' ) ) {
+				$cart->calculate_totals();
+			}
+
+			return array( 'coupon_errors' => $coupon_errors );
+		} finally {
+			Coupon_Rules::set_pos_internal_session( false );
+		}
 	}
 
 	/**
@@ -434,6 +512,15 @@ class Bookings_Checkout_Service {
 
 			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $manual_sanitized );
 			$coupon_extra = $this->build_rest_coupon_payload_from_cart( WC()->cart, $coupon_apply['coupon_errors'] );
+			$bundle_lines_rest = Coupon_Rules::compute_bundle_fee_lines(
+				Coupon_Rules::total_booking_ticket_qty_in_cart( WC()->cart ),
+				'pos',
+				WC()->cart
+			);
+			$coupon_extra = array_merge(
+				$coupon_extra,
+				self::build_bundle_discount_rest_payload( $bundle_lines_rest )
+			);
 
 			$cart       = WC()->cart;
 			$tax_totals = $cart->get_tax_totals();
@@ -550,13 +637,13 @@ class Bookings_Checkout_Service {
 				return new WP_Error( 'rest_invalid_param', __( 'coupon_codes must be an array of coupon code strings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 			}
 			$coupon_manual = self::sanitize_coupon_code_list( array_map( 'strval', $args['coupon_codes'] ) );
-			if ( count( $coupon_manual ) > self::MAX_BOOKING_COUPONS ) {
+			if ( count( $coupon_manual ) > Coupon_Rules::MAX_COUPONS_PER_REQUEST ) {
 				return new WP_Error(
 					'rest_invalid_param',
 					sprintf(
 						/* translators: %d max coupons */
 						__( 'Too many coupons (maximum %d).', 'fooevents-internal-pos' ),
-						self::MAX_BOOKING_COUPONS
+						Coupon_Rules::MAX_COUPONS_PER_REQUEST
 					),
 					array( 'status' => 400 )
 				);
@@ -802,6 +889,8 @@ class Bookings_Checkout_Service {
 				}
 			}
 
+			self::cart_fees_into_order_items( $order, WC()->cart );
+
 			$order->calculate_totals();
 			$this->create_fooeventspos_payment_record( $order, $pm_key );
 			$order->save();
@@ -1038,6 +1127,7 @@ class Bookings_Checkout_Service {
 	 * @return void
 	 */
 	public function reset_cart_safely() {
+		Coupon_Rules::set_pos_internal_session( false );
 		$this->ensure_wc_cart_session();
 		if ( WC()->cart ) {
 			WC()->cart->empty_cart();
