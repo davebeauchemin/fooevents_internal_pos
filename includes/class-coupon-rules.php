@@ -382,6 +382,51 @@ class Coupon_Rules {
 	}
 
 	/**
+	 * Add one bundle discount as a cart fee. Uses fees_api with a unique id so stacked identical tiers
+	 * (e.g. two BUNDLE4 lines) are not collapsed — WC_Cart::add_fee() derives id from the fee name otherwise.
+	 *
+	 * @param WC_Cart $cart         Cart.
+	 * @param array   $bundle_line  Line from compute_bundle_fee_lines.
+	 * @param int     $line_index   Stable index for this application (0, 1, …) to build a unique fee id.
+	 */
+	public static function add_bundle_discount_fee_to_cart( WC_Cart $cart, array $bundle_line, $line_index ) {
+		if ( ! $cart instanceof WC_Cart ) {
+			return;
+		}
+		$name    = isset( $bundle_line['name'] ) ? (string) $bundle_line['name'] : '';
+		$amount  = isset( $bundle_line['amount'] ) ? (float) $bundle_line['amount'] : 0.0;
+		$taxable = isset( $bundle_line['taxable'] ) ? (bool) $bundle_line['taxable'] : false;
+		$class   = isset( $bundle_line['tax_class'] ) ? (string) $bundle_line['tax_class'] : '';
+		if ( '' === $name || $amount <= 0 ) {
+			return;
+		}
+
+		$negative  = -1 * $amount;
+		$code_slug = isset( $bundle_line['code'] ) ? sanitize_title( (string) $bundle_line['code'] ) : 'tier';
+		$fee_id    = 'fipos-bundle-' . $code_slug . '-' . (int) $line_index;
+
+		if ( method_exists( $cart, 'fees_api' ) ) {
+			$api = $cart->fees_api();
+			if ( $api && method_exists( $api, 'add_fee' ) ) {
+				$result = $api->add_fee(
+					array(
+						'id'        => $fee_id,
+						'name'      => $name,
+						'amount'    => $negative,
+						'taxable'   => $taxable,
+						'tax_class' => $class,
+					)
+				);
+				if ( ! ( function_exists( 'is_wp_error' ) && is_wp_error( $result ) ) ) {
+					return;
+				}
+			}
+		}
+
+		$cart->add_fee( $name . ' (' . ( (int) $line_index + 1 ) . ')', $negative, $taxable, $class );
+	}
+
+	/**
 	 * POS apply_coupon queue: DB auto (non-tier) + legacy filter (non-tier) + manual. Excludes bundle tier codes.
 	 *
 	 * @param array<int, string> $manual_sanitized Manual codes.

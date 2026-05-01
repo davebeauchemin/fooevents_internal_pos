@@ -297,14 +297,10 @@ class Bookings_Checkout_Service {
 
 			$booking_qty = Coupon_Rules::total_booking_ticket_qty_in_cart( $cart );
 
+			$bi = 0;
 			foreach ( Coupon_Rules::compute_bundle_fee_lines( $booking_qty, 'pos', $cart ) as $bundle_line ) {
-				$name    = isset( $bundle_line['name'] ) ? (string) $bundle_line['name'] : '';
-				$amount  = isset( $bundle_line['amount'] ) ? (float) $bundle_line['amount'] : 0.0;
-				$taxable = isset( $bundle_line['taxable'] ) ? (bool) $bundle_line['taxable'] : false;
-				$class   = isset( $bundle_line['tax_class'] ) ? (string) $bundle_line['tax_class'] : '';
-				if ( '' !== $name && $amount > 0 ) {
-					$cart->add_fee( $name, -1 * $amount, $taxable, $class );
-				}
+				Coupon_Rules::add_bundle_discount_fee_to_cart( $cart, $bundle_line, $bi );
+				++$bi;
 			}
 
 			if ( method_exists( $cart, 'calculate_totals' ) ) {

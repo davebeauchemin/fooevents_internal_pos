@@ -84,13 +84,10 @@ class Storefront_Bundles {
 			return;
 		}
 
+		$i = 0;
 		foreach ( Coupon_Rules::compute_bundle_fee_lines( $qty, 'storefront', $cart ) as $line ) {
-			$cart->add_fee(
-				(string) $line['name'],
-				-1 * (float) $line['amount'],
-				(bool) $line['taxable'],
-				(string) $line['tax_class']
-			);
+			Coupon_Rules::add_bundle_discount_fee_to_cart( $cart, $line, $i );
+			++$i;
 		}
 	}
 
