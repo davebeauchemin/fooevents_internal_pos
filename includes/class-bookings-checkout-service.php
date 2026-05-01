@@ -240,6 +240,13 @@ class Bookings_Checkout_Service {
 			$manual_map[ strtolower( (string) $m ) ] = true;
 		}
 
+		/**
+		 * Pre-coupon totals help WooCommerce minimum-spend coupon validation on a hydrated POS cart session.
+		 */
+		if ( $cart instanceof \WC_Cart && method_exists( $cart, 'calculate_totals' ) ) {
+			$cart->calculate_totals();
+		}
+
 		foreach ( self::build_pos_coupon_attempt_codes( $cashier_manual_sanitized ) as $code ) {
 			$res = self::try_cart_apply_coupon_notice_clean( $cart, $code );
 			if ( $res['applied'] ) {

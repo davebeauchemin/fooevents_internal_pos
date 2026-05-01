@@ -3,7 +3,7 @@
  * Plugin Name:       FooEvents Internal POS
  * Plugin URI:         https://github.com/TBD/fooevents-internal-pos
  * Description:        Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
- * Version:            0.1.1.25
+ * Version:            0.1.1.26
  * Requires at least:  6.0
  * Requires PHP:       7.4
  * Author:             Module Rouge
@@ -39,6 +39,19 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-ticket-reschedule-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
+
+/**
+ * Registers default WooCommerce coupon codes POS attempts automatically during preview/booking (higher-tier first).
+ *
+ * Sites can prepend or omit codes by using the same filter with priority lower than this one, or by removing/editing bundles.
+ *
+ * @param array<int, string|mixed> $codes Codes from upstream filters (initially empty array).
+ * @return array<int, string>
+ */
+function fooevents_internal_pos_default_bundle_auto_coupon_codes( $codes ) {
+	return array_merge( (array) $codes, array( 'BUNDLE4', 'BUNDLE2' ) );
+}
+add_filter( 'fooevents_internal_pos_auto_coupon_codes', 'fooevents_internal_pos_default_bundle_auto_coupon_codes', 10, 1 );
 
 /**
  * Init plugin.

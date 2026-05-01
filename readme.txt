@@ -16,9 +16,13 @@ Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Sh
 
 Regional reporting (postal codes): checkout captures a billing postal/ZIP code for each POS booking. WooCommerce stores this in the native billing_postcode field (postmeta key _billing_postcode), so POS and storefront orders can be analyzed together. Internal POS orders also set order meta _fooevents_internal_pos_postal_code (same value) and _fooevents_internal_pos_postal_code_source = manual_pos to identify cashier-entered values. Values are trimmed and sanitized only (no enforced format).
 
-Coupons (WooCommerce): create standard coupons in WooCommerce > Marketing > Coupons; restrictions and stacking follow WooCommerce settings. Checkout preview (`POST checkout/preview`) and booking creation (`POST bookings`) accept a `couponCodes` array of cashier-entered codes. Internal POS automatically tries coupon codes registered via the PHP filter `fooevents_internal_pos_auto_coupon_codes` (default empty)—for example:
+Coupons (WooCommerce): create standard coupons in WooCommerce > Marketing > Coupons; restrictions and stacking follow WooCommerce settings. Checkout preview (`POST checkout/preview`) and booking creation (`POST bookings`) accept a `couponCodes` array of cashier-entered codes. Internal POS merges default bundle codes `BUNDLE4` then `BUNDLE2` via the PHP filter `fooevents_internal_pos_auto_coupon_codes` (tier order helps larger carts match the `$74`-tier coupon first). Customize or prepend other auto codes via the same filter—for example:
 
-`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function ( $codes ) { return array_merge( (array) $codes, array( 'BUNDLE2', 'BUNDLE4' ) ); } );`
+`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function ( $codes ) { return array_merge( (array) $codes, array( 'SUMMER10' ) ); }, 20 );`
+
+Or remove bundles by overriding with priority `5`:
+
+`add_filter( 'fooevents_internal_pos_auto_coupon_codes', function () { return array( 'CUSTOM' ); }, 5 );`
 
 == Installation ==
 
