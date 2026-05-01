@@ -99,6 +99,21 @@ class Coupon_Rules {
 	}
 
 	/**
+	 * Uppercase bundle tier coupon fragment for storefront/POS labels (WC often stores lowercase canonical codes).
+	 *
+	 * @param string $code Coupon code fragment.
+	 * @return string
+	 */
+	public static function format_bundle_coupon_code_for_display( $code ) {
+		$code = trim( (string) $code );
+		if ( '' === $code ) {
+			return '';
+		}
+
+		return function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $code, 'UTF-8' ) : strtoupper( $code );
+	}
+
+	/**
 	 * @param WC_Product|null $product Product.
 	 * @return bool
 	 */
@@ -381,13 +396,14 @@ class Coupon_Rules {
 			if ( '' === $display ) {
 				$display = (string) $tier['code'];
 			}
+			$display = self::format_bundle_coupon_code_for_display( $display );
 			for ( $i = 0; $i < $n; $i++ ) {
 				$code = (string) $tier['code'];
 				$lines[] = array(
 					'code'           => $code,
 					'code_display'   => $display,
 					'name'           => sprintf(
-						/* translators: 1: coupon code as stored (casing preserved), 2: tickets per bundle */
+						/* translators: 1: coupon code (shown uppercase), 2: tickets per bundle */
 						__( '%1$s (%2$d tickets)', 'fooevents-internal-pos' ),
 						$display,
 						$tq

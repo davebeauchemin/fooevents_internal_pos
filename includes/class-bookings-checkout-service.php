@@ -152,6 +152,9 @@ class Bookings_Checkout_Service {
 			} elseif ( isset( $line['code'] ) ) {
 				$code_out = (string) $line['code'];
 			}
+			if ( '' !== $code_out ) {
+				$code_out = Coupon_Rules::format_bundle_coupon_code_for_display( $code_out );
+			}
 			$rows[] = array(
 				'code'             => $code_out,
 				'name'             => isset( $line['name'] ) ? (string) $line['name'] : '',
