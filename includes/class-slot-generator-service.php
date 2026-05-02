@@ -38,6 +38,24 @@ class Slot_Generator_Service {
 	}
 
 	/**
+	 * Format a Y-m-d calendar day in the WordPress site timezone for FooEvents storage.
+	 *
+	 * @param string $ymd Calendar day.
+	 * @return string
+	 */
+	private function display_date_from_ymd( $ymd ) {
+		$date_format = get_option( 'date_format' );
+		$tz          = $this->bookings->get_wp_timezone();
+		$dt          = DateTime::createFromFormat( '!Y-m-d H:i:s', (string) $ymd . ' 12:00:00', $tz );
+
+		if ( $dt instanceof DateTime ) {
+			return wp_date( $date_format, $dt->getTimestamp(), $tz );
+		}
+
+		return (string) $ymd;
+	}
+
+	/**
 	 * Generate and replace booking options for a product.
 	 *
 	 * @param int   $product_id Product ID.
@@ -158,8 +176,6 @@ class Slot_Generator_Service {
 			);
 		}
 
-		$date_format = get_option( 'date_format' );
-
 		$capacity = $config['capacity'];
 		$stock    = ( 0 === (int) $capacity ) ? '' : (string) (int) $capacity;
 
@@ -237,11 +253,7 @@ class Slot_Generator_Service {
 			);
 
 			foreach ( $ymds as $ymd ) {
-				$ts = strtotime( $ymd . ' 12:00:00' );
-				if ( false === $ts ) {
-					continue;
-				}
-				$display = date_i18n( $date_format, $ts );
+				$display = $this->display_date_from_ymd( $ymd );
 				$did     = 'd' . str_pad( (string) ( $seq++ ), 14, '0', STR_PAD_LEFT );
 				$slot[ $did . '_add_date' ] = $display;
 				$slot[ $did . '_stock' ]   = $stock;
@@ -397,18 +409,14 @@ class Slot_Generator_Service {
 		$new_date_inner_id = '';
 		if ( '' !== $slot_id_existing ) {
 			$new_date_inner_id                   = $this->next_unique_internal_prefix( $raw_slots );
-			$date_format                         = get_option( 'date_format' );
-			$ts                                  = strtotime( $ymd_raw . ' 12:00:00' );
-			$display                             = false !== $ts ? date_i18n( $date_format, $ts ) : $ymd_raw;
+			$display                             = $this->display_date_from_ymd( $ymd_raw );
 			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_add_date' ] = $display;
 			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_stock' ]     = $stock;
 			$used_slot_id                                                        = $slot_id_existing;
 		} else {
 			$new_slot_key = $this->next_unique_slot_key( $raw_slots );
 			$new_date_inner_id                  = $this->next_unique_internal_prefix( $raw_slots );
-			$date_format                        = get_option( 'date_format' );
-			$ts                                 = strtotime( $ymd_raw . ' 12:00:00' );
-			$display                            = false !== $ts ? date_i18n( $date_format, $ts ) : $ymd_raw;
+			$display                            = $this->display_date_from_ymd( $ymd_raw );
 			$raw_slots[ $new_slot_key ]         = array(
 				'label'    => $display_label_for_store,
 				'hour'     => $h,

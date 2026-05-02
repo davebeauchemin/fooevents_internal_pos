@@ -3,6 +3,31 @@ import { restFetch } from './client.js';
 
 const prefix = 'internalpos/v1';
 
+/**
+ * Mark event detail queries stale and refetch observers so Manage schedule / Event detail repaint immediately.
+ *
+ * @param {import('@tanstack/react-query').QueryClient} qc
+ * @param {number|string|undefined} eventId
+ */
+async function invalidateAndRefetchEvent( qc, eventId ) {
+	if ( ! eventId ) {
+		return;
+	}
+	const normalizedEventId = String( eventId ).trim();
+	const eventDetailQuery = ( query ) =>
+		query.queryKey?.[ 0 ] === 'internalpos'
+		&& query.queryKey?.[ 1 ] === 'event'
+		&& String( query.queryKey?.[ 2 ] ?? '' ).trim() === normalizedEventId;
+	const validateEventQuery = ( query ) =>
+		query.queryKey?.[ 0 ] === 'internalpos'
+		&& query.queryKey?.[ 1 ] === 'validateEvent'
+		&& String( query.queryKey?.[ 2 ] ?? '' ).trim() === normalizedEventId;
+
+	await qc.invalidateQueries( { predicate: eventDetailQuery } );
+	await qc.refetchQueries( { predicate: eventDetailQuery, type: 'active' } );
+	await qc.invalidateQueries( { predicate: validateEventQuery } );
+}
+
 export function useEvents() {
 	return useQuery( {
 		queryKey: [ 'internalpos', 'events' ],
@@ -114,8 +139,8 @@ export function useGenerateSlots( eventId ) {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify( body ),
 			} ),
-		onSuccess: () => {
-			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+		onSuccess: async () => {
+			await invalidateAndRefetchEvent( qc, eventId );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
 		},
@@ -139,8 +164,8 @@ export function useAddManualSlot( eventId ) {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify( body ),
 			} ),
-		onSuccess: () => {
-			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+		onSuccess: async () => {
+			await invalidateAndRefetchEvent( qc, eventId );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
@@ -171,8 +196,8 @@ export function useDeleteManualSlot( eventId ) {
 				method: 'DELETE',
 			} );
 		},
-		onSuccess: () => {
-			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+		onSuccess: async () => {
+			await invalidateAndRefetchEvent( qc, eventId );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
