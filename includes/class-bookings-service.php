@@ -36,7 +36,22 @@ class Bookings_Service {
 		if ( '' === $date_str ) {
 			return null;
 		}
-		$tz   = $this->get_wp_timezone();
+		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date_str ) ) {
+			return $date_str;
+		}
+
+		$tz     = $this->get_wp_timezone();
+		$wp_fmt = trim( (string) get_option( 'date_format' ) );
+		if ( '' !== $wp_fmt ) {
+			$parsed = DateTime::createFromFormat( $wp_fmt, $date_str, $tz );
+			if ( $parsed instanceof DateTime ) {
+				$errs = DateTime::getLastErrors();
+				if ( false === $errs || ( empty( $errs['warning_count'] ) && empty( $errs['error_count'] ) ) ) {
+					return $parsed->format( 'Y-m-d' );
+				}
+			}
+		}
+
 		$dt   = new DateTime( 'now', $tz );
 		$ts   = strtotime( $date_str, $dt->getTimestamp() );
 		if ( false === $ts ) {
