@@ -40,7 +40,7 @@ class Login_Redirect {
 				'path'  => '',
 			),
 			array(
-				'roles' => array( 'checked_in_validator', 'checked-in-validator' ),
+				'roles' => array( 'check_in_validator', 'check-in-validator' ),
 				'path'  => 'validate',
 			),
 		);

@@ -71,20 +71,20 @@ After upgrading to **0.1.1.4+**, if you used the schedule generator before that 
 - `GET /wp-json/internalpos/v1/events/{id}`
 - `POST /wp-json/internalpos/v1/availability` — JSON: `{ "eventId", "slotId", "dateId", "qty" }`
 - **Production** auth: logged-in user with `publish_fooeventspos` or `manage_woocommerce` + `X-WP-Nonce` (set by the page template)
+- **Local dev** auth: same capability via Application Password (Basic auth on the proxied request)
 
 ## Staff login redirect (FooEvents POS cashier → Internal POS)
 
-WooCommerce / core login redirects for the **FooEvents POS cashier** role (`fooeventspos_cashier`) and a **check-in validator** role defaulting to slug `checked_in_validator` (adjust if your “Checked-in Validator” role uses a different key) go to Internal POS instead of the FooEvents POS front URL.
+WooCommerce / core login redirects for the **FooEvents POS cashier** role (`fooeventspos_cashier`) and **Check-in Validator** (default slug guesses `check_in_validator` or `check-in-validator`) go to Internal POS instead of the FooEvents POS front URL.
 
 - Cashiers → `/internal-pos/`
-- `checked_in_validator` or `checked-in-validator` → `/internal-pos/validate/`
+- Check-in Validator → `/internal-pos/validate/`
 
-Override or extend with:
+If your role key differs, check **Users →** edit a user in that role (role parameter in the URL) or your roles plugin, then:
 
 ```php
 add_filter( 'fooevents_internal_pos_login_redirect_rules', function ( $rules ) {
-	// Replace default validator slug if your role ID differs (see Users → role slug in a user-edit URL or a roles plugin).
-	$rules[1]['roles'] = array( 'your_validator_role_slug' );
+	$rules[1]['roles'] = array( 'your_actual_role_slug' );
 	return $rules;
 } );
 ```
@@ -94,4 +94,3 @@ Disable all such redirects:
 ```php
 add_filter( 'fooevents_internal_pos_redirect_staff_to_internal_pos', '__return_false' );
 ```
-- **Local dev** auth: same capability via Application Password (Basic auth on the proxied request)
