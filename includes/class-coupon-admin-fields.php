@@ -21,7 +21,7 @@ class Coupon_Admin_Fields {
 	}
 
 	/**
-	 * Spacing for bundle tier checkbox + description row (coupon data meta box).
+	 * Coupon data meta box layout: section intro alignment + bundle tier row spacing.
 	 */
 	public function print_coupon_styles() {
 		if ( ! function_exists( 'get_current_screen' ) ) {
@@ -33,6 +33,8 @@ class Coupon_Admin_Fields {
 		}
 		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS rules only.
 		echo '<style id="fipos-coupon-rules-spacing">' .
+			'#woocommerce-coupon-data .fipos-coupon-rules>h3{margin:16px 0 10px;} ' .
+			'#woocommerce-coupon-data .fipos-coupon-rules>p.fipos-coupon-rules-intro{margin:0 0 14px;padding:0;float:none;clear:left;line-height:1.55;max-width:56rem;} ' .
 			'#woocommerce-coupon-data .fipos-coupon-rules .fipos_is_bundle_tier_field{padding-bottom:14px;margin-bottom:4px;} ' .
 			'#woocommerce-coupon-data .fipos-coupon-rules .fipos_is_bundle_tier_field span.description{display:block;margin-top:10px;line-height:1.5;max-width:36rem;} ' .
 			'#woocommerce-coupon-data .fipos-coupon-rules .fipos_is_bundle_tier_field label{margin-right:.5em;} ' .
@@ -66,9 +68,9 @@ class Coupon_Admin_Fields {
 
 		echo '<div class="options_group fipos-coupon-rules">';
 		echo '<h3>' . esc_html__( 'FooEvents POS / storefront', 'fooevents-internal-pos' ) . '</h3>';
-		echo '<p class="form-field form-field-wide"><span class="description">';
+		echo '<p class="fipos-coupon-rules-intro description">';
 		echo esc_html__( 'Control whether this coupon is applied automatically during Internal POS checkout, the WP storefront checkout, or both; restrict where it may be redeemed; and optionally treat it as a stackable bundle tier (applied as multiple discount lines via fees when qty allows). Bundle tiers must use \"Fixed cart discount\" and amounts are read from the coupon.', 'fooevents-internal-pos' );
-		echo '</span></p>';
+		echo '</p>';
 
 		woocommerce_wp_select(
 			array(
