@@ -122,6 +122,31 @@ class Bookings_Service {
 	}
 
 	/**
+	 * FooEvents `$bookings->process_booking_options()` output keyed by slot id (before dateslot reshuffle).
+	 * Each slot's `add_date` keys match raw `{inner}_add_date` suffix digits.
+	 *
+	 * @param int $product_id Product ID.
+	 * @return array<string,mixed>
+	 */
+	public function get_preprocess_booking_options( $product_id ) {
+		$product_id = absint( $product_id );
+		if ( ! class_exists( '\\FooEvents_Bookings' ) ) {
+			return array();
+		}
+		$raw        = get_post_meta( $product_id, 'fooevents_bookings_options_serialized', true );
+		$raw        = is_string( $raw ) ? json_decode( wp_unslash( $raw ), true ) : array();
+		if ( ! is_array( $raw ) ) {
+			$raw = array();
+		}
+		if ( empty( $raw ) ) {
+			return array();
+		}
+		$bookings = new \FooEvents_Bookings();
+		$parsed   = $bookings->process_booking_options( $raw );
+		return is_array( $parsed ) ? $parsed : array();
+	}
+
+	/**
 	 * Whether product has at least one future bookable option.
 	 *
 	 * @param int $product_id Product ID.

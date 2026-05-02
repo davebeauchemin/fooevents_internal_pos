@@ -493,16 +493,17 @@ class Slot_Generator_Service {
 		}
 
 		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
-		if ( ! isset( $raw_slots[ $slot_id ] ) || ! is_array( $raw_slots[ $slot_id ] ) ) {
+		$slot_actual_key = $this->normalize_raw_slot_lookup_key( $raw_slots, $slot_id );
+		if ( null === $slot_actual_key || ! isset( $raw_slots[ $slot_actual_key ] ) || ! is_array( $raw_slots[ $slot_actual_key ] ) ) {
 			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
-		$row = $raw_slots[ $slot_id ];
+		$row = $raw_slots[ $slot_actual_key ];
 
 		$booking_method_eff = $this->bookings_method_for_product( $product );
 		$inner_date_id       = $this->resolve_raw_inner_id_for_manual_remove(
 			$product_id,
 			$booking_method_eff,
-			$slot_id,
+			(string) $slot_id,
 			$row,
 			(string) $date_id
 		);
@@ -513,10 +514,10 @@ class Slot_Generator_Service {
 		$dkey = $inner_date_id . '_add_date';
 		$skey = $inner_date_id . '_stock';
 
-		unset( $raw_slots[ $slot_id ][ $dkey ], $raw_slots[ $slot_id ][ $skey ] );
+		unset( $raw_slots[ $slot_actual_key ][ $dkey ], $raw_slots[ $slot_actual_key ][ $skey ] );
 
-		if ( ! $this->slot_row_has_dates_left( $raw_slots[ $slot_id ] ) ) {
-			unset( $raw_slots[ $slot_id ] );
+		if ( ! $this->slot_row_has_dates_left( $raw_slots[ $slot_actual_key ] ) ) {
+			unset( $raw_slots[ $slot_actual_key ] );
 		}
 
 		if ( empty( $raw_slots ) ) {
@@ -708,13 +709,122 @@ class Slot_Generator_Service {
 	}
 
 	/**
+	 * Top-level slot key as stored in serialized JSON (PHP may keep int-like keys as int or string).
+	 *
+	 * @param array<string,mixed> $raw_slots Decoded fooevents_bookings_options_serialized.
+	 * @param string              $slot_id   Client slot id.
+	 * @return array-key|null
+	 */
+	private function normalize_raw_slot_lookup_key( array $raw_slots, $slot_id ) {
+		$needle = preg_replace( '/\s+/', '', trim( (string) $slot_id ) );
+		if ( '' === $needle ) {
+			return null;
+		}
+		foreach ( array_keys( $raw_slots ) as $k ) {
+			if ( ! is_scalar( $k ) ) {
+				continue;
+			}
+			if ( (string) $k === (string) $needle ) {
+				return $k;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Compare two digit-only booking inner ids (leading zeros, etc.).
+	 *
+	 * @param string $a Digits.
+	 * @param string $b Digits.
+	 * @return bool
+	 */
+	private function numeric_booking_suffix_equivalent( $a, $b ) {
+		$aa = preg_replace( '/\s+/', '', trim( (string) $a ) );
+		$bb = preg_replace( '/\s+/', '', trim( (string) $b ) );
+		if ( '' === $aa || '' === $bb || ! ctype_digit( $aa ) || ! ctype_digit( $bb ) ) {
+			return false;
+		}
+		$ta = ltrim( $aa, '0' );
+		$tb = ltrim( $bb, '0' );
+		$za = '' === $ta ? '0' : $ta;
+		$zb = '' === $tb ? '0' : $tb;
+		return $za === $zb;
+	}
+
+	/**
+	 * Map SPA/rest dateId onto raw `{digits}_add_date` using preprocess `add_date` cells (FooEvents internal).
+	 *
+	 * @param int                  $product_id Product ID.
+	 * @param string               $slot_id    SPA slot row id (request).
+	 * @param array<string, mixed> $slot_row   Raw JSON row under that slot.
+	 * @param string               $did        Trimmed ctype_digit client dateId.
+	 * @return string Inner suffix or ''.
+	 */
+	private function resolve_inner_via_preprocess_add_date_cells( $product_id, $slot_id, array $slot_row, $did ) {
+		try {
+			$pre = $this->bookings->get_preprocess_booking_options( absint( $product_id ) );
+		} catch ( \Throwable $e ) {
+			return '';
+		}
+		if ( ! is_array( $pre ) || empty( $pre ) ) {
+			return '';
+		}
+
+		$branch = null;
+		foreach ( $pre as $sid => $node ) {
+			if ( ! is_scalar( $sid ) || (string) $sid !== (string) $slot_id ) {
+				continue;
+			}
+			$branch = is_array( $node ) ? $node : null;
+			break;
+		}
+		if ( null === $branch || empty( $branch['add_date'] ) || ! is_array( $branch['add_date'] ) ) {
+			return '';
+		}
+
+		foreach ( $branch['add_date'] as $inner_key => $cell ) {
+			if ( ! is_array( $cell ) ) {
+				continue;
+			}
+			$iks = preg_replace( '/\s+/', '', trim( (string) $inner_key ) );
+			if ( '' === $iks || ! ctype_digit( $iks ) || ! isset( $slot_row[ $iks . '_add_date' ] ) ) {
+				continue;
+			}
+			$expose = '';
+			foreach ( array( 'date_id', 'slot_date_id', 'booking_date_id' ) as $ek ) {
+				if ( ! isset( $cell[ $ek ] ) ) {
+					continue;
+				}
+				$cand = preg_replace( '/\s+/', '', trim( (string) $cell[ $ek ] ) );
+				if ( '' !== $cand ) {
+					$expose = $cand;
+					break;
+				}
+			}
+			if ( '' !== $expose ) {
+				if ( (string) $expose === (string) $did ) {
+					return $iks;
+				}
+				if ( ctype_digit( (string) $expose ) && $this->numeric_booking_suffix_equivalent( $expose, $did ) ) {
+					return $iks;
+				}
+				continue;
+			}
+			if ( $this->numeric_booking_suffix_equivalent( $iks, $did ) ) {
+				return $iks;
+			}
+		}
+
+		return '';
+	}
+
+	/**
 	 * Align REST slot.dateId from processed options with `{inner}_add_date` keys inside raw serialization.
-	 * Slotdate normally matches digits directly; dateslot exposes `date_id` that may not equal the raw suffix,
-	 * so we correlate via FooEvents date buckets parsed to Y-m-d.
+	 * Slot-first preprocess `add_date` keys match raw suffix digits; FooEvents dateslot UI `date_id` may differ until mapped here.
 	 *
 	 * @param int                  $product_id       Booking product ID.
-	 * @param string               $booking_method   WooCommerceEventsBookingsMethod–derived value (slotdate|dateslot).
-	 * @param string               $slot_id          Top-level serialized slot row id.
+	 * @param string               $booking_method   slotdate or dateslot.
+	 * @param string               $slot_id          SPA slot row id from path.
 	 * @param array<string, mixed> $slot_row         Raw FooEvents booking row array.
 	 * @param string               $client_date_id   SPA path dateId (digits only upstream).
 	 * @return string Inner id matching `{id}_add_date`/`{id}_stock`, or ''.
@@ -734,12 +844,17 @@ class Slot_Generator_Service {
 			return $trim_zeros;
 		}
 
+		$via_pre = $this->resolve_inner_via_preprocess_add_date_cells( $product_id, $slot_id, $slot_row, $did );
+		if ( '' !== $via_pre ) {
+			return $via_pre;
+		}
+
 		if ( 'dateslot' !== (string) $booking_method ) {
 			return '';
 		}
 
-		$ctx      = $this->bookings->get_processed_options( absint( $product_id ) );
-		$options  = isset( $ctx['options'] ) ? $ctx['options'] : array();
+		$ctx     = $this->bookings->get_processed_options( absint( $product_id ) );
+		$options = isset( $ctx['options'] ) ? $ctx['options'] : array();
 		if ( ! is_array( $options ) ) {
 			return '';
 		}
@@ -760,7 +875,16 @@ class Slot_Generator_Service {
 				continue;
 			}
 			$proc_did = isset( $row_dateslot['date_id'] ) ? preg_replace( '/\s+/', '', trim( (string) $row_dateslot['date_id'] ) ) : '';
-			if ( (string) $proc_did !== (string) $did ) {
+			$proc_match = ( (string) $proc_did === (string) $did );
+			if ( ! $proc_match && '' !== $proc_did && ctype_digit( (string) $proc_did ) ) {
+				$proc_match = $this->numeric_booking_suffix_equivalent( $proc_did, $did );
+			}
+			if ( ! $proc_match ) {
+				continue;
+			}
+			// Bucket may already be Y-m-d.
+			if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', trim( (string) $bucket ) ) ) {
+				$ym_candidates[] = trim( (string) $bucket );
 				continue;
 			}
 			$ym = $this->bookings->date_string_to_ymd( (string) $bucket );
