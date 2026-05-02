@@ -1,6 +1,7 @@
 <?php
 /**
- * Send FooEvents POS cashier and check-in staff to Internal POS instead of FooEvents POS.
+ * Send FooEvents POS cashier, shop managers, and check-in staff to Internal POS (login redirect; admin
+ * block only for roles that must not use wp-admin, not shop managers).
  *
  * FooEvents POS uses priority 9999 on {@see 'woocommerce_login_redirect'} and 20 on
  * {@see 'woocommerce_prevent_admin_access'}; we override after login and before admin redirect.
@@ -31,13 +32,21 @@ class Login_Redirect {
 	 *
 	 * Filter: `fooevents_internal_pos_login_redirect_rules`
 	 *
-	 * @return array<int, array{roles: string[], path: string}>
+	 * `block_admin` optional (default true): when false, this role gets the login redirect only — not the
+	 * `woocommerce_prevent_admin_access` redirect (shop managers must keep wp-admin).
+	 *
+	 * @return array<int, array{roles: string[], path: string, block_admin?: bool}>
 	 */
 	private function get_rules(): array {
 		$defaults = array(
 			array(
 				'roles' => array( 'fooeventspos_cashier' ),
 				'path'  => '',
+			),
+			array(
+				'roles'       => array( 'shop_manager' ),
+				'path'        => '',
+				'block_admin' => false,
 			),
 			array(
 				'roles' => array( 'check_in_validator', 'check-in-validator' ),
@@ -50,16 +59,21 @@ class Login_Redirect {
 	}
 
 	/**
-	 * @param \WP_User $user User.
+	 * @param \WP_User $user               User.
+	 * @param bool     $for_admin_intercept Only use rules allowed to hijack wp-admin (FooEvents POS pattern).
 	 * @return string|null Internal POS URL or null if no rule applies.
 	 */
-	private function destination_for_user( \WP_User $user ): ?string {
+	private function destination_for_user( \WP_User $user, bool $for_admin_intercept = false ): ?string {
 		if ( ! apply_filters( 'fooevents_internal_pos_redirect_staff_to_internal_pos', true, $user ) ) {
 			return null;
 		}
 
 		foreach ( $this->get_rules() as $rule ) {
 			if ( ! is_array( $rule ) || empty( $rule['roles'] ) || ! is_array( $rule['roles'] ) ) {
+				continue;
+			}
+			$blocks_admin = ! isset( $rule['block_admin'] ) || (bool) $rule['block_admin'];
+			if ( $for_admin_intercept && ! $blocks_admin ) {
 				continue;
 			}
 			$path = isset( $rule['path'] ) ? (string) $rule['path'] : '';
@@ -98,7 +112,7 @@ class Login_Redirect {
 		if ( ! $user instanceof \WP_User ) {
 			return $redirect_to;
 		}
-		$dest = $this->destination_for_user( $user );
+		$dest = $this->destination_for_user( $user, false );
 		return $dest ?? $redirect_to;
 	}
 
@@ -113,7 +127,7 @@ class Login_Redirect {
 		if ( ! $user instanceof \WP_User ) {
 			return $redirect_to;
 		}
-		$dest = $this->destination_for_user( $user );
+		$dest = $this->destination_for_user( $user, false );
 		return $dest ?? $redirect_to;
 	}
 
@@ -145,7 +159,7 @@ class Login_Redirect {
 			return $prevent_access;
 		}
 
-		$dest = $this->destination_for_user( $user );
+		$dest = $this->destination_for_user( $user, true );
 		if ( null === $dest ) {
 			return $prevent_access;
 		}

@@ -75,19 +75,22 @@ After upgrading to **0.1.1.4+**, if you used the schedule generator before that 
 
 ## Staff login redirect (FooEvents POS cashier → Internal POS)
 
-WooCommerce / core login redirects for the **FooEvents POS cashier** role (`fooeventspos_cashier`) and **Check-in Validator** (default slug guesses `check_in_validator` or `check-in-validator`) go to Internal POS instead of the FooEvents POS front URL.
+WooCommerce / core login redirects for **FooEvents POS cashier** (`fooeventspos_cashier`), **WooCommerce shop manager** (`shop_manager`), and **Check-in Validator** (default slug guesses `check_in_validator` or `check-in-validator`) go to Internal POS instead of the default WooCommerce/account or FooEvents POS URL.
 
 - Cashiers → `/internal-pos/`
+- Shop managers → `/internal-pos/` after login only (they still have full **wp-admin**; `block_admin: false` on that rule)
 - Check-in Validator → `/internal-pos/validate/`
 
-If your role key differs, check **Users →** edit a user in that role (role parameter in the URL) or your roles plugin, then:
+If your check-in role slug differs, override the third rule (index `2`), e.g.:
 
 ```php
 add_filter( 'fooevents_internal_pos_login_redirect_rules', function ( $rules ) {
-	$rules[1]['roles'] = array( 'your_actual_role_slug' );
+	$rules[2]['roles'] = array( 'your_actual_role_slug' );
 	return $rules;
 } );
 ```
+
+To **also** block shop managers from wp-admin and always send them to Internal POS (usually a bad idea), set `$rules[1]['block_admin'] = true` on the shop manager rule.
 
 Disable all such redirects:
 
