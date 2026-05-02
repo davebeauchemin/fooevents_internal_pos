@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { useEvent, useGenerateSlots } from '../api/queries.js';
+import { Plus, X } from 'lucide-react';
+import { useAddManualSlot, useDeleteManualSlot, useEvent, useGenerateSlots } from '../api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -200,18 +201,88 @@ function previewStats( blocks: ScheduleBlock[], sessionM: number ) {
 	};
 }
 
+type ApiManualSlot = {
+	id?: string;
+	dateId?: string;
+	label?: string;
+	time?: string;
+	stock?: number | null;
+};
+
+type ApiManualDateGroup = {
+	date?: string;
+	label?: string;
+	slots?: ApiManualSlot[];
+};
+
+function todayYmdLocal(): string {
+	const t = new Date();
+	return (
+		t.getFullYear() +
+		'-' +
+		String( t.getMonth() + 1 ).padStart( 2, '0' ) +
+		'-' +
+		String( t.getDate() ).padStart( 2, '0' )
+	);
+}
+
 export default function Schedule() {
 	const { id } = useParams();
 	const eventId = id ? String( id ) : '';
 	const navigate = useNavigate();
 	const { data: eventData, isLoading, isError, error } = useEvent( eventId ) as {
-		data: { title?: string; dates?: unknown[]; id?: number } | undefined;
+		data:
+			| {
+					title?: string;
+					dates?: ApiManualDateGroup[];
+					id?: number;
+					bookingMethod?: string;
+			  }
+			| undefined;
 		isLoading: boolean;
 		isError: boolean;
 		error: Error | null;
 	};
 	const gen = useGenerateSlots( eventId );
+	const addManual = useAddManualSlot( eventId );
+	const delManual = useDeleteManualSlot( eventId );
 
+	const bookingMethodNorm =
+		eventData?.bookingMethod === 'dateslot' ? 'dateslot' : 'slotdate';
+	const manualSlotsAllowed = bookingMethodNorm !== 'dateslot';
+
+	const sortedDateGroups = useMemo( () => {
+		const rows = Array.isArray( eventData?.dates )
+			? [ ...eventData!.dates ]
+			: [];
+		rows.sort( ( a, b ) =>
+			String( a.date ).localeCompare( String( b.date ) )
+		);
+		return rows.map( ( g ) => ( {
+			...g,
+			slots: [ ...( g.slots || [] ) ].sort( ( s1, s2 ) => {
+				const t = String( s1.time || '' ).localeCompare(
+					String( s2.time || '' )
+				);
+				if ( t !== 0 ) {
+					return t;
+				}
+				return String( s1.label || '' ).localeCompare(
+					String( s2.label || '' )
+				);
+			} ),
+		} ) );
+	}, [ eventData?.dates ] );
+
+	const [ manualDate, setManualDate ] = useState( todayYmdLocal );
+	const [ manualTime, setManualTime ] = useState( '09:00' );
+	const [ manualCapacity, setManualCapacity ] = useState( 10 );
+	const [ manualLabel, setManualLabel ] = useState( '' );
+	const [ deleteSlotConfirm, setDeleteSlotConfirm ] = useState< {
+		slotId: string;
+		dateId: string;
+		title: string;
+	} | null >( null );
 	const [ blocks, setBlocks ] = useState<ScheduleBlock[]>( [ emptyBlock( 0 ) ] );
 	const [ sessionMinutes, setSessionMinutes ] = useState( 10 );
 	const [ capacity, setCapacity ] = useState( 10 );
@@ -256,6 +327,44 @@ export default function Schedule() {
 			set.delete( n );
 		}
 		updateBlock( blockId, { weekdays: Array.from( set ).sort( ( a, c ) => a - c ) } );
+	}
+
+	async function submitManualSlot( ev: FormEvent ) {
+		ev.preventDefault();
+		if ( ! manualSlotsAllowed ) {
+			return;
+		}
+		try {
+			const payload: Record<string, unknown> = {
+				date: manualDate.trim(),
+				time: manualTime.trim(),
+				capacity: manualCapacity < 0 ? 0 : manualCapacity,
+			};
+			const lab = manualLabel.trim();
+			if ( lab ) {
+				payload.label = lab;
+			}
+			await addManual.mutateAsync( payload );
+			toast.success( 'Session added to this product schedule.' );
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	async function runDeleteManualConfirmed() {
+		if ( ! deleteSlotConfirm ) {
+			return;
+		}
+		try {
+			await delManual.mutateAsync( {
+				slotId: deleteSlotConfirm.slotId,
+				dateId: deleteSlotConfirm.dateId,
+			} );
+			toast.success( 'Slot removed.' );
+			setDeleteSlotConfirm( null );
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
 	}
 
 	async function runGenerate() {
@@ -319,10 +428,185 @@ export default function Schedule() {
 				</Link>
 				<h1 className="text-2xl font-bold tracking-tight">Manage schedule</h1>
 				<p className="text-muted-foreground text-sm">
-					{ eventData?.title } — generates FooEvents <strong>slotdate</strong> data and
-					<strong> replaces</strong> all existing slots for this product.
+					{ eventData?.title } — use <strong>Manual sessions</strong> to add or delete a single
+					time on one day without changing anything else. The bulk schedule form below still
+					generates FooEvents <strong>slotdate</strong> data and{' '}
+					<strong>replaces</strong> every slot on this product when saved.
 				</p>
 			</div>
+
+			{ manualSlotsAllowed ? (
+				<>
+					<Card className="border-primary/30">
+						<CardHeader className="pb-2">
+							<CardTitle className="flex items-center gap-2 text-lg">
+								<Plus className="size-5" aria-hidden />
+								Manual sessions
+							</CardTitle>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Adds one WooCommerce slot–date cell. Matches an existing slot when the label
+								and time are the same so you can add an extra day to that row.
+							</p>
+						</CardHeader>
+						<CardContent>
+							<form
+								className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end"
+								onSubmit={ submitManualSlot }
+							>
+								<div className="space-y-2">
+									<Label htmlFor="manual-date">Date</Label>
+									<Input
+										id="manual-date"
+										type="date"
+										value={ manualDate }
+										onChange={ ( e ) => setManualDate( e.target.value ) }
+										disabled={ addManual.isPending }
+										required
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="manual-time">Time</Label>
+									<Input
+										id="manual-time"
+										type="time"
+										value={ manualTime }
+										onChange={ ( e ) => setManualTime( e.target.value ) }
+										disabled={ addManual.isPending }
+										required
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="manual-cap">Capacity</Label>
+									<Input
+										id="manual-cap"
+										type="number"
+										min={ 0 }
+										className="w-[120px]"
+										value={ manualCapacity }
+										onChange={ ( e ) =>
+											setManualCapacity(
+												parseInt( e.target.value, 10 ) || 0,
+											)
+										}
+										disabled={ addManual.isPending }
+										required
+									/>
+									<p className="text-muted-foreground text-xs">0 = unlimited</p>
+								</div>
+								<div className="min-w-[200px] flex-1 space-y-2">
+									<Label htmlFor="manual-label">Schedule label (optional)</Label>
+									<Input
+										id="manual-label"
+										placeholder="Same as bulk blocks (e.g. Regular)"
+										value={ manualLabel }
+										onChange={ ( e ) => setManualLabel( e.target.value ) }
+										disabled={ addManual.isPending }
+										maxLength={ 60 }
+										autoComplete="off"
+									/>
+								</div>
+								<Button
+									type="submit"
+									disabled={ addManual.isPending || gen.isPending }
+								>
+									{ addManual.isPending ? 'Adding…' : 'Add session' }
+								</Button>
+							</form>
+						</CardContent>
+					</Card>
+
+					<Card>
+						<CardHeader className="pb-2">
+							<CardTitle className="text-lg">Current POS-visible sessions</CardTitle>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Past dates are hidden from this list. Remove stops new bookings; the server
+								refuses if tickets already exist for that slot.
+							</p>
+						</CardHeader>
+						<CardContent className="space-y-4">
+							{ sortedDateGroups.length === 0 ? (
+								<p className="text-muted-foreground text-sm">
+									No upcoming sessions. Add one above or use bulk generate.
+								</p>
+							) : (
+								sortedDateGroups.map( ( day, di ) => (
+									<div
+										key={ day.date || day.label || `day-${ di }` }
+										className="space-y-2"
+									>
+										<p className="text-sm font-medium">
+											{ day.label || day.date }
+											{ day.date ? (
+												<span className="text-muted-foreground font-mono text-xs">
+													{ ' ' }
+													({ day.date })
+												</span>
+											) : null }
+										</p>
+										<ul className="space-y-1">
+											{ ( day.slots || [] ).map( ( s ) => {
+												const sid = String( s.id ?? '' ).trim();
+												const did = String( s.dateId ?? '' ).trim();
+												const canDel = sid !== '' && did !== '';
+												const stockLabel =
+													s.stock === null || s.stock === undefined
+														? '∞'
+														: String( s.stock );
+												const line = [ s.label, s.time ]
+													.filter( Boolean )
+													.join( ' · ' );
+												return (
+													<li
+														key={ `${ day.date }-${ sid }-${ did }` }
+														className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-sm"
+													>
+														<span className="min-w-0 flex-1">
+															<span className="font-medium tabular-nums">
+																{ line || '(session)' }
+															</span>
+															<Badge variant="outline" className="ml-2 text-[10px]">
+																cap { stockLabel }
+															</Badge>
+														</span>
+														<Button
+															type="button"
+															size="icon"
+															variant="ghost"
+															className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+															disabled={ ! canDel || delManual.isPending || gen.isPending }
+															aria-label="Remove this session"
+															title={ `slot ${ sid } · date row ${ did }` }
+															onClick={ () => {
+																if ( ! canDel ) {
+																	return;
+																}
+																setDeleteSlotConfirm( {
+																	slotId: sid,
+																	dateId: did,
+																	title: line || `Slot ${ sid }`,
+																} );
+															} }
+														>
+															<X className="size-4" />
+														</Button>
+													</li>
+												);
+											} ) }
+										</ul>
+									</div>
+								) )
+							) }
+						</CardContent>
+					</Card>
+
+					<Separator />
+				</>
+			) : (
+				<div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+					This product uses <strong>date-first (dateslot)</strong> booking mode. One-off add/remove
+					from this page is only available for slot-first (slotdate) events.
+				</div>
+			) }
 
 			<Card>
 				<CardHeader>
@@ -540,6 +824,48 @@ export default function Schedule() {
 							disabled={ gen.isPending }
 						>
 							Replace and save
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={ deleteSlotConfirm !== null }
+				onOpenChange={ ( o ) => {
+					if ( ! o ) {
+						setDeleteSlotConfirm( null );
+					}
+				} }
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Remove this session?</DialogTitle>
+						<DialogDescription>
+							{ deleteSlotConfirm?.title ? (
+								<>
+									This removes <strong>{ deleteSlotConfirm.title }</strong> from the product.
+									It cannot be undone if bookings exist — the save will fail in that case.
+								</>
+							) : (
+								'Remove this slot from the product.'
+							) }
+						</DialogDescription>
+					</DialogHeader>
+					<DialogFooter className="gap-2 sm:gap-0">
+						<Button
+							type="button"
+							variant="outline"
+							onClick={ () => setDeleteSlotConfirm( null ) }
+						>
+							Cancel
+						</Button>
+						<Button
+							type="button"
+							variant="destructive"
+							onClick={ () => void runDeleteManualConfirmed() }
+							disabled={ delManual.isPending }
+						>
+							{ delManual.isPending ? 'Removing…' : 'Remove session' }
 						</Button>
 					</DialogFooter>
 				</DialogContent>

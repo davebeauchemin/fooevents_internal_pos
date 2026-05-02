@@ -123,6 +123,59 @@ export function useGenerateSlots( eventId ) {
 }
 
 /**
+ * Add one slot–date row without replacing FooEvents serialized options (slotdate products only).
+ *
+ * Body: `{ date: 'Y-m-d', time: 'HH:MM', capacity: number, label?: string }`
+ *
+ * @param {number|string|undefined} eventId
+ */
+export function useAddManualSlot( eventId ) {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'manualSlotAdd', eventId ],
+		mutationFn: ( body ) =>
+			restFetch( `${ prefix }/events/${ eventId }/slots/manual`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( body ),
+			} ),
+		onSuccess: () => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
+		},
+	} );
+}
+
+/**
+ * Remove one slot–date row by internal ids (blocked if tickets exist server-side).
+ *
+ * @param {number|string|undefined} eventId
+ */
+export function useDeleteManualSlot( eventId ) {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'manualSlotDel', eventId ],
+		mutationFn: ( { slotId, dateId } ) =>
+			restFetch(
+				`${ prefix }/events/${ eventId }/slots/${ encodeURIComponent(
+					slotId,
+				) }/dates/${ encodeURIComponent( dateId ) }`,
+				{
+					method: 'DELETE',
+				}
+			),
+		onSuccess: () => {
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
+		},
+	} );
+}
+
+/**
  * Book FooEvents booking slot(s) (creates WC order + tickets).
  *
  * @param {object} body - Legacy single-slot or multi-line booking JSON; include `billing.postalCode` and optional `couponCodes` (string[]).

@@ -22,6 +22,11 @@ import {
 	PopoverTrigger,
 } from '@/components/ui/popover';
 import Cart from '@/components/Cart';
+import BookingScheduleSummaryCards from '@/components/BookingScheduleSummaryCards';
+import type {
+	BookingScheduleSummaryPayload,
+	LeadingDayTimeRange,
+} from '@/components/BookingScheduleSummaryCards';
 import { cartLineKey, useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import type { POSSelection } from '@/types/posSelection';
@@ -29,6 +34,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
+	capacityLabelForSlots,
 	defaultAccordionHourKey,
 	formatSlotTime,
 	groupSlotsByHour,
@@ -60,7 +66,48 @@ type DayEvent = {
 type DashboardResponse = {
 	date: string;
 	events: DayEvent[];
+	calendarSummary?: BookingScheduleSummaryPayload;
 };
+
+function findNextSelectableSlotOnDay(
+	events: DayEvent[],
+	viewYmd: string,
+	siteTodayYmd: string,
+): BookingScheduleSummaryPayload['nextAvailable'] {
+	const rows = events.flatMap( ( e ) => e.slots );
+	const sorted = [ ...rows ].sort( ( a, b ) =>
+		formatSlotTime( a ).localeCompare( formatSlotTime( b ) ),
+	);
+	const pick = sorted.find( ( s ) =>
+		slotSelectable( viewYmd, s.stock, siteTodayYmd ),
+	);
+	if ( ! pick ) {
+		return null;
+	}
+	return {
+		dateYmd: viewYmd,
+		slot: {
+			label: pick.label,
+			time: pick.time,
+			stock: pick.stock,
+		},
+	};
+}
+
+function selectedDayScheduleSpan( slots: SlotRow[] ): LeadingDayTimeRange | null {
+	if ( ! slots.length ) {
+		return null;
+	}
+	const sorted = [ ...slots ].sort( ( a, b ) =>
+		formatSlotTime( a ).localeCompare( formatSlotTime( b ) ),
+	);
+	const startLabel = formatSlotTime( sorted[ 0 ] );
+	const endLabel = formatSlotTime( sorted[ sorted.length - 1 ] );
+	if ( startLabel === '—' || endLabel === '—' ) {
+		return null;
+	}
+	return { startLabel, endLabel };
+}
 
 export default function Dashboard() {
 	/** '' = use WordPress site-local today. */
@@ -157,6 +204,46 @@ export default function Dashboard() {
 	 */
 	const showLoadingDataLine =
 		isFetching && ( isLoading || isPlaceholderData || ! data );
+
+	const dashboardSummaryPayload = useMemo(
+		(): BookingScheduleSummaryPayload | null => {
+			if ( ! data ) {
+				return null;
+			}
+			const sum = data.calendarSummary;
+			if ( sum ) {
+				return {
+					slotsOnSelectedDay: sum.slotsOnSelectedDay ?? 0,
+					capacityOnSelectedDay:
+						sum.capacityOnSelectedDay != null &&
+						sum.capacityOnSelectedDay !== ''
+							? sum.capacityOnSelectedDay
+							: '—',
+					nextAvailable: sum.nextAvailable ?? null,
+				};
+			}
+			const flatSlots = data.events.flatMap( ( e ) => e.slots );
+			return {
+				slotsOnSelectedDay: flatSlots.length,
+				capacityOnSelectedDay: capacityLabelForSlots( flatSlots ),
+				nextAvailable: findNextSelectableSlotOnDay(
+					data.events,
+					data.date,
+					effectiveSiteTodayYmd,
+				),
+			};
+		},
+		[ data, effectiveSiteTodayYmd ],
+	);
+
+	const dashboardDayScheduleSpan = useMemo( (): LeadingDayTimeRange | null => {
+		if ( ! data ) {
+			return null;
+		}
+		return selectedDayScheduleSpan(
+			data.events.flatMap( ( e ) => e.slots ),
+		);
+	}, [ data ] );
 
 	return (
 		<div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:items-start lg:gap-8">
@@ -282,6 +369,18 @@ export default function Dashboard() {
 						);
 					} ) }
 				</div>
+			</div>
+
+			<div className="space-y-3">
+				<p className="text-muted-foreground text-sm leading-relaxed">
+					Review upcoming dates and slot availability for this event. Book tickets from Calendar
+					(checkout in cart).
+				</p>
+				<BookingScheduleSummaryCards
+					summary={ dashboardSummaryPayload }
+					leadingDayTimeRange={ dashboardDayScheduleSpan }
+					isLoading={ isLoading && ! data }
+				/>
 			</div>
 
 			{ isLoading && ! data && (

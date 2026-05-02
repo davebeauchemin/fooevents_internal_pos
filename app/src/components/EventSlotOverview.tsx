@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { Clock3 } from 'lucide-react';
 import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
+import BookingScheduleSummaryCards, {
+	type BookingScheduleSummaryPayload,
+} from '@/components/BookingScheduleSummaryCards';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -91,18 +94,34 @@ export default function EventSlotOverview( {
 
 	const nextAvail = useMemo( () => findNextAvailable( dates || [] ), [ dates ] );
 
+	const summaryCardsPayload = useMemo( (): BookingScheduleSummaryPayload => {
+		const na = nextAvail;
+		return {
+			upcomingDistinctDays: dates?.length ?? 0,
+			slotsOnSelectedDay: selectedDay?.slots?.length ?? 0,
+			capacityOnSelectedDay: selectedDay
+				? capacityLabelForSlots( selectedDay.slots || [] )
+				: '—',
+			nextAvailable:
+				na && na.day && na.slot
+					? {
+							dateYmd: na.day.date,
+							slot: {
+								label: na.slot.label,
+								time: na.slot.time,
+								stock: na.slot.stock,
+							},
+					  }
+					: null,
+		};
+	}, [ dates, nextAvail, selectedDay ] );
+
 	const hourGroups = useMemo( () => {
 		if ( ! selectedDay?.slots?.length ) {
 			return [];
 		}
 		return groupSlotsByHour( selectedDay.slots );
 	}, [ selectedDay ] );
-
-	const upcomingDaysCount = dates?.length ?? 0;
-	const slotCount = selectedDay?.slots?.length ?? 0;
-	const capacity = selectedDay
-		? capacityLabelForSlots( selectedDay.slots || [] )
-		: '—';
 
 	if ( ! dates?.length ) {
 		return (
@@ -116,44 +135,7 @@ export default function EventSlotOverview( {
 
 	return (
 		<div className="space-y-6">
-			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-				<Card>
-					<CardHeader className="pb-2">
-						<CardDescription>Upcoming days</CardDescription>
-						<CardTitle className="text-2xl tabular-nums">{ upcomingDaysCount }</CardTitle>
-					</CardHeader>
-				</Card>
-				<Card>
-					<CardHeader className="pb-2">
-						<CardDescription>Slots (selected day)</CardDescription>
-						<CardTitle className="text-2xl tabular-nums">{ slotCount }</CardTitle>
-					</CardHeader>
-				</Card>
-				<Card>
-					<CardHeader className="pb-2">
-						<CardDescription>Capacity (selected day)</CardDescription>
-						<CardTitle className="text-2xl tabular-nums">{ capacity }</CardTitle>
-					</CardHeader>
-				</Card>
-				<Card>
-					<CardHeader className="pb-2">
-						<CardDescription>Next available</CardDescription>
-						<CardTitle className="text-base font-medium leading-snug">
-							{ nextAvail ? (
-								<>
-									{ format( parseISO( `${ nextAvail.day.date }T12:00:00` ), 'MMM d' ) }
-									{ ' · ' }
-									<span className="text-muted-foreground font-mono text-sm">
-										{ formatSlotTime( nextAvail.slot ) }
-									</span>
-								</>
-							) : (
-								<span className="text-muted-foreground">—</span>
-							) }
-						</CardTitle>
-					</CardHeader>
-				</Card>
-			</div>
+			<BookingScheduleSummaryCards summary={ summaryCardsPayload } />
 
 			<div>
 				<p className="text-muted-foreground mb-2 text-sm font-medium">

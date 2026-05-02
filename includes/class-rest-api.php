@@ -107,6 +107,38 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/slots/manual',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_slots_manual' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/slots/(?P<slotId>[^/]+)/dates/(?P<dateId>[^/]+)',
+			array(
+				'methods'             => WP_REST_Server::DELETABLE,
+				'callback'            => array( $this, 'delete_slots_date' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/events/(?P<id>\\d+)',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -310,6 +342,44 @@ class Rest_API {
 		}
 		unset( $params['confirm'] );
 		$result = $this->slot_generator->generate( $id, $params );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * POST /events/{id}/slots/manual — add one slot–date cell without replacing metadata.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_slots_manual( WP_REST_Request $request ) {
+		$id      = (int) $request['id'];
+		$params  = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$result = $this->slot_generator->manual_add_slot_date( $id, $params );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * DELETE /events/{id}/slots/{slotId}/dates/{dateId} — remove one slot–date cell (blocked if booked).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function delete_slots_date( WP_REST_Request $request ) {
+		$id     = (int) $request['id'];
+		$result = $this->slot_generator->manual_remove_slot_date(
+			$id,
+			rawurldecode( (string) $request['slotId'] ),
+			rawurldecode( (string) $request['dateId'] )
+		);
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}

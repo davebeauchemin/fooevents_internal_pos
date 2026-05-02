@@ -391,23 +391,30 @@ class Bookings_Service {
 	 * All bookable slots for a single day (Y-m-d in site timezone), for dashboard.
 	 *
 	 * @param string $ymd Y-m-d or empty (defaults to today).
-	 * @return array{ date: string, events: array }
+	 * @return array{ date: string, events: array<int, mixed>, calendarSummary?: array<string, mixed> }
 	 */
 	public function get_day_dashboard( $ymd ) {
 		$ymd = (string) $ymd;
 		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd ) ) {
 			$ymd = $this->today_ymd();
 		}
-		$out = array();
+		$today              = $this->today_ymd();
+		$distinct_upcoming  = array();
+		$flatten_focus_slots = array();
+		$next_entries       = array();
+		$out                = array();
+
 		foreach ( $this->list_booking_events() as $row ) {
 			$detail = $this->get_event_detail( (int) $row['id'] );
 			if ( ! empty( $detail['error'] ) ) {
 				continue;
 			}
 			foreach ( (array) ( $detail['dates'] ?? array() ) as $d ) {
-				if ( ( $d['date'] ?? '' ) !== $ymd ) {
+				$ddy = isset( $d['date'] ) ? (string) $d['date'] : '';
+				if ( '' === $ddy ) {
 					continue;
 				}
+
 				$slots = array();
 				foreach ( (array) ( $d['slots'] ?? array() ) as $s ) {
 					if ( ! is_array( $s ) ) {
@@ -417,14 +424,17 @@ class Bookings_Service {
 					$time  = ( isset( $s['time'] ) && (string) $s['time'] !== '' )
 						? (string) $s['time']
 						: $this->extract_time( $label );
+					$stock_meta = isset( $s['stock'] ) ? $s['stock'] : null;
+
 					$slots[] = array(
 						'id'     => (string) ( $s['id'] ?? '' ),
 						'dateId' => (string) ( $s['dateId'] ?? '' ),
 						'label'  => $label,
 						'time'   => $time,
-						'stock'  => $s['stock'] ?? null,
+						'stock'  => $stock_meta,
 					);
 				}
+
 				usort(
 					$slots,
 					function( $a, $b ) {
@@ -439,6 +449,38 @@ class Bookings_Service {
 						return strcmp( (string) ( $a['label'] ?? '' ), (string) ( $b['label'] ?? '' ) );
 					}
 				);
+
+				if ( strcmp( $ddy, $today ) >= 0 ) {
+					$distinct_upcoming[ $ddy ] = true;
+					foreach ( $slots as $row_slot ) {
+						$st = isset( $row_slot['stock'] ) ? $row_slot['stock'] : null;
+						$avail = null === $st || '' === $st || (int) $st > 0;
+						if ( ! $avail ) {
+							continue;
+						}
+						$tim = isset( $row_slot['time'] ) ? (string) $row_slot['time'] : '';
+						$tkey = '' !== trim( $tim ) ? $tim : '99:99';
+						$next_entries[] = array(
+							'ymd' => $ddy,
+							'time' => $tkey,
+							'slot' => array(
+								'id'    => isset( $row_slot['id'] ) ? $row_slot['id'] : '',
+								'label' => isset( $row_slot['label'] ) ? $row_slot['label'] : '',
+								'time'  => $tim,
+								'stock' => $st,
+							),
+						);
+					}
+				}
+
+				if ( $ddy !== $ymd ) {
+					continue;
+				}
+
+				foreach ( $slots as $sn ) {
+					$flatten_focus_slots[] = $sn;
+				}
+
 				$price_row = $this->get_product_price_for_rest( (int) $row['id'] );
 
 				$out[] = array(
@@ -452,10 +494,61 @@ class Bookings_Service {
 				);
 			}
 		}
+
+		usort(
+			$next_entries,
+			function( $a, $b ) {
+				$c = strcmp( (string) $a['ymd'], (string) $b['ymd'] );
+				if ( 0 !== $c ) {
+					return $c;
+				}
+				return strcmp( (string) $a['time'], (string) $b['time'] );
+			}
+		);
+		$next_best = ! empty( $next_entries ) ? $next_entries[0] : null;
+
 		return array(
 			'date'   => $ymd,
 			'events' => $out,
+			'calendarSummary' => array(
+				'upcomingDistinctDays' => count( $distinct_upcoming ),
+				'slotsOnSelectedDay'   => count( $flatten_focus_slots ),
+				'capacityOnSelectedDay' => $this->dashboard_capacity_label_from_slots( $flatten_focus_slots ),
+				'nextAvailable'       => null !== $next_best
+					? array(
+						'dateYmd' => (string) $next_best['ymd'],
+						'slot'    => $next_best['slot'],
+					)
+					: null,
+			),
 		);
+	}
+
+	/**
+	 * @param array<int, array{id?:string,dateId?:string,label?:string,time?:string,stock:mixed}> $slots Slots.
+	 * @return string
+	 */
+	private function dashboard_capacity_label_from_slots( array $slots ) {
+		if ( empty( $slots ) ) {
+			return '—';
+		}
+		foreach ( $slots as $s ) {
+			if ( ! is_array( $s ) ) {
+				continue;
+			}
+			$stk = array_key_exists( 'stock', $s ) ? $s['stock'] : null;
+			if ( null === $stk || '' === $stk ) {
+				return 'Unlimited';
+			}
+		}
+		$sum = 0;
+		foreach ( $slots as $s ) {
+			if ( ! is_array( $s ) ) {
+				continue;
+			}
+			$sum += isset( $s['stock'] ) ? (int) $s['stock'] : 0;
+		}
+		return (string) $sum;
 	}
 
 	/**

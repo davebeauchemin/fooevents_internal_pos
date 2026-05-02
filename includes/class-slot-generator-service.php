@@ -9,6 +9,7 @@ namespace FooEvents_Internal_POS;
 
 use DateTime;
 use WP_Error;
+use WP_Query;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -262,10 +263,445 @@ class Slot_Generator_Service {
 		return array(
 			'slotsWritten'  => $slot_count,
 			'datesWritten'  => $date_count,
-			'totalEntries'  => $total_lines,
 			'warnings'      => $warnings,
 			'sample'        => $sample,
+			'totalEntries'  => $total_lines,
 		);
+	}
+
+	/**
+	 * Append one slot–date cell to FooEvents slotdate serialization without replacing existing options.
+	 *
+	 * Body keys: date (Y-m-d), time (HH:MM), capacity (>=0), label (optional schedule name — empty uses time label).
+	 *
+	 * @param int   $product_id Product ID.
+	 * @param array $params Parsed JSON body (camelCase preferred; snake_case accepted).
+	 * @return array<string,mixed>|WP_Error Response with assigned slotId/dateId keys.
+	 */
+	public function manual_add_slot_date( $product_id, array $params ) {
+		$product_id = absint( $product_id );
+		$product    = wc_get_product( $product_id );
+		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		if ( 'dateslot' === $this->bookings_method_for_product( $product ) ) {
+			return new WP_Error(
+				'unsupported_method',
+				__( 'Manual slot editing is supported for slot-first (slotdate) booking products only.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$ymd_raw = isset( $params['date'] ) ? (string) $params['date'] : ( isset( $params['bookingDate'] ) ? (string) $params['bookingDate'] : '' );
+		$time_in = isset( $params['time'] ) ? (string) $params['time'] : '';
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd_raw ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'date must be Y-m-d.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$hm_in = $this->parse_hhmm( $time_in );
+		if ( null === $hm_in ) {
+			return new WP_Error( 'rest_invalid_param', __( 'time must be HH:MM (24h).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		if ( ! array_key_exists( 'capacity', $params ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'capacity is required and must be >= 0.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$cap = (int) $params['capacity'];
+		if ( $cap < 0 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'capacity must be >= 0 (0 = unlimited).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		$stock = ( 0 === $cap ) ? '' : (string) $cap;
+
+		$raw_label = isset( $params['label'] ) ? (string) $params['label'] : ( isset( $params['name'] ) ? (string) $params['name'] : '' );
+		$name      = trim( $raw_label );
+		$name      = '' === $name ? '' : sanitize_text_field( $name );
+		if ( '' !== $name && strlen( $name ) > self::BLOCK_NAME_MAX ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: %d max length */
+					__( 'Label must be at most %d characters.', 'fooevents-internal-pos' ),
+					self::BLOCK_NAME_MAX
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		$today = $this->bookings->today_ymd();
+		if ( strcmp( $ymd_raw, $today ) < 0 ) {
+			return new WP_Error( 'past_date', __( 'Cannot add a slot on a date before today (site timezone).', 'fooevents-internal-pos' ), array( 'status' => 422 ) );
+		}
+
+		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
+		$cells     = $this->count_slot_date_cells_raw( $raw_slots );
+		if ( $cells >= self::MAX_TOTAL_ENTRIES ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: 1 limit */
+					__( 'Total slot–date entries would exceed maximum %d.', 'fooevents-internal-pos' ),
+					self::MAX_TOTAL_ENTRIES
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		$h     = str_pad( (string) $hm_in['h'], 2, '0', STR_PAD_LEFT );
+		$min   = str_pad( (string) $hm_in['m'], 2, '0', STR_PAD_LEFT );
+		$h24   = (int) $hm_in['h'];
+		$period = ( $h24 < 12 ) ? 'a.m.' : 'p.m.';
+		$hhmm  = sprintf( '%02d:%02d', (int) $hm_in['h'], (int) $hm_in['m'] );
+
+		$effective_label_for_match = '' !== $name ? $name : $hhmm;
+		$display_label_for_store   = '' !== $name ? $name : $hhmm;
+
+		// Reject if any slot with this label+time already has this calendar day.
+		foreach ( $raw_slots as $sid => $slot_row ) {
+			if ( ! is_array( $slot_row ) ) {
+				continue;
+			}
+			if ( ! $this->raw_slot_matches_time_and_label(
+				$slot_row,
+				$h,
+				$min,
+				$period,
+				$effective_label_for_match
+			) ) {
+				continue;
+			}
+			if ( null !== $this->find_date_id_with_ymd_in_slot_raw( $slot_row, $ymd_raw ) ) {
+				return new WP_Error( 'duplicate_slot', __( 'That date and session time already exist for this slot.', 'fooevents-internal-pos' ), array( 'status' => 409 ) );
+			}
+		}
+
+		// Find first existing slot row to merge additional dates into (same label + time-of-day metadata).
+		$slot_id_existing = '';
+		foreach ( $raw_slots as $sid => $slot_row ) {
+			if ( ! is_array( $slot_row ) ) {
+				continue;
+			}
+			if ( ! $this->raw_slot_matches_time_and_label(
+				$slot_row,
+				$h,
+				$min,
+				$period,
+				$effective_label_for_match
+			) ) {
+				continue;
+			}
+			$slot_id_existing = (string) $sid;
+			break;
+		}
+
+		$new_date_inner_id = '';
+		if ( '' !== $slot_id_existing ) {
+			$new_date_inner_id                   = $this->next_unique_internal_prefix( $raw_slots );
+			$date_format                         = get_option( 'date_format' );
+			$ts                                  = strtotime( $ymd_raw . ' 12:00:00' );
+			$display                             = false !== $ts ? date_i18n( $date_format, $ts ) : $ymd_raw;
+			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_add_date' ] = $display;
+			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_stock' ]     = $stock;
+			$used_slot_id                                                        = $slot_id_existing;
+		} else {
+			$new_slot_key = $this->next_unique_slot_key( $raw_slots );
+			$new_date_inner_id                  = $this->next_unique_internal_prefix( $raw_slots );
+			$date_format                        = get_option( 'date_format' );
+			$ts                                 = strtotime( $ymd_raw . ' 12:00:00' );
+			$display                            = false !== $ts ? date_i18n( $date_format, $ts ) : $ymd_raw;
+			$raw_slots[ $new_slot_key ]         = array(
+				'label'    => $display_label_for_store,
+				'hour'     => $h,
+				'minute'   => $min,
+				'period'   => $period,
+				'add_time' => 'enabled',
+			);
+			$raw_slots[ $new_slot_key ][ $new_date_inner_id . '_add_date' ] = $display;
+			$raw_slots[ $new_slot_key ][ $new_date_inner_id . '_stock' ]    = $stock;
+			$used_slot_id                                                    = $new_slot_key;
+		}
+
+		$maybe_err = $this->persist_raw_booking_slots_or_fail( $product_id, $raw_slots );
+		if ( is_wp_error( $maybe_err ) ) {
+			return $maybe_err;
+		}
+		update_post_meta( $product_id, 'WooCommerceEventsBookingsMethod', 'slotdate' );
+
+		return array(
+			'slotId'           => $used_slot_id,
+			'dateId'           => $new_date_inner_id,
+			'totalSlotDateCells' => $cells + 1,
+		);
+	}
+
+	/**
+	 * Remove one slot–date cell (slot-first / slotdate). Blocks if FooEvents tickets exist for that pairing.
+	 *
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    FooEvents slot row id.
+	 * @param string $date_id    Internal date key (numeric segment before `_add_date` in serialization).
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function manual_remove_slot_date( $product_id, $slot_id, $date_id ) {
+		$product_id = absint( $product_id );
+		$slot_id    = trim( (string) $slot_id );
+		$date_id    = trim( (string) $date_id );
+		if ( '' === $slot_id || '' === $date_id || ! ctype_digit( (string) $date_id ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'slotId and numeric dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$product = wc_get_product( $product_id );
+		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		if ( 'dateslot' === $this->bookings_method_for_product( $product ) ) {
+			return new WP_Error(
+				'unsupported_method',
+				__( 'Manual slot editing is supported for slot-first (slotdate) booking products only.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$blocked = new WP_Query(
+			array(
+				'post_type'      => 'event_magic_tickets',
+				'post_status'    => 'publish',
+				'posts_per_page' => 1,
+				'fields'         => 'ids',
+				'no_found_rows'  => true,
+				'meta_query'     => array(
+					'relation' => 'AND',
+					array(
+						'key'     => 'WooCommerceEventsProductID',
+						'value'   => $product_id,
+						'compare' => '=',
+						'type'    => 'NUMERIC',
+					),
+					array(
+						'key'   => 'WooCommerceEventsBookingSlotID',
+						'value' => $slot_id,
+						'type' => 'CHAR',
+						'compare' => '=',
+					),
+					array(
+						'key'   => 'WooCommerceEventsBookingDateID',
+						'value' => $date_id,
+						'type' => 'CHAR',
+						'compare' => '=',
+					),
+				),
+			)
+		);
+		if ( (int) $blocked->found_posts > 0 || ! empty( $blocked->posts ) ) {
+			return new WP_Error(
+				'slot_has_bookings',
+				__( 'Cannot remove this slot: there are tickets/bookings referencing it.', 'fooevents-internal-pos' ),
+				array( 'status' => 409 )
+			);
+		}
+
+		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
+		if ( ! isset( $raw_slots[ $slot_id ] ) || ! is_array( $raw_slots[ $slot_id ] ) ) {
+			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		$row = $raw_slots[ $slot_id ];
+		$dkey = $date_id . '_add_date';
+		$skey = $date_id . '_stock';
+		if ( ! isset( $row[ $dkey ] ) ) {
+			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		unset( $raw_slots[ $slot_id ][ $dkey ], $raw_slots[ $slot_id ][ $skey ] );
+
+		if ( ! $this->slot_row_has_dates_left( $raw_slots[ $slot_id ] ) ) {
+			unset( $raw_slots[ $slot_id ] );
+		}
+
+		if ( empty( $raw_slots ) ) {
+			return new WP_Error(
+				'invalid_state',
+				__( 'Removing the last slot/date would leave empty booking metadata; cancel or regenerate a schedule.', 'fooevents-internal-pos' ),
+				array( 'status' => 422 )
+			);
+		}
+
+		$maybe_err = $this->persist_raw_booking_slots_or_fail( $product_id, $raw_slots );
+		if ( is_wp_error( $maybe_err ) ) {
+			return $maybe_err;
+		}
+
+		return array(
+			'removed'          => true,
+			'totalSlotDateCells' => $this->count_slot_date_cells_raw( $raw_slots ),
+		);
+	}
+
+	/**
+	 * @param \WC_Product $product Product.
+	 * @return string slotdate|dateslot
+	 */
+	private function bookings_method_for_product( $product ) {
+		if ( ! is_object( $product ) || ! is_a( $product, '\WC_Product' ) ) {
+			return 'slotdate';
+		}
+		$m = $product->get_meta( 'WooCommerceEventsBookingsMethod', true );
+		if ( empty( $m ) || '1' === (string) $m ) {
+			return 'slotdate';
+		}
+		return (string) $m;
+	}
+
+	/**
+	 * @param int $product_id Product.
+	 * @return array<string, mixed> Raw slot-first map slotId → row.
+	 */
+	private function decode_booking_options_raw_array( $product_id ) {
+		$raw_meta = get_post_meta( absint( $product_id ), 'fooevents_bookings_options_serialized', true );
+		$data     = is_string( $raw_meta ) ? json_decode( wp_unslash( $raw_meta ), true ) : array();
+		return is_array( $data ) ? $data : array();
+	}
+
+	/**
+	 * Persist raw slotdate map; returns WP_Error on encode failure.
+	 *
+	 * @param int                  $product_id Product.
+	 * @param array<string, mixed> $slots Raw slot map.
+	 * @return true|WP_Error
+	 */
+	private function persist_raw_booking_slots_or_fail( $product_id, array $slots ) {
+		$json = wp_json_encode( $slots, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		if ( false === $json ) {
+			return new WP_Error( 'json_error', __( 'Failed to encode booking options.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
+		}
+		update_post_meta( absint( $product_id ), 'fooevents_bookings_options_serialized', wp_slash( $json ) );
+		return true;
+	}
+
+	/**
+	 * @param array<string, mixed> $raw Raw serialization.
+	 * @return int
+	 */
+	private function count_slot_date_cells_raw( array $raw ) {
+		$n = 0;
+		foreach ( $raw as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			foreach ( array_keys( $row ) as $k ) {
+				if ( preg_match( '/^\d+_add_date$/', (string) $k ) ) {
+					++$n;
+				}
+			}
+		}
+		return $n;
+	}
+
+	/**
+	 * @param array<string, mixed> $raw Raw serialization.
+	 * @return string
+	 */
+	private function next_unique_internal_prefix( array $raw ) {
+		// Allow multiple adds in one PHP request — microtime-backed id with collision avoidance.
+		$base = (int) floor( microtime( true ) * 1000000 );
+		for ( $try = $base; $try < $base + 10000; ++$try ) {
+			$candidate = (string) $try;
+			if ( ! $this->raw_uses_inner_date_prefix_anywhere( $raw, $candidate ) ) {
+				return $candidate;
+			}
+		}
+		return (string) wp_rand( 100000000, 990000000 );
+	}
+
+	/**
+	 * @param array<string, mixed> $raw Raw serialization.
+	 * @param string               $candidate Inner id digits.
+	 * @return bool
+	 */
+	private function raw_uses_inner_date_prefix_anywhere( array $raw, $candidate ) {
+		foreach ( $raw as $slot_row ) {
+			if ( ! is_array( $slot_row ) ) {
+				continue;
+			}
+			foreach ( array_keys( $slot_row ) as $k ) {
+				if ( preg_match( '/' . preg_quote( $candidate, '/' ) . '_(?:add_date|stock)/', (string) $k ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * @param array<string, mixed> $raw Raw serialization.
+	 * @return string
+	 */
+	private function next_unique_slot_key( array $raw ) {
+		$max = 0;
+		foreach ( array_keys( $raw ) as $sid ) {
+			if ( ctype_digit( (string) $sid ) ) {
+				$max = max( $max, (int) $sid );
+			}
+		}
+		return (string) ( $max + 1 );
+	}
+
+	/**
+	 * @param array<string, mixed> $slot_row Serialized slot row (before add).
+	 * @param string               $h Two-digit hour key.
+	 * @param string               $min Two-digit minute.
+	 * @param string               $period a.m.|p.m.
+	 * @param string               $label_match Compare against slot label semantics (merged name-or-time token).
+	 * @return bool
+	 */
+	private function raw_slot_matches_time_and_label( array $slot_row, $h, $min, $period, $label_match ) {
+		$lh = isset( $slot_row['hour'] ) ? (string) $slot_row['hour'] : '';
+		$lm = isset( $slot_row['minute'] ) ? (string) $slot_row['minute'] : '';
+		$lp = array_key_exists( 'period', $slot_row ) ? (string) $slot_row['period'] : '';
+
+		if ( str_pad( (string) (int) $lh, 2, '0', STR_PAD_LEFT ) !== str_pad( (string) (int) $h, 2, '0', STR_PAD_LEFT ) ) {
+			return false;
+		}
+		if ( str_pad( (string) (int) $lm, 2, '0', STR_PAD_LEFT ) !== str_pad( (string) (int) $min, 2, '0', STR_PAD_LEFT ) ) {
+			return false;
+		}
+		if ( $lp !== $period ) {
+			return false;
+		}
+		$lbl = isset( $slot_row['label'] ) ? trim( wp_strip_all_tags( (string) $slot_row['label'] ) ) : '';
+		$effective = '' !== $lbl ? $lbl : sprintf( '%02d:%02d', (int) $slot_row['hour'], (int) $slot_row['minute'] );
+
+		return 0 === strcasecmp( (string) $label_match, $effective );
+	}
+
+	/**
+	 * @param array<string, mixed> $slot_row Serialized slot row.
+	 * @param string               $ymd Y-m-d.
+	 * @return string|null Matching inner numeric date id segment, or null.
+	 */
+	private function find_date_id_with_ymd_in_slot_raw( array $slot_row, $ymd ) {
+		foreach ( $slot_row as $key => $_val ) {
+			if ( ! preg_match( '/^(\d+)_add_date$/', (string) $key, $m ) ) {
+				continue;
+			}
+			$display = is_string( $_val ) ? $_val : '';
+			$parsed  = $this->bookings->date_string_to_ymd( $display );
+			if ( (string) $parsed === (string) $ymd ) {
+				return $m[1];
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * @param array<string, mixed> $slot_row After unsetting date keys maybe left with label/time only.
+	 * @return bool
+	 */
+	private function slot_row_has_dates_left( array $slot_row ) {
+		foreach ( array_keys( $slot_row ) as $k ) {
+			if ( preg_match( '/^\d+_add_date$/', (string) $k ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
