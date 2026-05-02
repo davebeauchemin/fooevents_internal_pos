@@ -28,18 +28,13 @@ class Storefront_Assets {
 		$url = FOOEVENTS_INTERNAL_POS_URL . 'public/frontend/';
 		$ver = FOOEVENTS_INTERNAL_POS_VERSION;
 
-		$woo_pages_style = function_exists( 'is_cart' ) && function_exists( 'is_checkout' ) && function_exists( 'is_product' )
-			&& ( is_cart() || is_checkout() || is_product() );
-		if ( $woo_pages_style ) {
+		if ( function_exists( 'is_cart' ) && function_exists( 'is_checkout' ) && ( is_cart() || is_checkout() ) ) {
 			wp_enqueue_style(
 				'fipos-woocommerce',
 				$url . 'css/woocommerce.css',
 				array(),
 				$ver
 			);
-		}
-
-		if ( function_exists( 'is_cart' ) && function_exists( 'is_checkout' ) && ( is_cart() || is_checkout() ) ) {
 			wp_enqueue_script(
 				'fipos-cart-format',
 				$url . 'js/cart-format.js',
