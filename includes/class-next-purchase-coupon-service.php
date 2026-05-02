@@ -166,6 +166,13 @@ class Next_Purchase_Coupon_Service {
 			);
 		}
 
+		$order_id = (int) $order->get_id();
+		$existing = self::find_existing_coupon_for_order( $order_id );
+		if ( null !== $existing ) {
+			self::record_order_coupon_meta( $order_id, (string) $existing['code'], (int) $existing['coupon_id'] );
+			return $existing;
+		}
+
 		$email = self::sanitize_order_email_for_coupon( $order );
 		if ( '' === $email ) {
 			return null;
@@ -189,8 +196,10 @@ class Next_Purchase_Coupon_Service {
 			}
 			$new_id = self::persist_new_coupon( $order->get_id(), $code_candidate, $email, $required_map );
 			if ( $new_id > 0 ) {
+				$saved_coupon = new WC_Coupon( $new_id );
+				$saved_code   = $saved_coupon->get_id() > 0 ? (string) $saved_coupon->get_code() : $code_candidate;
 				return array(
-					'code'      => $code_candidate,
+					'code'      => $saved_code,
 					'coupon_id' => $new_id,
 				);
 			}
@@ -360,6 +369,74 @@ class Next_Purchase_Coupon_Service {
 	}
 
 	/**
+	 * Finds an already generated next-purchase coupon for an order. This protects
+	 * POS checkout where status hooks, email hooks, and REST response generation can
+	 * touch the same order before a local WC_Order instance sees freshly saved meta.
+	 *
+	 * @param int $order_id Order id.
+	 * @return array{code:string,coupon_id:int}|null
+	 */
+	private static function find_existing_coupon_for_order( $order_id ) {
+		$order_id = absint( $order_id );
+		if ( $order_id <= 0 || ! function_exists( 'get_posts' ) ) {
+			return null;
+		}
+
+		$ids = get_posts(
+			array(
+				'post_type'              => 'shop_coupon',
+				'post_status'            => 'any',
+				'fields'                 => 'ids',
+				'posts_per_page'         => 1,
+				'orderby'                => 'ID',
+				'order'                  => 'ASC',
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'update_post_term_cache' => false,
+				'meta_query'             => array(
+					'relation' => 'AND',
+					array(
+						'key'   => self::META_COUPON_FLAG,
+						'value' => 'yes',
+					),
+					array(
+						'key'   => self::META_COUPON_EARNED_ORDER,
+						'value' => (string) $order_id,
+					),
+				),
+			)
+		);
+		if ( empty( $ids ) ) {
+			return null;
+		}
+
+		$coupon_id = (int) $ids[0];
+		$coupon    = new WC_Coupon( $coupon_id );
+		if ( $coupon->get_id() <= 0 ) {
+			return null;
+		}
+
+		return array(
+			'code'      => (string) $coupon->get_code(),
+			'coupon_id' => $coupon_id,
+		);
+	}
+
+	/**
+	 * @param int    $order_id  Order id.
+	 * @param string $code      Coupon code.
+	 * @param int    $coupon_id Coupon id.
+	 */
+	private static function record_order_coupon_meta( $order_id, $code, $coupon_id ) {
+		$fresh = wc_get_order( $order_id );
+		if ( $fresh instanceof WC_Order ) {
+			$fresh->update_meta_data( self::META_ORDER_COUPON_CODE, $code );
+			$fresh->update_meta_data( self::META_ORDER_COUPON_ID, (string) absint( $coupon_id ) );
+			$fresh->save();
+		}
+	}
+
+	/**
 	 * @param int                          $order_id Order id.
 	 * @param string                       $code     Coupon code.
 	 * @param string                       $email    Restricted lowercase email address.
@@ -369,6 +446,12 @@ class Next_Purchase_Coupon_Service {
 		$order_id = absint( $order_id );
 
 		try {
+			$existing = self::find_existing_coupon_for_order( $order_id );
+			if ( null !== $existing ) {
+				self::record_order_coupon_meta( $order_id, (string) $existing['code'], (int) $existing['coupon_id'] );
+				return (int) $existing['coupon_id'];
+			}
+
 			$coupon = new WC_Coupon();
 			$coupon->set_status( 'publish' );
 			$coupon->set_code( $code );
@@ -401,12 +484,7 @@ class Next_Purchase_Coupon_Service {
 				return 0;
 			}
 
-			$fresh = wc_get_order( $order_id );
-			if ( $fresh instanceof WC_Order ) {
-				$fresh->update_meta_data( self::META_ORDER_COUPON_CODE, $code );
-				$fresh->update_meta_data( self::META_ORDER_COUPON_ID, (string) absint( $coupon_id ) );
-				$fresh->save();
-			}
+			self::record_order_coupon_meta( $order_id, $code, $coupon_id );
 
 			return (int) $coupon_id;
 		} catch ( \Throwable $e ) {
