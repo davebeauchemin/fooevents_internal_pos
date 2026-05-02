@@ -28,6 +28,74 @@ async function invalidateAndRefetchEvent( qc, eventId ) {
 	await qc.invalidateQueries( { predicate: validateEventQuery } );
 }
 
+function sameId( a, b ) {
+	return String( a ?? '' ).trim() === String( b ?? '' ).trim();
+}
+
+function removeSlotDateFromEventDetail( data, variables ) {
+	if ( ! data || ! Array.isArray( data.dates ) || ! variables ) {
+		return data;
+	}
+	const ymd = typeof variables.ymd === 'string' ? variables.ymd.trim() : '';
+	let changed = false;
+	const nextDates = data.dates
+		.map( ( day ) => {
+			if ( ! day || ! Array.isArray( day.slots ) ) {
+				return day;
+			}
+			if ( ymd && String( day.date ?? '' ).trim() !== ymd ) {
+				return day;
+			}
+			const nextSlots = day.slots.filter(
+				( slot ) =>
+					!(
+						sameId( slot?.id, variables.slotId )
+						&& sameId( slot?.dateId, variables.dateId )
+					),
+			);
+			if ( nextSlots.length === day.slots.length ) {
+				return day;
+			}
+			changed = true;
+			return { ...day, slots: nextSlots };
+		} )
+		.filter( ( day ) => ! day || ! Array.isArray( day.slots ) || day.slots.length > 0 );
+
+	return changed ? { ...data, dates: nextDates } : data;
+}
+
+function removeSlotDateFromDashboard( data, variables, eventId ) {
+	if ( ! data || ! Array.isArray( data.events ) || ! variables ) {
+		return data;
+	}
+	const ymd = typeof variables.ymd === 'string' ? variables.ymd.trim() : '';
+	if ( ymd && String( data.date ?? '' ).trim() !== ymd ) {
+		return data;
+	}
+	let changed = false;
+	const nextEvents = data.events
+		.map( ( ev ) => {
+			if ( ! ev || ! Array.isArray( ev.slots ) || ! sameId( ev.eventId, eventId ) ) {
+				return ev;
+			}
+			const nextSlots = ev.slots.filter(
+				( slot ) =>
+					!(
+						sameId( slot?.id, variables.slotId )
+						&& sameId( slot?.dateId, variables.dateId )
+					),
+			);
+			if ( nextSlots.length === ev.slots.length ) {
+				return ev;
+			}
+			changed = true;
+			return { ...ev, slots: nextSlots };
+		} )
+		.filter( ( ev ) => ! ev || ! Array.isArray( ev.slots ) || ev.slots.length > 0 );
+
+	return changed ? { ...data, events: nextEvents } : data;
+}
+
 export function useEvents() {
 	return useQuery( {
 		queryKey: [ 'internalpos', 'events' ],
@@ -195,6 +263,49 @@ export function useDeleteManualSlot( eventId ) {
 			return restFetch( url, {
 				method: 'DELETE',
 			} );
+		},
+		onMutate: async ( variables ) => {
+			const normalizedEventId = String( eventId ?? '' ).trim();
+			const affectedQuery = ( query ) =>
+				query.queryKey?.[ 0 ] === 'internalpos'
+				&& (
+					(
+						query.queryKey?.[ 1 ] === 'event'
+						&& String( query.queryKey?.[ 2 ] ?? '' ).trim() === normalizedEventId
+					)
+					|| (
+						query.queryKey?.[ 1 ] === 'validateEvent'
+						&& String( query.queryKey?.[ 2 ] ?? '' ).trim() === normalizedEventId
+					)
+					|| query.queryKey?.[ 1 ] === 'dashboard'
+				);
+
+			await qc.cancelQueries( { predicate: affectedQuery } );
+
+			const snapshots = qc.getQueriesData( { predicate: affectedQuery } );
+			for ( const [ queryKey, data ] of snapshots ) {
+				if ( queryKey?.[ 1 ] === 'dashboard' ) {
+					qc.setQueryData(
+						queryKey,
+						removeSlotDateFromDashboard( data, variables, eventId ),
+					);
+					continue;
+				}
+				qc.setQueryData(
+					queryKey,
+					removeSlotDateFromEventDetail( data, variables ),
+				);
+			}
+
+			return { snapshots };
+		},
+		onError: ( _error, _variables, context ) => {
+			if ( ! Array.isArray( context?.snapshots ) ) {
+				return;
+			}
+			for ( const [ queryKey, data ] of context.snapshots ) {
+				qc.setQueryData( queryKey, data );
+			}
 		},
 		onSuccess: async () => {
 			await invalidateAndRefetchEvent( qc, eventId );

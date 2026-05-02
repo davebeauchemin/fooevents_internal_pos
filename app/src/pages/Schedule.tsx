@@ -373,6 +373,51 @@ export default function Schedule() {
 				</p>
 			</div>
 
+			<Card>
+				<CardHeader>
+					<CardTitle>Defaults</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="flex flex-wrap items-end gap-4">
+						<div className="space-y-2">
+							<Label>Session length</Label>
+							<Select
+								value={ String( sessionMinutes ) }
+								onValueChange={ ( v ) => setSessionMinutes( parseInt( v, 10 ) ) }
+							>
+								<SelectTrigger className="w-[180px]">
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{ SESSION_OPTIONS.map( ( n ) => (
+										<SelectItem key={ n } value={ String( n ) }>
+											{ n } min
+										</SelectItem>
+									) ) }
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor="capacity">Capacity</Label>
+							<p className="text-muted-foreground text-xs">0 = unlimited</p>
+							<Input
+								id="capacity"
+								type="number"
+								min={ 0 }
+								className="w-32"
+								value={ capacity }
+								onChange={ ( e ) => setCapacity( parseInt( e.target.value, 10 ) || 0 ) }
+							/>
+						</div>
+					</div>
+					<p className="text-muted-foreground text-xs">
+						Each block can have a <strong>schedule name</strong> (e.g. Regular, Late) stored as the
+						slot label; the storefront shows name plus time. Leave the name empty to use the
+						time only. Use multiple blocks for different date ranges or hours.
+					</p>
+				</CardContent>
+			</Card>
+
 			<>
 					<Card className="border-primary/30">
 						<CardHeader className="pb-2">
@@ -454,51 +499,6 @@ export default function Schedule() {
 
 					<Separator />
 			</>
-
-			<Card>
-				<CardHeader>
-					<CardTitle>Defaults</CardTitle>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="flex flex-wrap gap-4">
-						<div className="space-y-2">
-							<Label>Session length</Label>
-							<Select
-								value={ String( sessionMinutes ) }
-								onValueChange={ ( v ) => setSessionMinutes( parseInt( v, 10 ) ) }
-							>
-								<SelectTrigger className="w-[180px]">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{ SESSION_OPTIONS.map( ( n ) => (
-										<SelectItem key={ n } value={ String( n ) }>
-											{ n } min
-										</SelectItem>
-									) ) }
-								</SelectContent>
-							</Select>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="capacity">Capacity</Label>
-							<p className="text-muted-foreground text-xs">0 = unlimited</p>
-							<Input
-								id="capacity"
-								type="number"
-								min={ 0 }
-								className="w-32"
-								value={ capacity }
-								onChange={ ( e ) => setCapacity( parseInt( e.target.value, 10 ) || 0 ) }
-							/>
-						</div>
-					</div>
-					<p className="text-muted-foreground text-xs">
-						Each block can have a <strong>schedule name</strong> (e.g. Regular, Late) stored as the
-						slot label; the storefront shows name plus time. Leave the name empty to use the
-						time only. Use multiple blocks for different date ranges or hours.
-					</p>
-				</CardContent>
-			</Card>
 
 			{ blocks.map( ( b, idx ) => (
 				<Card key={ b.id }>

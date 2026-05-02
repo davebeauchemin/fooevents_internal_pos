@@ -487,14 +487,15 @@ function EventOverviewDeleteConfirmDialog( {
 		if ( ! pendingDelete ) {
 			return;
 		}
+		const target = pendingDelete;
+		clearPending();
 		try {
 			await delManual.mutateAsync( {
-				slotId: pendingDelete.slotId,
-				dateId: pendingDelete.dateId,
-				ymd: pendingDelete.ymd,
+				slotId: target.slotId,
+				dateId: target.dateId,
+				ymd: target.ymd,
 			} );
 			toast.success( 'Slot removed.' );
-			clearPending();
 		} catch ( e ) {
 			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
 		}
