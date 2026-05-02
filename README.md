@@ -32,7 +32,7 @@ Use a [WordPress Application Password](https://make.wordpress.org/core/2020/11/0
 
 ### How it works
 
-- **Production** (virtual route `/internal-pos/`): `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
+- **Production** (virtual route `/internal-pos/`): the browser path stays on `/internal-pos/`; the React app uses **hash routes** (e.g. `https://example.com/internal-pos/#/calendar`) so navigation does not replace the URL with `/`. `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
 - **Local Vite**: `VITE_WORDPRESS_URL=/wp-json/` + proxy + App Password; `X-WP-Nonce` is omitted when unset.
 
 ### Validate the Application Password (bypass the proxy)
