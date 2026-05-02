@@ -1,6 +1,6 @@
 <?php
 /**
- * WooCommerce submenu: redirect to full-screen Internal POS page.
+ * Top-level wp-admin menu: open full-screen Internal POS at /internal-pos/.
  *
  * @package FooEventsInternalPOS
  */
@@ -22,24 +22,25 @@ class Admin_Menu {
 	}
 
 	/**
-	 * Add submenu under WooCommerce.
+	 * Main menu entry (cashiers + shop managers via Access_Helper::CAP_ACCESS_MENU).
 	 */
 	public function register_menu() {
-		add_submenu_page(
-			'woocommerce',
+		add_menu_page(
 			__( 'Internal POS', 'fooevents-internal-pos' ),
 			__( 'Internal POS', 'fooevents-internal-pos' ),
-			'manage_woocommerce',
+			Access_Helper::CAP_ACCESS_MENU,
 			'fooevents-internal-pos',
-			array( $this, 'redirect_to_pos' )
+			array( $this, 'redirect_to_pos' ),
+			'dashicons-cart',
+			56
 		);
 	}
 
 	/**
-	 * Redirect to the frontend app page.
+	 * Redirect to the frontend app (virtual route).
 	 */
 	public function redirect_to_pos() {
-		wp_safe_redirect( esc_url( home_url( '/' . FOOEVENTS_INTERNAL_POS_PAGE_SLUG . '/' ) ) );
+		wp_safe_redirect( esc_url( Access_Helper::get_pos_front_url() ) );
 		exit;
 	}
 }

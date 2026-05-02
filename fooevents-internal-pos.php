@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       FooEvents Internal POS
  * Plugin URI:         https://github.com/TBD/fooevents-internal-pos
- * Description:        Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
- * Version:            0.1.2.0
+ * Description:        Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
+ * Version:            0.1.2.1
  * Requires at least:  6.0
  * Requires PHP:       7.4
  * Author:             Module Rouge
@@ -21,12 +21,16 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.1.20' );
+define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.2.1' );
 define( 'FOOEVENTS_INTERNAL_POS_FILE', __FILE__ );
 define( 'FOOEVENTS_INTERNAL_POS_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FOOEVENTS_INTERNAL_POS_URL', plugin_dir_url( __FILE__ ) );
 define( 'FOOEVENTS_INTERNAL_POS_PAGE_SLUG', 'internal-pos' );
-define( 'FOOEVENTS_INTERNAL_POS_PAGE_OPTION', 'fooevents_internal_pos_page' );
+/** Query var for the virtual POS route (not a WordPress Page). */
+define( 'FOOEVENTS_INTERNAL_POS_QUERY_VAR', 'fooevents_internal_pos' );
+/** Bump when rewrite rules change; triggers a one-time flush on existing installs. */
+define( 'FOOEVENTS_INTERNAL_POS_REWRITE_VERSION', '2' );
+define( 'FOOEVENTS_INTERNAL_POS_REWRITE_VERSION_OPTION', 'fooevents_internal_pos_rewrite_version' );
 
 // Autoload includes.
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-activator.php';
@@ -51,6 +55,8 @@ function fooevents_internal_pos_init() {
 	if ( ! class_exists( 'WooCommerce' ) || ! class_exists( 'FooEvents_Bookings' ) ) {
 		return;
 	}
+
+	\FooEvents_Internal_POS\Access_Helper::init();
 
 	( new \FooEvents_Internal_POS\Admin_Menu() )->init();
 	( new \FooEvents_Internal_POS\Frontend_Page() )->init();

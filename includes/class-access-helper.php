@@ -14,6 +14,40 @@ defined( 'ABSPATH' ) || exit;
  */
 final class Access_Helper {
 
+	/**
+	 * Synthetic capability for wp-admin menu visibility (granted via user_has_cap bridge).
+	 */
+	public const CAP_ACCESS_MENU = 'fooevents_internal_pos_access';
+
+	/**
+	 * Register capability bridge for admin menus.
+	 */
+	public static function init(): void {
+		add_filter( 'user_has_cap', array( self::class, 'grant_menu_cap' ), 10, 4 );
+	}
+
+	/**
+	 * @param array<string, bool> $allcaps All capabilities the user has.
+	 * @param string[]              $caps    Capabilities being checked.
+	 * @param array                 $args    Additional arguments.
+	 * @param \WP_User              $user    User object.
+	 * @return array<string, bool>
+	 */
+	public static function grant_menu_cap( array $allcaps, $caps, $args, $user ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter
+		if ( ! is_array( $caps ) || ! in_array( self::CAP_ACCESS_MENU, $caps, true ) ) {
+			return $allcaps;
+		}
+		if ( ! $user instanceof \WP_User ) {
+			return $allcaps;
+		}
+		$pos = ! empty( $user->allcaps['publish_fooeventspos'] );
+		$woo = ! empty( $user->allcaps['manage_woocommerce'] );
+		if ( $pos || $woo ) {
+			$allcaps[ self::CAP_ACCESS_MENU ] = true;
+		}
+		return $allcaps;
+	}
+
 	public static function can_use_pos(): bool {
 		return is_user_logged_in()
 			&& (
@@ -38,6 +72,26 @@ final class Access_Helper {
 	}
 
 	/**
+	 * Canonical front URL for the POS app (virtual route, pretty permalinks).
+	 *
+	 * @return string
+	 */
+	public static function get_pos_front_url(): string {
+		return home_url( '/' . FOOEVENTS_INTERNAL_POS_PAGE_SLUG . '/' );
+	}
+
+	/**
+	 * Path for Router basename (leading slash, no trailing slash except root).
+	 *
+	 * @return string
+	 */
+	public static function get_pos_basename_path(): string {
+		$path = (string) wp_parse_url( self::get_pos_front_url(), PHP_URL_PATH );
+		$path = untrailingslashit( $path );
+		return '' === $path ? '/' : $path;
+	}
+
+	/**
 	 * SPA bootstrap for the React app (capabilities, user, URLs).
 	 *
 	 * @return array<string, mixed>
@@ -50,12 +104,9 @@ final class Access_Helper {
 		);
 
 		if ( is_user_logged_in() ) {
-			$user          = wp_get_current_user();
-			$internal_page = (int) get_option( FOOEVENTS_INTERNAL_POS_PAGE_OPTION, 0 );
-			$pos_url       = $internal_page > 0
-				? get_permalink( $internal_page )
-				: home_url( '/' . FOOEVENTS_INTERNAL_POS_PAGE_SLUG . '/' );
-			$redirect      = is_string( $pos_url ) ? $pos_url : home_url( '/' );
+			$user     = wp_get_current_user();
+			$pos_url  = self::get_pos_front_url();
+			$redirect = $pos_url;
 
 			$out['currentUser'] = array(
 				'name'      => $user->display_name,

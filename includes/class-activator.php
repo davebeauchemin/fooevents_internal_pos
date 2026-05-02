@@ -1,6 +1,6 @@
 <?php
 /**
- * Activation: create the Internal POS page.
+ * Activation: register virtual /internal-pos/ rewrite and flush rules.
  *
  * @package FooEventsInternalPOS
  */
@@ -15,31 +15,17 @@ defined( 'ABSPATH' ) || exit;
 class Activator {
 
 	/**
+	 * Legacy option from versions that created a WordPress Page for POS.
+	 */
+	const LEGACY_PAGE_OPTION = 'fooevents_internal_pos_page';
+
+	/**
 	 * Run on plugin activation.
 	 */
 	public static function activate() {
-		$slug  = FOOEVENTS_INTERNAL_POS_PAGE_SLUG;
-		$title = __( 'Internal POS', 'fooevents-internal-pos' );
-
-		$existing = get_page_by_path( $slug, OBJECT, 'page' );
-		$page_id  = 0;
-		if ( $existing ) {
-			$page_id = (int) $existing->ID;
-		} else {
-			$page_id = (int) wp_insert_post(
-				array(
-					'post_title'   => $title,
-					'post_name'    => $slug,
-					'post_status'  => 'publish',
-					'post_type'    => 'page',
-					'post_content' => '',
-				)
-			);
-		}
-
-		if ( $page_id > 0 && ! is_wp_error( $page_id ) ) {
-			update_option( FOOEVENTS_INTERNAL_POS_PAGE_OPTION, $page_id );
-		}
+		Frontend_Page::register_rewrite_rules();
 		flush_rewrite_rules( false );
+		update_option( FOOEVENTS_INTERNAL_POS_REWRITE_VERSION_OPTION, FOOEVENTS_INTERNAL_POS_REWRITE_VERSION );
+		delete_option( self::LEGACY_PAGE_OPTION );
 	}
 }

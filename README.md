@@ -1,6 +1,6 @@
 # FooEvents Internal POS (MVP 1)
 
-WordPress plugin: WooCommerce > **Internal POS** → full-screen React + REST (`internalpos/v1`).
+WordPress plugin: wp-admin top-level **Internal POS** → full-screen React at **`/internal-pos/`** (virtual route) + REST (`internalpos/v1`).
 
 ## Requirements
 
@@ -32,7 +32,7 @@ Use a [WordPress Application Password](https://make.wordpress.org/core/2020/11/0
 
 ### How it works
 
-- **Production** (WordPress page `/internal-pos/`): `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
+- **Production** (virtual route `/internal-pos/`): `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
 - **Local Vite**: `VITE_WORDPRESS_URL=/wp-json/` + proxy + App Password; `X-WP-Nonce` is omitted when unset.
 
 ### Validate the Application Password (bypass the proxy)
@@ -46,7 +46,7 @@ curl -i -u "USER:PASS" "https://SITE/wp-json/internalpos/v1/events"
 
 - **200** and JSON — credentials and route are fine. If the browser still shows 400, the Vite proxy was forwarding headers; the dev server strips `Cookie` / `Origin` / `Referer` to reduce WAF blocks — check the terminal for `[proxy →]` and `[proxy ←]` lines.
 - **401** — wrong user/password or invalid Application Password. Create a new app password in WP and update `.env.local`.
-- **403** — user lacks `manage_woocommerce`.
+- **403** — user lacks `manage_woocommerce` and `publish_fooeventspos` (POS cashier), or REST route is blocked.
 - **400** on curl too — host/CDN (try from another network, or check Cloudflare / security plugin rules for REST).
 
 ### Plugin-in-`wp-content` workflow (optional)
@@ -70,5 +70,5 @@ After upgrading to **0.1.1.4+**, if you used the schedule generator before that 
 - `GET /wp-json/internalpos/v1/events`
 - `GET /wp-json/internalpos/v1/events/{id}`
 - `POST /wp-json/internalpos/v1/availability` — JSON: `{ "eventId", "slotId", "dateId", "qty" }`
-- **Production** auth: logged-in user with `manage_woocommerce` + `X-WP-Nonce` (set by the page template)
+- **Production** auth: logged-in user with `publish_fooeventspos` or `manage_woocommerce` + `X-WP-Nonce` (set by the page template)
 - **Local dev** auth: same capability via Application Password (Basic auth on the proxied request)

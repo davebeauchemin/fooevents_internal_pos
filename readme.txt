@@ -4,15 +4,15 @@ Tags: fooevents, woocommerce, pos, bookings
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.1.1.20
+Stable tag: 0.1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
+Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
 
 == Description ==
 
-Internal point-of-sale for FooEvents Bookings, embedded in WooCommerce admin. Shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
+Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
 
 Regional reporting (postal codes): checkout captures a billing postal/ZIP code for each POS booking. WooCommerce stores this in the native billing_postcode field (postmeta key _billing_postcode), so POS and storefront orders can be analyzed together. Internal POS orders also set order meta _fooevents_internal_pos_postal_code (same value) and _fooevents_internal_pos_postal_code_source = manual_pos to identify cashier-entered values. Values are trimmed and sanitized only (no enforced format).
 
@@ -30,10 +30,14 @@ Alter bundle tier rows programmatically via `fooevents_internal_pos_bundle_tiers
 
 1. Install WooCommerce, FooEvents, and FooEvents Bookings.
 2. Upload the plugin or clone into wp-content/plugins/fooevents_internal_pos
-3. Activate. A published page is created with slug "internal-pos".
+3. Activate. The POS app is served at the virtual URL `/internal-pos/` (rewrite rules are registered on activation).
 4. For Git Updater: set the GitHub Plugin URI in the main plugin file header, push public repo, install Git Updater on the site, bump Version on each release.
 
 == Changelog ==
+
+= 0.1.2.1 =
+* Admin: top-level **Internal POS** menu (visible to shop managers and FooEvents POS cashiers).
+* Front: POS is a virtual `/internal-pos/` route (no WordPress Page required); deep links under `/internal-pos/*` load the SPA.
 
 = 0.1.1.20 =
 * POS checkout: WooCommerce coupons—auto-apply codes via `fooevents_internal_pos_auto_coupon_codes` filter; manual `couponCodes` on checkout preview and bookings; validated amounts and coupon lines persisted on POS orders via `$order->apply_coupon()` / WooCommerce totals.
