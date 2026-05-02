@@ -106,13 +106,14 @@ export default function Checkout() {
 		() => parseCouponCodesInput( couponInput ),
 		[ couponInput ],
 	);
+	const [ email, setEmail ] = useState( '' );
 
 	const {
 		data: previewRaw,
 		isLoading: previewLoading,
 		isFetching: previewFetching,
 		error: previewError,
-	} = useCheckoutPreview( items.length ? previewLines : null, couponCodesForApi );
+	} = useCheckoutPreview( items.length ? previewLines : null, couponCodesForApi, email.trim() );
 
 	const preview = previewRaw as CheckoutPreviewResponse | undefined;
 
@@ -125,7 +126,6 @@ export default function Checkout() {
 	const { data: paymentMethods, isLoading: paymentMethodsLoading } = usePaymentMethods();
 	const [ first, setFirst ] = useState( '' );
 	const [ last, setLast ] = useState( '' );
-	const [ email, setEmail ] = useState( '' );
 	const [ postalCode, setPostalCode ] = useState( '' );
 	const [ paymentMethodKey, setPaymentMethodKey ] = useState( '' );
 	const [ checkInNow, setCheckInNow ] = useState( false );

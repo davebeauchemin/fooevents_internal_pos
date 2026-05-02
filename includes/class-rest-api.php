@@ -399,7 +399,16 @@ class Rest_API {
 			return $coupon_parse;
 		}
 
-		$out = $this->booking_checkout->preview_checkout_lines( $lines_snake, is_array( $coupon_parse ) ? $coupon_parse : array() );
+		$billing_email = '';
+		if ( isset( $params['billingEmail'] ) ) {
+			$billing_email = sanitize_email( trim( wp_unslash( (string) $params['billingEmail'] ) ) );
+		}
+
+		$out = $this->booking_checkout->preview_checkout_lines(
+			$lines_snake,
+			is_array( $coupon_parse ) ? $coupon_parse : array(),
+			$billing_email
+		);
 		if ( is_wp_error( $out ) ) {
 			return $out;
 		}

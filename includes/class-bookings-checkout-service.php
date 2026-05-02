@@ -277,14 +277,33 @@ class Bookings_Checkout_Service {
 	}
 
 	/**
+	 * Set session customer billing email for POS coupon validation (e.g. email-restricted coupons).
+	 *
+	 * @param string $billing_email Email from POS checkout; empty or invalid values are ignored.
+	 */
+	private function apply_pos_checkout_billing_email_to_wc_session( $billing_email ) {
+		$billing_email = sanitize_email( strtolower( trim( (string) $billing_email ) ) );
+		if ( '' === $billing_email || ! is_email( $billing_email ) ) {
+			return;
+		}
+
+		if ( function_exists( 'WC' ) && WC()->customer instanceof \WC_Customer ) {
+			WC()->customer->set_billing_email( $billing_email );
+			if ( method_exists( WC()->customer, 'save' ) ) {
+				WC()->customer->save();
+			}
+		}
+	}
+
+	/**
 	 * Apply configured auto coupons + cashier manual coupons to the hydrated cart session.
 	 *
 	 * @param \WC_Cart $cart Cart.
 	 * @param array    $cashier_manual_sanitized Sanitized cashier coupon codes only.
-	 * @param array<int, string> Manual codes for detecting blocking rejects.
+	 * @param string   $billing_email POS checkout attendee/billing email for coupon email checks (optional).
 	 * @return array{coupon_errors:array<int,array{code:string,manual:bool,message:string}>}
 	 */
-	private function attempt_pos_cart_discounts_for_session( $cart, array $cashier_manual_sanitized ) {
+	private function attempt_pos_cart_discounts_for_session( $cart, array $cashier_manual_sanitized, $billing_email = '' ) {
 		Coupon_Rules::set_pos_internal_session( true );
 		try {
 			$coupon_errors = array();
@@ -296,6 +315,8 @@ class Bookings_Checkout_Service {
 			if ( ! $cart instanceof \WC_Cart ) {
 				return array( 'coupon_errors' => $coupon_errors );
 			}
+
+			$this->apply_pos_checkout_billing_email_to_wc_session( $billing_email );
 
 			/**
 			 * Pre-bundle totals populate line item prices/taxes before fee tier packing.
@@ -485,9 +506,10 @@ class Bookings_Checkout_Service {
 	 *
 	 * @param array<int, array{event_id:int,slot_id:string,date_id:string,qty:int}> $lines Booking lines.
 	 * @param array<int, string|mixed>                                                $coupon_codes_manual Cashier coupons (in addition to auto coupons from filter).
+	 * @param string                                                                  $billing_email POS checkout email for WooCommerce coupon email restrictions (optional).
 	 * @return array|WP_Error
 	 */
-	public function preview_checkout_lines( array $lines, array $coupon_codes_manual = array() ) {
+	public function preview_checkout_lines( array $lines, array $coupon_codes_manual = array(), $billing_email = '' ) {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_load_cart' ) ) {
 			return new WP_Error( 'fooevents_wc', __( 'WooCommerce is not available.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
@@ -515,7 +537,7 @@ class Bookings_Checkout_Service {
 				return $hydrate_err;
 			}
 
-			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $manual_sanitized );
+			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $manual_sanitized, $billing_email );
 			$coupon_extra = $this->build_rest_coupon_payload_from_cart( WC()->cart, $coupon_apply['coupon_errors'] );
 			$bundle_lines_rest = Coupon_Rules::compute_bundle_fee_lines(
 				Coupon_Rules::total_booking_ticket_qty_in_cart( WC()->cart ),
@@ -813,7 +835,7 @@ class Bookings_Checkout_Service {
 				);
 			}
 
-			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $coupon_codes_manual );
+			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $coupon_codes_manual, $em );
 			foreach ( $coupon_apply['coupon_errors'] as $row ) {
 				if ( ! empty( $row['manual'] ) ) {
 					return new WP_Error(

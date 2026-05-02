@@ -66,17 +66,19 @@ export function usePaymentMethods() {
  *
  * @param {Array<{eventId:number,slotId:string,dateId:string,qty:number}>|null|undefined} lines
  * @param {string[]|undefined} couponCodes - Cashier coupon codes; auto-coupons are applied server-side via filter.
+ * @param {string|undefined} billingEmail - Checkout email for WooCommerce email-restricted coupon validation.
  */
-export function useCheckoutPreview( lines, couponCodes ) {
+export function useCheckoutPreview( lines, couponCodes, billingEmail = '' ) {
 	const codes = Array.isArray( couponCodes ) ? couponCodes : [];
-	const key = lines?.length ? JSON.stringify( lines ) + '::' + JSON.stringify( codes ) : '';
+	const email = typeof billingEmail === 'string' ? billingEmail.trim() : '';
+	const key = lines?.length ? JSON.stringify( lines ) + '::' + JSON.stringify( codes ) + '::' + email : '';
 	return useQuery( {
 		queryKey: [ 'internalpos', 'checkoutPreview', key ],
 		queryFn: ( { signal } ) =>
 			restFetch( `${ prefix }/checkout/preview`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify( { lines, couponCodes: codes } ),
+				body: JSON.stringify( { lines, couponCodes: codes, billingEmail: email } ),
 				signal,
 			} ),
 		enabled: Boolean( lines?.length ),
