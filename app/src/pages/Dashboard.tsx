@@ -38,7 +38,7 @@ import {
 	defaultAccordionHourKey,
 	formatSlotTime,
 	groupSlotsByHour,
-	hidePastHourBucketsForToday,
+	hourBucketIsPastForToday,
 	hourRangeTitle,
 	hourRemainingSpotsLabel,
 	slotMeetsTicketQuantity,
@@ -410,14 +410,6 @@ export default function Dashboard() {
 					<div className="min-w-0 space-y-6">
 					{ data.events.map( ( ev, i ) => {
 						const ticketQty = ticketQtyByEventId[ ev.eventId ] ?? 1;
-						const slotsForQty = ev.slots.filter( ( s ) =>
-							slotMeetsTicketQuantity(
-								data.date,
-								s.stock,
-								effectiveSiteTodayYmd,
-								ticketQty,
-							),
-						);
 						const hasAnyBookable = ev.slots.some( ( s ) =>
 							slotSelectable(
 								data.date,
@@ -476,24 +468,18 @@ export default function Dashboard() {
 											}
 										} }
 									/>
-									{ slotsForQty.length === 0 ? (
+									{ ev.slots.length === 0 ? (
 										<p className="text-muted-foreground text-sm">
 											{ hasAnyBookable
 												? `No slots available for ${ ticketQty } ticket${ ticketQty === 1 ? '' : 's' } on this day.`
 												: `No bookable slots on ${ displayYmd || 'this day' }.` }
 										</p>
 									) : ( () => {
-										const hourGroups = hidePastHourBucketsForToday(
-											groupSlotsByHour( slotsForQty ),
-											displayYmd,
-											effectiveSiteTodayYmd,
-										);
+										const hourGroups = groupSlotsByHour( ev.slots );
 										if ( hourGroups.length === 0 ) {
 											return (
 												<p className="text-muted-foreground text-sm">
-													{ displayYmd === effectiveSiteTodayYmd
-														? 'No upcoming time slots from the current hour onward today.'
-														: `No bookable slots on ${ displayYmd || 'this day' }.` }
+													No slots on { displayYmd || 'this day' }.
 												</p>
 											);
 										}
@@ -512,6 +498,11 @@ export default function Dashboard() {
 											>
 												{ hourGroups.map( ( g ) => {
 													const leftLabel = hourRemainingSpotsLabel( g.slots );
+													const isPastHour = hourBucketIsPastForToday(
+														g,
+														displayYmd,
+														effectiveSiteTodayYmd,
+													);
 													return (
 														<AccordionItem
 															key={ g.key }
@@ -523,10 +514,21 @@ export default function Dashboard() {
 																id={ `hour-${ ev.eventId }-${ g.key }` }
 															>
 																<span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 pr-2">
-																	<span className="shrink-0 font-mono text-sm">
+																	<span className={ cn(
+																		'shrink-0 font-mono text-sm',
+																		isPastHour && 'text-muted-foreground',
+																	) }>
 																		{ hourRangeTitle( g.hour ) }
 																	</span>
 																	<span className="flex shrink-0 flex-wrap items-center gap-2">
+																		{ isPastHour && (
+																			<Badge
+																				variant="secondary"
+																				className="text-xs"
+																			>
+																				Past
+																			</Badge>
+																		) }
 																		<Badge
 																			variant={
 																				leftLabel === 'Unlimited'
@@ -549,11 +551,13 @@ export default function Dashboard() {
 															<AccordionContent>
 																<div className="grid grid-cols-1 gap-2 pt-2 pl-0 sm:grid-cols-2 xl:grid-cols-3 sm:pl-1">
 																	{ g.slots.map( ( s ) => {
-																		const selectable = slotSelectable(
+																		const selectable = slotMeetsTicketQuantity(
 																			data.date,
 																			s.stock,
 																			effectiveSiteTodayYmd,
+																			ticketQty,
 																		);
+																		const disabled = isPastHour || ! selectable;
 																		const lineSel: POSSelection = {
 																			eventId: ev.eventId,
 																			eventTitle: ev.eventTitle,
@@ -573,10 +577,10 @@ export default function Dashboard() {
 																				key={ `${ s.id }-${ s.dateId }` }
 																				timeText={ formatSlotTime( s ) }
 																				stock={ s.stock }
-																				disabled={ ! selectable }
+																				disabled={ disabled }
 																				inCart={ inCart }
 																				onToggle={ () => {
-																					if ( ! selectable ) {
+																					if ( disabled ) {
 																						return;
 																					}
 																					toggleLine( lineSel, ticketQty );

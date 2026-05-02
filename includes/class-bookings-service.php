@@ -123,7 +123,7 @@ class Bookings_Service {
 
 	/**
 	 * FooEvents `$bookings->process_booking_options()` output keyed by slot id (before dateslot reshuffle).
-	 * Each slot's `add_date` keys match raw `{inner}_add_date` suffix digits.
+	 * Each slot's `add_date` keys match raw `{inner}_add_date` suffix identifiers (digits or FooEvents-style strings).
 	 *
 	 * @param int $product_id Product ID.
 	 * @return array<string,mixed>

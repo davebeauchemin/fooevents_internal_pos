@@ -136,6 +136,14 @@ export function hidePastHourBucketsForToday(
 	return groups.filter( ( g ) => g.hour >= currentHour );
 }
 
+export function hourBucketIsPastForToday(
+	group: Pick<HourSlotGroup, 'hour'>,
+	viewYmd: string,
+	siteTodayYmd: string,
+): boolean {
+	return viewYmd === siteTodayYmd && group.hour < new Date().getHours();
+}
+
 /**
  * Hour bucket (`g.key`) to open first: viewing “today” uses the browser’s local hour,
  * then next bucket ≥ that hour; other days opens the earliest hour group.
@@ -160,7 +168,7 @@ export function defaultAccordionHourKey(
 	if ( next ) {
 		return next.key;
 	}
-	return groups[ groups.length - 1 ].key;
+	return undefined;
 }
 
 export function hourRangeTitle( hour: number ) {

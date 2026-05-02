@@ -29,12 +29,15 @@ export default function SlotCartToggleButton( {
 	inCart,
 	onToggle,
 }: Props ) {
+	const availability = slotAvailabilityText( stock );
+	const full = stock !== null && stock !== undefined && stock <= 0;
+
 	return (
 		<button
 			type="button"
 			disabled={ disabled }
 			aria-pressed={ inCart && ! disabled }
-			aria-label={ `${ timeText }. ${ slotAvailabilityText( stock ) }.${ inCart && ! disabled ? ' In cart.' : '' }` }
+			aria-label={ `${ timeText }. ${ availability }.${ inCart && ! disabled ? ' In cart.' : '' }` }
 			onClick={ onToggle }
 			className={ cn(
 				'flex min-w-0 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition',
@@ -50,7 +53,9 @@ export default function SlotCartToggleButton( {
 				<span>{ timeText }</span>
 			</div>
 			<div className="text-muted-foreground flex shrink-0 items-center gap-2 tabular-nums text-xs">
-				<span>{ slotAvailabilityText( stock ) }</span>
+				<span className={ cn( full && 'text-destructive font-medium' ) }>
+					{ availability }
+				</span>
 				{ inCart && ! disabled ? (
 					<span
 						className="text-primary inline-flex size-6 items-center justify-center rounded-full border border-primary bg-primary/10"
