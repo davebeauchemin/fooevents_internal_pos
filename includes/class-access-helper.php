@@ -100,6 +100,21 @@ final class Access_Helper {
 	}
 
 	/**
+	 * Internal POS URL with optional subpath (e.g. validate → /internal-pos/validate/).
+	 *
+	 * @param string $subpath Route segment(s), no leading slash.
+	 * @return string
+	 */
+	public static function get_pos_subpath_url( string $subpath = '' ): string {
+		$base    = untrailingslashit( self::get_pos_front_url() );
+		$subpath = trim( $subpath, '/' );
+		if ( '' === $subpath ) {
+			return trailingslashit( $base . '/' );
+		}
+		return trailingslashit( $base . '/' . $subpath );
+	}
+
+	/**
 	 * Path for Router basename (leading slash, no trailing slash except root).
 	 *
 	 * @return string

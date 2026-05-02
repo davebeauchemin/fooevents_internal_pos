@@ -32,7 +32,7 @@ Use a [WordPress Application Password](https://make.wordpress.org/core/2020/11/0
 
 ### How it works
 
-- **Production** (virtual route `/internal-pos/`): the browser path stays on `/internal-pos/`; the React app uses **hash routes** (e.g. `https://example.com/internal-pos/#/calendar`) so navigation does not replace the URL with `/`. `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
+- **Production** (virtual route `/internal-pos/`): path-based client URLs (`/internal-pos/`, `/internal-pos/calendar`, `/internal-pos/checkout`, `/internal-pos/validate`, etc.). `localStorage.WORDPRESS_URL` + `X-WP-Nonce` from the PHP template; no App Password.
 - **Local Vite**: `VITE_WORDPRESS_URL=/wp-json/` + proxy + App Password; `X-WP-Nonce` is omitted when unset.
 
 ### Validate the Application Password (bypass the proxy)
@@ -71,4 +71,27 @@ After upgrading to **0.1.1.4+**, if you used the schedule generator before that 
 - `GET /wp-json/internalpos/v1/events/{id}`
 - `POST /wp-json/internalpos/v1/availability` — JSON: `{ "eventId", "slotId", "dateId", "qty" }`
 - **Production** auth: logged-in user with `publish_fooeventspos` or `manage_woocommerce` + `X-WP-Nonce` (set by the page template)
+
+## Staff login redirect (FooEvents POS cashier → Internal POS)
+
+WooCommerce / core login redirects for the **FooEvents POS cashier** role (`fooeventspos_cashier`) and a **check-in validator** role defaulting to slug `checked_in_validator` (adjust if your “Checked-in Validator” role uses a different key) go to Internal POS instead of the FooEvents POS front URL.
+
+- Cashiers → `/internal-pos/`
+- `checked_in_validator` or `checked-in-validator` → `/internal-pos/validate/`
+
+Override or extend with:
+
+```php
+add_filter( 'fooevents_internal_pos_login_redirect_rules', function ( $rules ) {
+	// Replace default validator slug if your role ID differs (see Users → role slug in a user-edit URL or a roles plugin).
+	$rules[1]['roles'] = array( 'your_validator_role_slug' );
+	return $rules;
+} );
+```
+
+Disable all such redirects:
+
+```php
+add_filter( 'fooevents_internal_pos_redirect_staff_to_internal_pos', '__return_false' );
+```
 - **Local dev** auth: same capability via Application Password (Basic auth on the proxied request)
