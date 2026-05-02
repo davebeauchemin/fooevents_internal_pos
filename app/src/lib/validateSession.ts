@@ -64,6 +64,108 @@ export type ValidateSessionDelta = {
 	autoCheckInToast: string;
 };
 
+/** Visual cue on the scanned ticket card (maps to Tailwind in the UI layer). */
+export type SessionTimingCueTone =
+	| 'match'
+	| 'future'
+	| 'past'
+	| 'wrong'
+	| 'warn'
+	| 'unknown'
+	| 'neutral';
+
+export type SessionTimingCue = {
+	/** When false, hide the large ticket timing panel (e.g. non-booking ticket). */
+	show: boolean;
+	tone: SessionTimingCueTone;
+	/** Short headline, e.g. “Past session”. */
+	label: string;
+	/** Supporting copy (often includes ~Xh Ym). */
+	detail: string;
+};
+
+/**
+ * Copy and tone for the prominent timing block on the ticket card.
+ *
+ * @param delta Output of `computeValidateSessionDelta`.
+ */
+export function getSessionTimingCue( delta: ValidateSessionDelta ): SessionTimingCue {
+	if ( delta.kind === 'idle' || delta.kind === 'non_booking' ) {
+		return {
+			show: false,
+			tone: 'neutral',
+			label: '',
+			detail: '',
+		};
+	}
+	switch ( delta.kind ) {
+		case 'match':
+			return {
+				show: true,
+				tone: 'match',
+				label: 'Current session',
+				detail:
+					delta.detailLine
+					|| 'This ticket matches the selected gate session.',
+			};
+		case 'earlier_session':
+			return {
+				show: true,
+				tone: 'past',
+				label: 'Past session',
+				detail:
+					delta.detailLine
+					|| delta.subtitleExtra
+					|| 'Earlier than the selected gate — wrong line or old ticket.',
+			};
+		case 'later_session':
+			return {
+				show: true,
+				tone: 'future',
+				label: 'Future session',
+				detail:
+					delta.detailLine
+					|| delta.subtitleExtra
+					|| 'Later than the selected gate — too early to admit.',
+			};
+		case 'wrong_event':
+			return {
+				show: true,
+				tone: 'wrong',
+				label: 'Wrong event',
+				detail:
+					delta.detailLine
+					|| 'This ticket is not for the event/session you selected at the gate.',
+			};
+		case 'no_selection':
+			return {
+				show: true,
+				tone: 'warn',
+				label: 'Select gate session',
+				detail:
+					delta.detailLine
+					|| delta.subtitleExtra
+					|| 'Choose the gate session above to compare this ticket.',
+			};
+		case 'unresolved':
+			return {
+				show: true,
+				tone: 'unknown',
+				label: 'Timing unclear',
+				detail:
+					delta.detailLine
+					|| 'Could not compare start times — verify date and slot labels manually.',
+			};
+		default:
+			return {
+				show: false,
+				tone: 'neutral',
+				label: '',
+				detail: '',
+			};
+	}
+}
+
 type TicketLike = {
 	WooCommerceEventsProductID?: string;
 	WooCommerceEventsBookingSlotID?: string | number;

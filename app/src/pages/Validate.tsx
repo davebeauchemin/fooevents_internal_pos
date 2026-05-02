@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { format, parseISO } from 'date-fns';
+import { addDays, format, parseISO } from 'date-fns';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
 	ArrowLeft,
@@ -33,6 +33,12 @@ import {
 	CardTitle,
 } from '@/components/ui/card';
 import {
+	Accordion,
+	AccordionContent,
+	AccordionItem,
+	AccordionTrigger,
+} from '@/components/ui/accordion';
+import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
@@ -52,20 +58,26 @@ import { Separator } from '@/components/ui/separator';
 import {
 	computeValidateSessionDelta,
 	flattenDashboardToSessionPicks,
+	getSessionTimingCue,
 	pickDefaultValidateSession,
 	readStoredValidateSessionPick,
 	ticketHasBookingSlotIds,
 	type BookingSessionPayload,
 	type DashboardDayResponse,
+	type SessionTimingCueTone,
 	type ValidateSessionDelta,
 	type ValidateSessionPick,
 	validateSessionOptionKey,
 	writeStoredValidateSessionPick,
 } from '@/lib/validateSession';
 import {
+	defaultAccordionHourKey,
 	formatSlotTime,
 	groupSlotsByHour,
 	hidePastHourBucketsForToday,
+	hourBucketIsPastForToday,
+	hourRangeTitle,
+	hourRemainingSpotsLabel,
 	slotSelectable,
 } from '@/lib/slotHourGrouping';
 import { cn } from '@/lib/utils';
@@ -128,6 +140,44 @@ function ticketLookupArg(
 		return fmt;
 	}
 	return String( ticket.WooCommerceEventsTicketID ?? '' ).trim();
+}
+
+/** Colored panel on the scanned ticket card for past / current / future vs selected gate. */
+function sessionTimingCuePanelClass( tone: SessionTimingCueTone ): string {
+	switch ( tone ) {
+		case 'match':
+			return cn(
+				'border-2 border-emerald-600/45 bg-emerald-500/12',
+				'text-emerald-950 dark:border-emerald-500/50 dark:bg-emerald-950/40 dark:text-emerald-50',
+			);
+		case 'future':
+			return cn(
+				'border-2 border-orange-500/45 bg-orange-500/12',
+				'text-orange-950 dark:border-orange-500/50 dark:bg-orange-950/40 dark:text-orange-50',
+			);
+		case 'past':
+			return cn(
+				'border-2 border-red-600/45 bg-red-500/12',
+				'text-red-950 dark:border-red-500/50 dark:bg-red-950/40 dark:text-red-50',
+			);
+		case 'wrong':
+			return cn(
+				'border-2 border-destructive/55 bg-destructive/15',
+				'text-destructive dark:border-destructive/60 dark:bg-destructive/20 dark:text-red-200',
+			);
+		case 'warn':
+			return cn(
+				'border-2 border-amber-600/45 bg-amber-500/12',
+				'text-amber-950 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-50',
+			);
+		case 'unknown':
+			return cn(
+				'border-2 border-muted-foreground/40 bg-muted/60',
+				'text-foreground',
+			);
+		default:
+			return 'border-2 border-border bg-muted/40 text-foreground';
+	}
 }
 
 /** Card border/background tone for main ticket Card. */
@@ -235,7 +285,7 @@ function ticketResultCopy( args: {
 					subtitle:
 						sd.detailLine
 						|| sd.subtitleExtra
-						|| 'Select the current gate session above to verify timing.',
+						|| 'Select the current gate session to verify timing.',
 				};
 			}
 			if ( sd?.offSession && sd.kind !== 'non_booking' ) {
@@ -700,13 +750,34 @@ export default function Validate() {
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
 	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
 
-	const [ validationDayYmd, setValidationDayYmd ] = useState( '' );
+	const [ gateScheduleDay, setGateScheduleDay ] = useState< 'today' | 'tomorrow' >( 'today' );
 	const [ siteTodayYmd, setSiteTodayYmd ] = useState< string | null >( null );
 	const [ selectedValidateSession, setSelectedValidateSession ] =
 		useState< ValidateSessionPick | null >( null );
 
-	const dashboardQuery = useDashboard( validationDayYmd );
+	const dashboardYmdParam = useMemo( () => {
+		if ( ! siteTodayYmd || ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
+			return '';
+		}
+		const base = parseISO( `${ siteTodayYmd }T12:00:00` );
+		return format(
+			addDays( base, gateScheduleDay === 'tomorrow' ? 1 : 0 ),
+			'yyyy-MM-dd',
+		);
+	}, [ siteTodayYmd, gateScheduleDay ] );
+
+	const dashboardQuery = useDashboard( dashboardYmdParam );
 	const dashboardData = dashboardQuery.data as DashboardDayResponse | undefined;
+
+	const tomorrowYmdPreview = useMemo( () => {
+		if ( ! siteTodayYmd || ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
+			return null;
+		}
+		return format(
+			addDays( parseISO( `${ siteTodayYmd }T12:00:00` ), 1 ),
+			'yyyy-MM-dd',
+		);
+	}, [ siteTodayYmd ] );
 
 	const dashboardEventsSig = useMemo( () => {
 		if ( ! dashboardData?.events ) {
@@ -728,6 +799,14 @@ export default function Validate() {
 		[ dashboardData ],
 	);
 
+	const effSiteTodayYmd = useMemo(
+		() =>
+			siteTodayYmd
+			?? dashboardData?.date
+			?? format( new Date(), 'yyyy-MM-dd' ),
+		[ siteTodayYmd, dashboardData?.date ],
+	);
+
 	const scanRegionId =
 		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
 
@@ -742,17 +821,54 @@ export default function Validate() {
 		[ ticket, selectedValidateSession ],
 	);
 
+	const sessionTimingCue = useMemo(
+		() => getSessionTimingCue( sessionDelta ),
+		[ sessionDelta ],
+	);
+
 	const autoCheckInHandledKeyRef = useRef< string >( '' );
+	const gateSlotsScrollRef = useRef< HTMLDivElement >( null );
+
+	const selectedGateSessionKey = useMemo(
+		() =>
+			selectedValidateSession
+				? validateSessionOptionKey( selectedValidateSession )
+				: null,
+		[ selectedValidateSession ],
+	);
 
 	/** Stable lookup for mutate (same logic as mutation body). */
 	const getLookupFromTicket = ( t?: FooTicketPayload ) =>
 		t ? ticketLookupArg( t, selectedTicketId ) : '';
 
 	useEffect( () => {
-		if ( validationDayYmd === '' && dashboardData?.date ) {
+		if ( ! selectedGateSessionKey ) {
+			return;
+		}
+		const root = gateSlotsScrollRef.current;
+		if ( ! root ) {
+			return;
+		}
+		const t = window.setTimeout( () => {
+			const nodes = root.querySelectorAll< HTMLElement >( '[data-gate-slot]' );
+			const el = Array.from( nodes ).find(
+				( node ) =>
+					node.getAttribute( 'data-gate-slot' ) === selectedGateSessionKey,
+			);
+			el?.scrollIntoView( {
+				behavior: 'smooth',
+				block: 'start',
+				inline: 'nearest',
+			} );
+		}, 120 );
+		return () => window.clearTimeout( t );
+	}, [ selectedGateSessionKey, dashboardData?.date, gateScheduleDay ] );
+
+	useEffect( () => {
+		if ( dashboardYmdParam === '' && dashboardData?.date ) {
 			setSiteTodayYmd( ( prev ) => prev ?? dashboardData.date );
 		}
-	}, [ validationDayYmd, dashboardData?.date ] );
+	}, [ dashboardYmdParam, dashboardData?.date ] );
 
 	useEffect( () => {
 		if (
@@ -769,7 +885,7 @@ export default function Validate() {
 		}
 		const effToday =
 			siteTodayYmd
-			?? ( validationDayYmd === '' && d.date ? d.date : null )
+			?? d.date
 			?? format( new Date(), 'yyyy-MM-dd' );
 		setSelectedValidateSession( ( prev ) => {
 			const stored = readStoredValidateSessionPick( d.date, flat );
@@ -789,7 +905,7 @@ export default function Validate() {
 		dashboardQuery.data?.date,
 		dashboardEventsSig,
 		siteTodayYmd,
-		validationDayYmd,
+		gateScheduleDay,
 	] );
 
 	useEffect( () => {
@@ -1090,37 +1206,64 @@ export default function Validate() {
 							</div>
 
 							<div className="flex flex-wrap items-start justify-between gap-3">
-								<div>
-									<CardTitle className="text-xl leading-tight">
-										{ isNonEmptyStr( ticket.eventDisplayName )
-											? ticket.eventDisplayName
-											: `Event product #${ String( ticket.WooCommerceEventsProductID ?? '' ) }` }
-									</CardTitle>
-									<CardDescription className="mt-1 space-y-0.5 tabular-nums">
-										{ isNonEmptyStr( ticket.WooCommerceEventsBookingDate ) && (
-											<span className="block">{ ticket.WooCommerceEventsBookingDate }</span>
-										) }
-										{ isNonEmptyStr( ticket.WooCommerceEventsBookingSlot ) && (
-											<span className="block">{ ticket.WooCommerceEventsBookingSlot }</span>
-										) }
-										{ selectedValidateSession && (
-											<span className="mt-2 block border-t border-dashed border-border pt-2 text-xs leading-relaxed">
-												<span className="text-foreground font-semibold">Selected gate:</span>{ ' ' }
-												{ selectedValidateSession.eventTitle } ·{ ' ' }
-												{ selectedValidateSession.slotTime }{ ' ' }
-												{ selectedValidateSession.slotLabel }
-												<span className="ml-1 font-mono tabular-nums">
-													({ selectedValidateSession.viewDateYmd })
-												</span>
-											</span>
-										) }
-									</CardDescription>
-								</div>
+								<CardTitle className="min-w-0 flex-1 text-xl leading-tight">
+									{ isNonEmptyStr( ticket.eventDisplayName )
+										? ticket.eventDisplayName
+										: `Event product #${ String( ticket.WooCommerceEventsProductID ?? '' ) }` }
+								</CardTitle>
 								<Badge
 									className={ `shrink-0 ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
 								>
 									{ String( ticket.WooCommerceEventsStatus ?? '—' ) }
 								</Badge>
+							</div>
+
+							{ sessionTimingCue.show && (
+								<div
+									className={ cn(
+										'mt-3 rounded-lg p-3 sm:p-4',
+										sessionTimingCuePanelClass( sessionTimingCue.tone ),
+									) }
+									role="status"
+									aria-live="polite"
+								>
+									<p className="text-lg font-bold leading-tight tracking-tight sm:text-xl">
+										{ sessionTimingCue.label }
+									</p>
+									<p className="mt-1.5 text-sm font-semibold leading-snug sm:text-base">
+										{ sessionTimingCue.detail }
+									</p>
+									{ selectedValidateSession ? (
+										<p className="mt-3 border-t border-current/25 pt-3 text-xs font-medium leading-relaxed sm:text-sm">
+											<span className="opacity-90">Compared to gate:</span>{ ' ' }
+											{ selectedValidateSession.eventTitle } ·{ ' ' }
+											{ selectedValidateSession.slotTime }{ ' ' }
+											{ selectedValidateSession.slotLabel }
+											<span className="ml-1 font-mono tabular-nums opacity-90">
+												({ selectedValidateSession.viewDateYmd })
+											</span>
+										</p>
+									) : (
+										sessionDelta.kind === 'no_selection' && (
+											<p className="mt-3 border-t border-current/25 pt-3 text-xs sm:text-sm">
+												Select a session in <strong>Gate session</strong> above to enable comparison.
+											</p>
+										)
+									) }
+								</div>
+							) }
+
+							<div className="mt-3 space-y-1">
+								{ isNonEmptyStr( ticket.WooCommerceEventsBookingDate ) && (
+									<p className="text-foreground text-base font-medium tabular-nums">
+										{ ticket.WooCommerceEventsBookingDate }
+									</p>
+								) }
+								{ isNonEmptyStr( ticket.WooCommerceEventsBookingSlot ) && (
+									<p className="text-foreground text-lg font-semibold leading-snug sm:text-xl">
+										{ ticket.WooCommerceEventsBookingSlot }
+									</p>
+								) }
 							</div>
 
 							<div className="pt-2">
@@ -1215,6 +1358,28 @@ export default function Validate() {
 										<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
 									) }
 								</div>
+								{ ticket.WooCommerceEventsStatus === 'Not Checked In'
+									&& sessionDelta.offSession
+									&& sessionDelta.kind !== 'non_booking' && (
+									<p className="text-muted-foreground mt-3 max-w-prose border-t border-border/80 pt-3 text-xs leading-relaxed">
+										<strong className="text-foreground">{ sessionTimingCue.label }.</strong>{ ' ' }
+										{ sessionDelta.kind === 'later_session' && (
+											<>Use <strong>Check in anyway</strong> only if you approve early entry.</>
+										) }
+										{ sessionDelta.kind === 'earlier_session' && (
+											<>Use <strong>Check in anyway</strong> only if you are sure this guest should enter on this gate time.</>
+										) }
+										{ sessionDelta.kind === 'wrong_event' && (
+											<>Use <strong>Check in anyway</strong> only after confirming this is the correct guest and event.</>
+										) }
+										{ sessionDelta.kind === 'no_selection' && (
+											<>Pick the gate session on this page, or use <strong>Check in anyway</strong> after manual verification.</>
+										) }
+										{ sessionDelta.kind === 'unresolved' && (
+											<>Use <strong>Check in anyway</strong> only after verifying booking labels manually.</>
+										) }
+									</p>
+								) }
 							</div>
 
 							<Separator />
@@ -1285,125 +1450,8 @@ export default function Validate() {
 				</p>
 			</div>
 
-			<Card className="border-muted-foreground/25">
-				<CardHeader className="pb-3">
-					<CardTitle className="text-lg">Gate session</CardTitle>
-					<CardDescription>
-						Choose the time slot you are admitting at (site timezone). Compared against each ticket&apos;s
-						booking.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="flex min-w-0 flex-col gap-2 sm:max-w-md">
-						<Label htmlFor={ `${ formId }-gate-day` }>Schedule day</Label>
-						<div className="flex flex-wrap items-center gap-2">
-							<Input
-								id={ `${ formId }-gate-day` }
-								type="date"
-								className="w-auto min-w-[10.5rem]"
-								value={ validationDayYmd || dashboardData?.date || '' }
-								onChange={ ( e ) => setValidationDayYmd( e.target.value ) }
-							/>
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={ () => setValidationDayYmd( '' ) }
-							>
-								Site today
-							</Button>
-						</div>
-						<p className="text-muted-foreground text-xs tabular-nums">
-							Loaded schedule date:{ ' ' }
-							<span className="font-mono">{ dashboardData?.date ?? '—' }</span>
-							{ validationDayYmd === '' && (
-								<span className="ml-1">(WordPress default)</span>
-							) }
-						</p>
-					</div>
-
-					{ dashboardQuery.isLoading && (
-						<div className="text-muted-foreground flex items-center gap-2 text-sm">
-							<Loader2 className="size-4 animate-spin" aria-hidden />
-							Loading sessions…
-						</div>
-					) }
-
-					{ dashboardQuery.isError && (
-						<p className="text-destructive text-sm">
-							{ dashboardQuery.error instanceof Error
-								? dashboardQuery.error.message
-								: 'Could not load schedule.' }
-						</p>
-					) }
-
-					{ ! dashboardQuery.isLoading
-						&& ! dashboardQuery.isError
-						&& flatSessionPicks.length > 0 && (
-						<div className="space-y-2">
-							<Label htmlFor={ `${ formId }-gate-session` }>Session</Label>
-							<select
-								id={ `${ formId }-gate-session` }
-								className={ cn(
-									'border-input bg-background w-full max-w-full rounded-md border px-3 py-2 text-sm shadow-xs',
-									'outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
-								) }
-								value={
-									selectedValidateSession
-										? validateSessionOptionKey( selectedValidateSession )
-										: ''
-								}
-								onChange={ ( e ) => {
-									const v = e.target.value;
-									const pick = flatSessionPicks.find(
-										( p ) => validateSessionOptionKey( p ) === v,
-									);
-									if ( pick ) {
-										setSelectedValidateSession( pick );
-										writeStoredValidateSessionPick( pick );
-									}
-								} }
-							>
-								{ dashboardData?.events.map( ( ev ) => (
-									<optgroup key={ ev.eventId } label={ ev.eventTitle }>
-										{ ev.slots.map( ( s ) => {
-											const pick: ValidateSessionPick = {
-												viewDateYmd: dashboardData!.date,
-												eventId: ev.eventId,
-												eventTitle: ev.eventTitle,
-												slotId: s.id,
-												dateId: s.dateId,
-												slotLabel: s.label,
-												slotTime: formatSlotTime( s ),
-												startsAtLocal: s.startsAtLocal ?? null,
-											};
-											return (
-												<option
-													key={ `${ ev.eventId }-${ s.id }-${ s.dateId }` }
-													value={ validateSessionOptionKey( pick ) }
-												>
-													{ formatSlotTime( s ) } · { s.label }
-												</option>
-											);
-										} ) }
-									</optgroup>
-								) ) }
-							</select>
-						</div>
-					) }
-
-					{ ! dashboardQuery.isLoading
-						&& ! dashboardQuery.isError
-						&& flatSessionPicks.length === 0 && (
-						<p className="text-muted-foreground text-sm">
-							No sessions on this day in the POS schedule.
-						</p>
-					) }
-				</CardContent>
-			</Card>
-
 			<div className="grid gap-6 lg:grid-cols-2">
-				<Card className="h-fit">
+				<Card className="h-fit order-2">
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2 text-lg">
 							<UserSearch className="size-5" aria-hidden />
@@ -1509,78 +1557,294 @@ export default function Validate() {
 									) }
 								</ul>
 							) }
-								</div>
-							</CardContent>
+						</div>
+					</CardContent>
 				</Card>
 
-				<Card className="h-fit">
-					<CardHeader>
-						<div className="flex flex-wrap items-center justify-between gap-2">
-							<CardTitle className="flex items-center gap-2 text-lg">
-								<ScanBarcode className="size-5" aria-hidden />
-								Camera
-							</CardTitle>
-							{ scannerOpen && (
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									className="gap-1"
-									onClick={ () => setScannerOpen( false ) }
-								>
-									<X className="size-4" aria-hidden />
-									Close
-								</Button>
-							) }
-						</div>
-						<CardDescription>
-							Two modes: lookup only without changing status, or scan to check in automatically when the
-							ticket is unused and matches the selected gate session (otherwise use
-							<strong> Check in anyway</strong>).
+				<Card className="border-muted-foreground/25 order-1 h-fit">
+					<CardHeader className="space-y-1 pb-2">
+						<CardTitle className="text-base">Gate session</CardTitle>
+						<CardDescription className="text-xs leading-snug">
+							Today or tomorrow only (site timezone). Pick the admitting slot — compared to each
+							ticket&apos;s booking. Scan below.
 						</CardDescription>
 					</CardHeader>
-					<CardContent className="space-y-4">
-						{ scannerOpen ? (
-							<>
-								<div className="bg-muted overflow-hidden rounded-lg">
-									<div id={ scanRegionId } />
-								</div>
-								<p
-									className="text-muted-foreground text-xs leading-relaxed"
-									role="status"
-									aria-live="polite"
-								>
-									{ scannerKind === 'checkin'
-										? 'Grant camera access if prompted; unused tickets that match the selected gate session check in automatically after the read.'
-										: 'Grant camera access if prompted; ticket details load after a successful read.' }
-								</p>
-							</>
-						) : (
-							<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-								<Button
-									type="button"
-									className="gap-2"
-									onClick={ () => {
-										setScannerKind( 'validate' );
-										setScannerOpen( true );
-									} }
-								>
-									<Camera className="size-4 shrink-0" aria-hidden />
-									Validate ticket (scan)
-								</Button>
-								<Button
-									type="button"
-									className="gap-2 bg-amber-600 text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
-									onClick={ () => {
-										setScannerKind( 'checkin' );
-										setScannerOpen( true );
-									} }
-								>
-									<ScanBarcode className="size-4 shrink-0" aria-hidden />
-									Check-in ticket (scan)
-								</Button>
+					<CardContent className="space-y-3">
+						<div className="grid grid-cols-2 gap-2">
+							<Button
+								type="button"
+								variant={ gateScheduleDay === 'today' ? 'default' : 'outline' }
+								size="sm"
+								className="h-auto flex-col gap-0.5 py-2"
+								onClick={ () => setGateScheduleDay( 'today' ) }
+							>
+								<span className="font-semibold">Today</span>
+								<span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+									{ siteTodayYmd ?? '—' }
+								</span>
+							</Button>
+							<Button
+								type="button"
+								variant={ gateScheduleDay === 'tomorrow' ? 'default' : 'outline' }
+								size="sm"
+								className="h-auto flex-col gap-0.5 py-2"
+								onClick={ () => setGateScheduleDay( 'tomorrow' ) }
+								disabled={ ! tomorrowYmdPreview }
+							>
+								<span className="font-semibold">Tomorrow</span>
+								<span className="text-muted-foreground font-mono text-[10px] tabular-nums">
+									{ tomorrowYmdPreview ?? '—' }
+								</span>
+							</Button>
+						</div>
+						<p className="text-muted-foreground text-[11px] tabular-nums">
+							Schedule date:{ ' ' }
+							<span className="font-mono">{ dashboardData?.date ?? '—' }</span>
+						</p>
+
+						{ dashboardQuery.isLoading && (
+							<div className="text-muted-foreground flex items-center gap-2 text-sm">
+								<Loader2 className="size-4 animate-spin" aria-hidden />
+								Loading sessions…
 							</div>
 						) }
+
+						{ dashboardQuery.isError && (
+							<p className="text-destructive text-sm">
+								{ dashboardQuery.error instanceof Error
+									? dashboardQuery.error.message
+									: 'Could not load schedule.' }
+							</p>
+						) }
+
+						{ ! dashboardQuery.isLoading
+							&& ! dashboardQuery.isError
+							&& flatSessionPicks.length > 0
+							&& dashboardData && (
+							<div
+								ref={ gateSlotsScrollRef }
+								className="max-h-[min(32vh,260px)] space-y-3 overflow-y-auto overscroll-contain pr-0.5 scroll-smooth"
+							>
+								{ dashboardData.events.map( ( ev ) => {
+									if ( ! ev.slots.length ) {
+										return null;
+									}
+									const hourGroups = groupSlotsByHour( ev.slots );
+									if ( ! hourGroups.length ) {
+										return null;
+									}
+									const viewYmd = dashboardData.date;
+									let accordionDefault =
+										defaultAccordionHourKey(
+											hourGroups,
+											viewYmd,
+											effSiteTodayYmd,
+										) ?? hourGroups[ 0 ]!.key;
+									if (
+										selectedValidateSession
+										&& selectedValidateSession.viewDateYmd === dashboardData.date
+										&& selectedValidateSession.eventId === ev.eventId
+									) {
+										for ( const g of hourGroups ) {
+											if (
+												g.slots.some(
+													( s ) =>
+														s.id === selectedValidateSession.slotId
+														&& s.dateId === selectedValidateSession.dateId,
+												)
+											) {
+												accordionDefault = g.key;
+												break;
+											}
+										}
+									}
+									return (
+										<div key={ ev.eventId } className="space-y-1.5">
+											<p className="text-foreground px-0.5 text-xs font-semibold leading-tight">
+												{ ev.eventTitle }
+											</p>
+											<Accordion
+												key={ `${ ev.eventId }-${ accordionDefault }-${ dashboardData.date }` }
+												type="single"
+												collapsible
+												defaultValue={ accordionDefault }
+												className="w-full space-y-0"
+											>
+												{ hourGroups.map( ( g ) => {
+													const leftLabel = hourRemainingSpotsLabel( g.slots );
+													const isPastHour = hourBucketIsPastForToday(
+														g,
+														viewYmd,
+														effSiteTodayYmd,
+													);
+													return (
+														<AccordionItem
+															key={ g.key }
+															value={ g.key }
+															className="border-border not-last:border-b"
+														>
+															<AccordionTrigger
+																className="items-center py-2 hover:no-underline [&[data-state=open]]:pb-1"
+																id={ `gate-hour-${ ev.eventId }-${ g.key }` }
+															>
+																<span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 pr-2">
+																	<span
+																		className={ cn(
+																			'shrink-0 font-mono text-xs',
+																			isPastHour && 'text-muted-foreground',
+																		) }
+																	>
+																		{ hourRangeTitle( g.hour ) }
+																	</span>
+																	<span className="flex shrink-0 flex-wrap items-center gap-1.5">
+																		{ isPastHour && (
+																			<Badge variant="secondary" className="text-[10px]">
+																				Past
+																			</Badge>
+																		) }
+																		<Badge
+																			variant={
+																				leftLabel === 'Unlimited'
+																					? 'secondary'
+																					: leftLabel === '0 left'
+																						? 'destructive'
+																						: 'outline'
+																			}
+																			className="font-mono text-[10px]"
+																		>
+																			{ leftLabel }
+																		</Badge>
+																		<span className="text-muted-foreground text-[10px] tabular-nums">
+																			{ g.slots.length } slot
+																			{ g.slots.length === 1 ? '' : 's' }
+																		</span>
+																	</span>
+																</span>
+															</AccordionTrigger>
+															<AccordionContent>
+																<div className="grid grid-cols-1 gap-1.5 pt-1 sm:grid-cols-2">
+																	{ g.slots.map( ( s ) => {
+																		const pick: ValidateSessionPick = {
+																			viewDateYmd: dashboardData.date,
+																			eventId: ev.eventId,
+																			eventTitle: ev.eventTitle,
+																			slotId: s.id,
+																			dateId: s.dateId,
+																			slotLabel: s.label,
+																			slotTime: formatSlotTime( s ),
+																			startsAtLocal: s.startsAtLocal ?? null,
+																		};
+																		const selected =
+																			selectedValidateSession
+																			&& validateSessionOptionKey(
+																				selectedValidateSession,
+																			) === validateSessionOptionKey( pick );
+																		return (
+																			<Button
+																				key={ `${ s.id }-${ s.dateId }` }
+																				type="button"
+																				variant={ selected ? 'default' : 'outline' }
+																				size="sm"
+																				data-gate-slot={ validateSessionOptionKey( pick ) }
+																				className="h-auto min-h-9 scroll-mt-2 flex-col items-stretch gap-0.5 px-2 py-1.5 text-left font-normal"
+																				onClick={ () => {
+																					setSelectedValidateSession( pick );
+																					writeStoredValidateSessionPick( pick );
+																				} }
+																			>
+																				<span className="font-mono text-xs">
+																					{ formatSlotTime( s ) }
+																				</span>
+																				<span className="text-muted-foreground line-clamp-2 text-[10px] leading-tight">
+																					{ s.label }
+																				</span>
+																			</Button>
+																		);
+																	} ) }
+																</div>
+															</AccordionContent>
+														</AccordionItem>
+													);
+												} ) }
+											</Accordion>
+										</div>
+									);
+								} ) }
+							</div>
+						) }
+
+						{ ! dashboardQuery.isLoading
+							&& ! dashboardQuery.isError
+							&& flatSessionPicks.length === 0 && (
+							<p className="text-muted-foreground text-sm">
+								No sessions on this day in the POS schedule.
+							</p>
+						) }
+
+						<Separator />
+
+						<div className="space-y-2">
+							<div className="flex flex-wrap items-center justify-between gap-2">
+								<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+									Scan
+								</p>
+								{ scannerOpen && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="gap-1"
+										onClick={ () => setScannerOpen( false ) }
+									>
+										<X className="size-4" aria-hidden />
+										Close
+									</Button>
+								) }
+							</div>
+							{ scannerOpen ? (
+								<>
+									<div className="bg-muted overflow-hidden rounded-lg">
+										<div id={ scanRegionId } />
+									</div>
+									<p
+										className="text-muted-foreground text-xs leading-relaxed"
+										role="status"
+										aria-live="polite"
+									>
+										{ scannerKind === 'checkin'
+											? 'Grant camera access if prompted; unused tickets that match the selected gate session check in automatically after the read.'
+											: 'Grant camera access if prompted; ticket details load after a successful read.' }
+									</p>
+								</>
+							) : (
+								<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+									<Button
+										type="button"
+										size="sm"
+										className="gap-2"
+										onClick={ () => {
+											setScannerKind( 'validate' );
+											setScannerOpen( true );
+										} }
+									>
+										<Camera className="size-4 shrink-0" aria-hidden />
+										Validate (scan)
+									</Button>
+									<Button
+										type="button"
+										size="sm"
+										className="gap-2 bg-amber-600 text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
+										onClick={ () => {
+											setScannerKind( 'checkin' );
+											setScannerOpen( true );
+										} }
+									>
+										<ScanBarcode className="size-4 shrink-0" aria-hidden />
+										Check-in (scan)
+									</Button>
+								</div>
+							) }
+						</div>
 					</CardContent>
 				</Card>
 			</div>

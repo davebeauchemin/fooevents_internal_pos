@@ -644,13 +644,51 @@ class Slot_Generator_Service {
 	}
 
 	/**
+	 * After a booking, FooEvents writes the processed shape (nested add_date) back to
+	 * fooevents_bookings_options_serialized, dropping the flat `{did}_add_date` / `{did}_stock`
+	 * keys manual add/remove depend on. Merge nested cells into flat keys so our writers work.
+	 *
+	 * @param array<string,mixed> $slot_row Raw or processed FooEvents slot row.
+	 * @return array<string,mixed> Flat raw row.
+	 */
+	private function flatten_processed_slot_row( array $slot_row ) {
+		if ( ! isset( $slot_row['add_date'] ) || ! is_array( $slot_row['add_date'] ) ) {
+			return $slot_row;
+		}
+		$nested = $slot_row['add_date'];
+		unset( $slot_row['add_date'], $slot_row['formatted_time'], $slot_row['unformatted_time'] );
+		foreach ( $nested as $did => $cell ) {
+			$suffix = $this->normalize_booking_raw_date_suffix( (string) $did );
+			if ( '' === $suffix || ! is_array( $cell ) ) {
+				continue;
+			}
+			if ( array_key_exists( 'date', $cell ) ) {
+				$slot_row[ $suffix . '_add_date' ] = $cell['date'];
+			}
+			if ( array_key_exists( 'stock', $cell ) ) {
+				$slot_row[ $suffix . '_stock' ] = $cell['stock'];
+			}
+			if ( array_key_exists( 'zoom_id', $cell ) ) {
+				$slot_row[ $suffix . '_zoom_id' ] = $cell['zoom_id'];
+			}
+		}
+		return $slot_row;
+	}
+
+	/**
 	 * @param int $product_id Product.
-	 * @return array<string, mixed> Raw slot-first map slotId → row.
+	 * @return array<string, mixed> Raw slot-first map slotId → row (flat `{suffix}_add_date` keys).
 	 */
 	private function decode_booking_options_raw_array( $product_id ) {
 		$raw_meta = get_post_meta( absint( $product_id ), 'fooevents_bookings_options_serialized', true );
 		$data     = is_string( $raw_meta ) ? json_decode( wp_unslash( $raw_meta ), true ) : array();
-		return is_array( $data ) ? $data : array();
+		$data     = is_array( $data ) ? $data : array();
+		foreach ( $data as $sid => $row ) {
+			if ( is_array( $row ) ) {
+				$data[ $sid ] = $this->flatten_processed_slot_row( $row );
+			}
+		}
+		return $data;
 	}
 
 	/**
