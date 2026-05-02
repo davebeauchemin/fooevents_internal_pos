@@ -15,8 +15,8 @@ use WC_Product;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Generates a unique $5 fixed-cart coupon per qualifying order with email restriction
- * and exact FooEvents booking product/qty entitlement validation.
+ * Generates a unique 50% coupon per qualifying order with email restriction
+ * and FooEvents booking product/qty entitlement validation.
  */
 class Next_Purchase_Coupon_Service {
 
@@ -30,7 +30,7 @@ class Next_Purchase_Coupon_Service {
 
 	public const META_COUPON_REQUIRED_QTY_JSON = '_fipos_required_product_qty';
 
-	public const FIXED_AMOUNT = 5.0;
+	public const DISCOUNT_PERCENT = 50.0;
 
 	public const CODE_PREFIX = 'NEXT-';
 
@@ -81,12 +81,7 @@ class Next_Purchase_Coupon_Service {
 
 		/* translators: 1: coupon code, 2: discount amount formatted */
 		$msg = __( 'Thank you for your order! Use coupon code %1$s for %2$s off your next eligible purchase.', 'fooevents-internal-pos' );
-		if ( function_exists( 'wc_price' ) ) {
-			$amt = wc_price( self::FIXED_AMOUNT );
-		} else {
-			$amt = wc_format_decimal( self::FIXED_AMOUNT, wc_get_price_decimals() );
-		}
-		$sprintf_txt = sprintf( $msg, sanitize_text_field( (string) $data['code'] ), wp_strip_all_tags( html_entity_decode( (string) $amt, ENT_QUOTES, get_bloginfo( 'charset' ) ) ) );
+		$sprintf_txt = sprintf( $msg, sanitize_text_field( (string) $data['code'] ), self::discount_label() );
 
 		if ( ! empty( $plain_text ) ) {
 			echo "\n\n=====================================================\n";
@@ -123,13 +118,13 @@ class Next_Purchase_Coupon_Service {
 		$cart_map         = self::booking_product_qty_map_from_cart( $cart );
 		$coupon_expected  = self::required_qty_map_from_coupon_meta( $coupon );
 
-		if ( self::arrays_equal_normalized( $cart_map, $coupon_expected ) ) {
+		if ( self::cart_map_is_within_earned_quantities( $cart_map, $coupon_expected ) ) {
 			self::clear_shape_fail_state();
 			return $valid;
 		}
 
 		self::$shape_validation_fail_coupon_id = $coupon->get_id();
-		self::$shape_validation_fail_message   = __( 'This coupon is valid only when your cart matches the same ticket quantities from the order where you earned it.', 'fooevents-internal-pos' );
+		self::$shape_validation_fail_message   = __( 'This coupon is valid only when your cart uses the same tickets, up to the quantities from the order where you earned it.', 'fooevents-internal-pos' );
 
 		return false;
 	}
@@ -348,17 +343,27 @@ class Next_Purchase_Coupon_Service {
 	}
 
 	/**
-	 * @param array<string,int> $cart_map Cart-derived map for booking SKUs-only.
-	 * @param array<string,int> $expected Expected map from coupon.
+	 * @param array<string,int> $cart_map Cart-derived map for booking products only.
+	 * @param array<string,int> $expected Earned maximum quantities from coupon.
 	 */
-	private static function arrays_equal_normalized( array $cart_map, array $expected ) {
+	private static function cart_map_is_within_earned_quantities( array $cart_map, array $expected ) {
 		if ( empty( $expected ) ) {
 			return false;
 		}
 		$cart_map = self::normalize_qty_map_keys( $cart_map );
 		$expected = self::normalize_qty_map_keys( $expected );
 
-		return $cart_map === $expected;
+		if ( empty( $cart_map ) ) {
+			return false;
+		}
+
+		foreach ( $cart_map as $product_id => $qty ) {
+			if ( ! isset( $expected[ $product_id ] ) || $qty > $expected[ $product_id ] ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private static function generate_code_for_order_id( $order_id ) {
@@ -366,6 +371,13 @@ class Next_Purchase_Coupon_Service {
 		$rand_suffix = strtolower( wp_generate_password( 4, false, false ) );
 
 		return self::CODE_PREFIX . $id . '-' . $rand_suffix;
+	}
+
+	/**
+	 * @return string
+	 */
+	public static function discount_label() {
+		return rtrim( rtrim( wc_format_decimal( self::DISCOUNT_PERCENT, 2 ), '0' ), '.' ) . '%';
 	}
 
 	/**
@@ -455,8 +467,8 @@ class Next_Purchase_Coupon_Service {
 			$coupon = new WC_Coupon();
 			$coupon->set_status( 'publish' );
 			$coupon->set_code( $code );
-			$coupon->set_discount_type( 'fixed_cart' );
-			$coupon->set_amount( (string) self::FIXED_AMOUNT );
+			$coupon->set_discount_type( 'percent' );
+			$coupon->set_amount( (string) self::DISCOUNT_PERCENT );
 			if ( method_exists( $coupon, 'set_usage_limit' ) ) {
 				$coupon->set_usage_limit( 1 );
 			}
