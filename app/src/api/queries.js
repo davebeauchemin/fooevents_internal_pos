@@ -150,6 +150,7 @@ export function useAddManualSlot( eventId ) {
 
 /**
  * Remove one slot–date row by internal ids (blocked if tickets exist server-side).
+ * Pass `ymd` (Y-m-d calendar day) when the UI has it so dateslot rows resolve to raw meta reliably.
  *
  * @param {number|string|undefined} eventId
  */
@@ -157,15 +158,19 @@ export function useDeleteManualSlot( eventId ) {
 	const qc = useQueryClient();
 	return useMutation( {
 		mutationKey: [ 'internalpos', 'manualSlotDel', eventId ],
-		mutationFn: ( { slotId, dateId } ) =>
-			restFetch(
-				`${ prefix }/events/${ eventId }/slots/${ encodeURIComponent(
-					slotId,
-				) }/dates/${ encodeURIComponent( dateId ) }`,
-				{
-					method: 'DELETE',
-				}
-			),
+		mutationFn: ( { slotId, dateId, ymd } ) => {
+			const base = `${ prefix }/events/${ eventId }/slots/${ encodeURIComponent(
+				slotId,
+			) }/dates/${ encodeURIComponent( dateId ) }`;
+			const y =
+				typeof ymd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test( ymd.trim() )
+					? ymd.trim()
+					: '';
+			const url = y ? `${ base }?ymd=${ encodeURIComponent( y ) }` : base;
+			return restFetch( url, {
+				method: 'DELETE',
+			} );
+		},
 		onSuccess: () => {
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event', eventId ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );

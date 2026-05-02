@@ -93,6 +93,7 @@ export default function EventSlotOverview( {
 	const [ pendingDelete, setPendingDelete ] = useState< {
 		slotId: string;
 		dateId: string;
+		ymd: string;
 		title: string;
 	} | null >( null );
 	const siteTodayYmd = siteTodayYmdProp ?? format( new Date(), 'yyyy-MM-dd' );
@@ -287,6 +288,7 @@ export default function EventSlotOverview( {
 																		setPendingDelete( {
 																			slotId: sid,
 																			dateId: did,
+																			ymd: selectedDay.date,
 																			title:
 																				[ s.label, formatSlotTime( s ) ]
 																					.filter( Boolean )
@@ -476,7 +478,7 @@ function EventOverviewDeleteConfirmDialog( {
 	clearPending,
 }: {
 	eventId: number;
-	pendingDelete: { slotId: string; dateId: string; title: string } | null;
+	pendingDelete: { slotId: string; dateId: string; ymd: string; title: string } | null;
 	clearPending: () => void;
 } ) {
 	const delManual = useDeleteManualSlot( eventId );
@@ -489,6 +491,7 @@ function EventOverviewDeleteConfirmDialog( {
 			await delManual.mutateAsync( {
 				slotId: pendingDelete.slotId,
 				dateId: pendingDelete.dateId,
+				ymd: pendingDelete.ymd,
 			} );
 			toast.success( 'Slot removed.' );
 			clearPending();

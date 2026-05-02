@@ -438,13 +438,15 @@ class Slot_Generator_Service {
 	 *
 	 * @param int    $product_id Product ID.
 	 * @param string $slot_id    FooEvents slot row id.
-	 * @param string $date_id    Internal date key (numeric segment before `_add_date` in serialization).
+	 * @param string $date_id    Internal date key (numeric segment before `_add_date` in serialization / POS `dateId`).
+	 * @param string $ymd_hint  Optional `Y-m-d` for the viewing day; authoritative for matching raw `{suffix}_add_date` for dateslot.
 	 * @return array<string,mixed>|WP_Error
 	 */
-	public function manual_remove_slot_date( $product_id, $slot_id, $date_id ) {
+	public function manual_remove_slot_date( $product_id, $slot_id, $date_id, $ymd_hint = '' ) {
 		$product_id = absint( $product_id );
 		$slot_id    = trim( (string) $slot_id );
 		$date_id    = trim( (string) $date_id );
+		$ymd_hint   = trim( (string) $ymd_hint );
 		if ( '' === $slot_id || '' === $date_id || ! ctype_digit( (string) $date_id ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'slotId and numeric dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
@@ -452,6 +454,63 @@ class Slot_Generator_Service {
 		$product = wc_get_product( $product_id );
 		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
 			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
+		$slot_actual_key = $this->normalize_raw_slot_lookup_key( $raw_slots, $slot_id );
+		if ( null === $slot_actual_key || ! isset( $raw_slots[ $slot_actual_key ] ) || ! is_array( $raw_slots[ $slot_actual_key ] ) ) {
+			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		$row = $raw_slots[ $slot_actual_key ];
+
+		$booking_method_eff = $this->bookings_method_for_product( $product );
+
+		$inner_date_id = '';
+		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd_hint ) ) {
+			$by_ymd = $this->find_date_id_with_ymd_in_slot_raw( $row, $ymd_hint );
+			if ( null !== $by_ymd && '' !== (string) $by_ymd && ctype_digit( (string) $by_ymd ) && isset( $row[ (string) $by_ymd . '_add_date' ] ) ) {
+				$inner_date_id = (string) $by_ymd;
+			}
+		}
+		if ( '' === $inner_date_id ) {
+			$inner_date_id = $this->resolve_raw_inner_id_for_manual_remove(
+				$product_id,
+				$booking_method_eff,
+				(string) $slot_id,
+				$row,
+				(string) $date_id
+			);
+		}
+		if ( '' === $inner_date_id ) {
+			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$ticket_date_ids = array_values(
+			array_unique(
+				array_filter(
+					array( (string) $date_id, (string) $inner_date_id ),
+					static function ( $v ) {
+						return '' !== trim( (string) $v );
+					}
+				)
+			)
+		);
+		if ( empty( $ticket_date_ids ) ) {
+			$ticket_date_ids = array( (string) $date_id );
+		}
+		$date_meta_clause = array(
+			'key'     => 'WooCommerceEventsBookingDateID',
+			'value'   => $ticket_date_ids,
+			'type'    => 'CHAR',
+			'compare' => 'IN',
+		);
+		if ( 1 === count( $ticket_date_ids ) ) {
+			$date_meta_clause = array(
+				'key'     => 'WooCommerceEventsBookingDateID',
+				'value'   => $ticket_date_ids[0],
+				'type'    => 'CHAR',
+				'compare' => '=',
+			);
 		}
 
 		$blocked = new WP_Query(
@@ -475,12 +534,7 @@ class Slot_Generator_Service {
 						'type' => 'CHAR',
 						'compare' => '=',
 					),
-					array(
-						'key'   => 'WooCommerceEventsBookingDateID',
-						'value' => $date_id,
-						'type' => 'CHAR',
-						'compare' => '=',
-					),
+					$date_meta_clause,
 				),
 			)
 		);
@@ -490,25 +544,6 @@ class Slot_Generator_Service {
 				__( 'Cannot remove this slot: there are tickets/bookings referencing it.', 'fooevents-internal-pos' ),
 				array( 'status' => 409 )
 			);
-		}
-
-		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
-		$slot_actual_key = $this->normalize_raw_slot_lookup_key( $raw_slots, $slot_id );
-		if ( null === $slot_actual_key || ! isset( $raw_slots[ $slot_actual_key ] ) || ! is_array( $raw_slots[ $slot_actual_key ] ) ) {
-			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
-		}
-		$row = $raw_slots[ $slot_actual_key ];
-
-		$booking_method_eff = $this->bookings_method_for_product( $product );
-		$inner_date_id       = $this->resolve_raw_inner_id_for_manual_remove(
-			$product_id,
-			$booking_method_eff,
-			(string) $slot_id,
-			$row,
-			(string) $date_id
-		);
-		if ( '' === $inner_date_id ) {
-			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
 
 		$dkey = $inner_date_id . '_add_date';

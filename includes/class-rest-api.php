@@ -375,10 +375,13 @@ class Rest_API {
 	 */
 	public function delete_slots_date( WP_REST_Request $request ) {
 		$id     = (int) $request['id'];
-		$result = $this->slot_generator->manual_remove_slot_date(
+		$ymd_raw = $request->get_param( 'ymd' );
+		$ymd     = is_string( $ymd_raw ) ? trim( $ymd_raw ) : '';
+		$result  = $this->slot_generator->manual_remove_slot_date(
 			$id,
 			rawurldecode( (string) $request['slotId'] ),
-			rawurldecode( (string) $request['dateId'] )
+			rawurldecode( (string) $request['dateId'] ),
+			$ymd
 		);
 		if ( is_wp_error( $result ) ) {
 			return $result;

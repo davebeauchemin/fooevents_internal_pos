@@ -277,6 +277,7 @@ export default function Schedule() {
 	const [ deleteSlotConfirm, setDeleteSlotConfirm ] = useState< {
 		slotId: string;
 		dateId: string;
+		ymd: string;
 		title: string;
 	} | null >( null );
 	const [ blocks, setBlocks ] = useState<ScheduleBlock[]>( [ emptyBlock( 0 ) ] );
@@ -352,6 +353,7 @@ export default function Schedule() {
 			await delManual.mutateAsync( {
 				slotId: deleteSlotConfirm.slotId,
 				dateId: deleteSlotConfirm.dateId,
+				ymd: deleteSlotConfirm.ymd,
 			} );
 			toast.success( 'Slot removed.' );
 			setDeleteSlotConfirm( null );
@@ -575,6 +577,7 @@ export default function Schedule() {
 																setDeleteSlotConfirm( {
 																	slotId: sid,
 																	dateId: did,
+																	ymd: String( day.date || '' ),
 																	title: line || `Slot ${ sid }`,
 																} );
 															} }
