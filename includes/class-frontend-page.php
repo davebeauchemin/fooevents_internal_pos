@@ -154,7 +154,7 @@ class Frontend_Page {
 			return $template;
 		}
 		// Cashiers (`publish_fooeventspos`) and shop managers (`manage_woocommerce`).
-		if ( ! Access_Helper::can_use_pos() ) {
+		if ( ! Access_Helper::can_access_internal_pos_app() ) {
 			$redirect = Access_Helper::get_pos_front_url();
 			if ( ! is_user_logged_in() ) {
 				wp_safe_redirect( wp_login_url( $redirect ) );
@@ -177,7 +177,7 @@ class Frontend_Page {
 		if ( ! $this->is_internal_pos_page() || is_admin() ) {
 			return;
 		}
-		if ( ! Access_Helper::can_use_pos() ) {
+		if ( ! Access_Helper::can_access_internal_pos_app() ) {
 			return;
 		}
 
@@ -228,7 +228,7 @@ class Frontend_Page {
 		if ( ! $this->is_internal_pos_page() || is_admin() ) {
 			return;
 		}
-		if ( ! Access_Helper::can_use_pos() ) {
+		if ( ! Access_Helper::can_access_internal_pos_app() ) {
 			return;
 		}
 

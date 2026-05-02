@@ -16,18 +16,44 @@ const queryClient = new QueryClient( {
 	},
 } );
 
+/**
+ * Basename from the loaded URL (e.g. /internal-pos, /blog/internal-pos).
+ * @param {string} pathname window.location.pathname
+ * @returns {string|null}
+ */
+function basenameFromPathname( pathname ) {
+	const needle = '/internal-pos';
+	const i = pathname.indexOf( needle );
+	if ( i === -1 ) {
+		return null;
+	}
+	return pathname.slice( 0, i + needle.length );
+}
+
 function getBasename() {
 	// Dev: VITE_APP_BASENAME in .env.local (e.g. /) so Router matches Vite at /
 	if ( import.meta.env.VITE_APP_BASENAME !== undefined && import.meta.env.VITE_APP_BASENAME !== '' ) {
 		const b = import.meta.env.VITE_APP_BASENAME;
 		return b === '/' ? '/' : String( b ).replace( /\/$/, '' );
 	}
-	if ( typeof localStorage === 'undefined' ) {
-		return '/internal-pos';
+	const fromUrl =
+		typeof window !== 'undefined' ? basenameFromPathname( window.location.pathname ) : null;
+	let raw =
+		typeof localStorage !== 'undefined'
+			? localStorage.getItem( 'INTERNAL_POS_BASENAME' )
+			: null;
+	// Prefer URL when on /internal-pos so stale localStorage "/" cannot send Navigate(/) to the domain root.
+	if ( fromUrl && ( ! raw || raw === '/' || raw !== fromUrl ) ) {
+		raw = fromUrl;
+		if ( typeof localStorage !== 'undefined' ) {
+			localStorage.setItem( 'INTERNAL_POS_BASENAME', fromUrl );
+		}
 	}
-	const raw = localStorage.getItem( 'INTERNAL_POS_BASENAME' ) || '/internal-pos';
-	// React Router: leading slash, no trailing slash.
-	return raw === '/' ? '/' : raw.replace( /\/$/, '' );
+	if ( ! raw || raw === '/' ) {
+		raw = '/internal-pos';
+	}
+	// React Router: leading slash, no trailing slash (except dev "/" above).
+	return raw.replace( /\/$/, '' );
 }
 
 const root = document.getElementById( 'root' );

@@ -46,8 +46,14 @@ function breadcrumbPageLabel( pathname ) {
 
 function App() {
 	const { pathname } = useLocation();
-	const { site } = useAuth();
+	const { site, canUsePos, canValidateTickets } = useAuth();
 	const parentLabel = site?.name?.trim() || 'Internal POS';
+	const parentHref = ! canUsePos && canValidateTickets ? '/validate' : '/calendar';
+	const validatorOnly = canValidateTickets && ! canUsePos;
+
+	if ( validatorOnly && ( pathname === '/' || pathname === '/calendar' || pathname === '/checkout' ) ) {
+		return <Navigate to="/validate" replace />;
+	}
 
 	return (
 		<div className="fooevents-internal-pos-app">
@@ -65,7 +71,7 @@ function App() {
 								<BreadcrumbList>
 									<BreadcrumbItem className="hidden md:block">
 										<BreadcrumbLink asChild>
-											<Link to="/calendar">{ parentLabel }</Link>
+											<Link to={ parentHref }>{ parentLabel }</Link>
 										</BreadcrumbLink>
 									</BreadcrumbItem>
 									<BreadcrumbSeparator className="hidden md:block" />
@@ -115,7 +121,12 @@ function App() {
 									</RequireValidateTicketsRoute>
 								) }
 							/>
-							<Route path="*" element={ <Navigate to="/" replace /> } />
+							<Route
+								path="*"
+								element={ (
+									<Navigate to={ canUsePos ? '/' : '/validate' } replace />
+								) }
+							/>
 						</Routes>
 					</div>
 				</SidebarInset>

@@ -69,7 +69,7 @@ class Rest_API {
 			array(
 				'methods'             => WP_REST_Server::READABLE,
 				'callback'            => array( $this, 'get_dashboard' ),
-				'permission_callback' => array( $this, 'can_use_pos' ),
+				'permission_callback' => array( $this, 'can_use_pos_or_validate' ),
 				'args'                => array(
 					'date' => array(
 						'required'          => false,
@@ -266,6 +266,22 @@ class Rest_API {
 	}
 
 	/**
+	 * Dashboard day view: bookings staff or check-in validators (Validate UI uses it for gate sessions).
+	 *
+	 * @return true|WP_Error
+	 */
+	public function can_use_pos_or_validate() {
+		if ( ! Access_Helper::can_use_pos() && ! Access_Helper::can_validate_fooevents_tickets() ) {
+			return new WP_Error(
+				'rest_forbidden',
+				__( 'You do not have permission to use Internal POS.', 'fooevents-internal-pos' ),
+				array( 'status' => 403 )
+			);
+		}
+		return true;
+	}
+
+	/**
 	 * Shop managers — event list/detail and slot generation.
 	 *
 	 * @return true|WP_Error
@@ -282,7 +298,7 @@ class Rest_API {
 	}
 
 	/**
-	 * FooEvents ticket check-in validators (publish_event_magic_tickets | app_event_magic_tickets).
+	 * FooEvents ticket check-in validators (publish_event_magic_ticket | publish_event_magic_tickets | app_event_magic_tickets).
 	 *
 	 * @return true|WP_Error
 	 */

@@ -25,7 +25,7 @@ import {
 /** Collapsible icon sidebar — nav matches Internal POS routes. */
 export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> ) {
   const { pathname } = useLocation()
-  const { canManageEvents, canValidateTickets, currentUser, site } = useAuth()
+  const { canManageEvents, canUsePos, canValidateTickets, currentUser, site } = useAuth()
 
   const calendarNavActive = pathname === "/" || pathname === "/calendar"
   const checkoutActive = pathname === "/checkout"
@@ -84,20 +84,23 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
   }, [ pathname, activeEventId ] )
 
   const navMain = React.useMemo( () => {
-    const items = [
-      {
-        title: "Calendar",
-        url: "/calendar",
-        icon: <CalendarIcon className="size-4 shrink-0" />,
-        isActive: calendarNavActive,
-      },
-      {
-        title: "Checkout",
-        url: "/checkout",
-        icon: <ShoppingCartIcon className="size-4 shrink-0" />,
-        isActive: checkoutActive,
-      },
-    ]
+    const items = []
+    if ( canUsePos ) {
+      items.push(
+        {
+          title: "Calendar",
+          url: "/calendar",
+          icon: <CalendarIcon className="size-4 shrink-0" />,
+          isActive: calendarNavActive,
+        },
+        {
+          title: "Checkout",
+          url: "/checkout",
+          icon: <ShoppingCartIcon className="size-4 shrink-0" />,
+          isActive: checkoutActive,
+        },
+      )
+    }
     if ( canValidateTickets ) {
       items.push( {
         title: "Validate",
@@ -120,6 +123,7 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
     calendarNavActive,
     checkoutActive,
     validateActive,
+    canUsePos,
     canManageEvents,
     canValidateTickets,
     manageEventsActive,

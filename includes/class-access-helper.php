@@ -42,10 +42,21 @@ final class Access_Helper {
 		}
 		$pos = ! empty( $user->allcaps['publish_fooeventspos'] );
 		$woo = ! empty( $user->allcaps['manage_woocommerce'] );
-		if ( $pos || $woo ) {
+		if ( $pos || $woo || self::user_has_validate_ticket_caps( $user ) ) {
 			$allcaps[ self::CAP_ACCESS_MENU ] = true;
 		}
 		return $allcaps;
+	}
+
+	/**
+	 * FooEvents assigns both singular and plural ticket caps on some roles; read from allcaps to avoid recursion.
+	 *
+	 * @param \WP_User $user User.
+	 */
+	private static function user_has_validate_ticket_caps( \WP_User $user ): bool {
+		return ! empty( $user->allcaps['publish_event_magic_ticket'] )
+			|| ! empty( $user->allcaps['publish_event_magic_tickets'] )
+			|| ! empty( $user->allcaps['app_event_magic_tickets'] );
 	}
 
 	public static function can_use_pos(): bool {
@@ -66,9 +77,17 @@ final class Access_Helper {
 	public static function can_validate_fooevents_tickets(): bool {
 		return is_user_logged_in()
 			&& (
-				current_user_can( 'publish_event_magic_tickets' )
+				current_user_can( 'publish_event_magic_ticket' )
+				|| current_user_can( 'publish_event_magic_tickets' )
 				|| current_user_can( 'app_event_magic_tickets' )
 			);
+	}
+
+	/**
+	 * Load /internal-pos/ shell: full POS users or check-in validators.
+	 */
+	public static function can_access_internal_pos_app(): bool {
+		return self::can_use_pos() || self::can_validate_fooevents_tickets();
 	}
 
 	/**
@@ -88,7 +107,11 @@ final class Access_Helper {
 	public static function get_pos_basename_path(): string {
 		$path = (string) wp_parse_url( self::get_pos_front_url(), PHP_URL_PATH );
 		$path = untrailingslashit( $path );
-		return '' === $path ? '/' : $path;
+		// Never use site root as Router basename — React Router would treat "/" routes as the real domain root.
+		if ( '' === $path || '/' === $path ) {
+			$path = '/' . FOOEVENTS_INTERNAL_POS_PAGE_SLUG;
+		}
+		return $path;
 	}
 
 	/**

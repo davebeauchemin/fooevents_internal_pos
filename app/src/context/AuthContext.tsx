@@ -117,7 +117,7 @@ export function RequireManageEventsRoute( { children }: { children: ReactNode } 
 	return <>{ children }</>;
 }
 
-/** Requires FooEvents scanner role — `publish_event_magic_tickets` or `app_event_magic_tickets`. */
+/** Requires FooEvents scanner role — `publish_event_magic_ticket`, `publish_event_magic_tickets`, or `app_event_magic_tickets`. */
 export function RequireValidateTicketsRoute( { children }: { children: ReactNode } ) {
 	const { canValidateTickets } = useAuth();
 	if ( ! canValidateTickets ) {
