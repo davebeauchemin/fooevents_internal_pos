@@ -497,11 +497,21 @@ class Slot_Generator_Service {
 			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
 		$row = $raw_slots[ $slot_id ];
-		$dkey = $date_id . '_add_date';
-		$skey = $date_id . '_stock';
-		if ( ! isset( $row[ $dkey ] ) ) {
+
+		$booking_method_eff = $this->bookings_method_for_product( $product );
+		$inner_date_id       = $this->resolve_raw_inner_id_for_manual_remove(
+			$product_id,
+			$booking_method_eff,
+			$slot_id,
+			$row,
+			(string) $date_id
+		);
+		if ( '' === $inner_date_id ) {
 			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
+
+		$dkey = $inner_date_id . '_add_date';
+		$skey = $inner_date_id . '_stock';
 
 		unset( $raw_slots[ $slot_id ][ $dkey ], $raw_slots[ $slot_id ][ $skey ] );
 
@@ -695,6 +705,82 @@ class Slot_Generator_Service {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Align REST slot.dateId from processed options with `{inner}_add_date` keys inside raw serialization.
+	 * Slotdate normally matches digits directly; dateslot exposes `date_id` that may not equal the raw suffix,
+	 * so we correlate via FooEvents date buckets parsed to Y-m-d.
+	 *
+	 * @param int                  $product_id       Booking product ID.
+	 * @param string               $booking_method   WooCommerceEventsBookingsMethod–derived value (slotdate|dateslot).
+	 * @param string               $slot_id          Top-level serialized slot row id.
+	 * @param array<string, mixed> $slot_row         Raw FooEvents booking row array.
+	 * @param string               $client_date_id   SPA path dateId (digits only upstream).
+	 * @return string Inner id matching `{id}_add_date`/`{id}_stock`, or ''.
+	 */
+	private function resolve_raw_inner_id_for_manual_remove( $product_id, $booking_method, $slot_id, array $slot_row, $client_date_id ) {
+		$did = preg_replace( '/\s+/', '', trim( (string) $client_date_id ) );
+		if ( '' === $did || ! ctype_digit( (string) $did ) ) {
+			return '';
+		}
+
+		if ( isset( $slot_row[ $did . '_add_date' ] ) ) {
+			return $did;
+		}
+
+		$trim_zeros = preg_replace( '/^0+/', '', $did );
+		if ( '' !== $trim_zeros && $trim_zeros !== $did && ctype_digit( (string) $trim_zeros ) && isset( $slot_row[ $trim_zeros . '_add_date' ] ) ) {
+			return $trim_zeros;
+		}
+
+		if ( 'dateslot' !== (string) $booking_method ) {
+			return '';
+		}
+
+		$ctx      = $this->bookings->get_processed_options( absint( $product_id ) );
+		$options  = isset( $ctx['options'] ) ? $ctx['options'] : array();
+		if ( ! is_array( $options ) ) {
+			return '';
+		}
+
+		$ym_candidates = array();
+		foreach ( $options as $bucket => $slots_for_date ) {
+			if ( ! is_array( $slots_for_date ) ) {
+				continue;
+			}
+			$row_dateslot = null;
+			foreach ( $slots_for_date as $sid => $r_cell ) {
+				if ( (string) $sid === (string) $slot_id && is_array( $r_cell ) ) {
+					$row_dateslot = $r_cell;
+					break;
+				}
+			}
+			if ( null === $row_dateslot ) {
+				continue;
+			}
+			$proc_did = isset( $row_dateslot['date_id'] ) ? preg_replace( '/\s+/', '', trim( (string) $row_dateslot['date_id'] ) ) : '';
+			if ( (string) $proc_did !== (string) $did ) {
+				continue;
+			}
+			$ym = $this->bookings->date_string_to_ymd( (string) $bucket );
+			if ( null !== $ym && '' !== (string) $ym ) {
+				$ym_candidates[] = (string) $ym;
+			}
+		}
+
+		foreach ( array_unique( $ym_candidates ) as $ymd ) {
+			$inner = $this->find_date_id_with_ymd_in_slot_raw( $slot_row, $ymd );
+			if ( null === $inner || '' === $inner ) {
+				continue;
+			}
+			$inner = (string) $inner;
+			if ( ctype_digit( $inner ) && isset( $slot_row[ $inner . '_add_date' ] ) ) {
+				return $inner;
+			}
+		}
+
+		return '';
 	}
 
 	/**
