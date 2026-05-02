@@ -1019,6 +1019,16 @@ class Bookings_Checkout_Service {
 				}
 			}
 
+			$next_purchase_code   = '';
+			$next_purchase_amount = 0.0;
+			if ( $completed_order instanceof WC_Order ) {
+				$next_purchase = Next_Purchase_Coupon_Service::ensure_next_purchase_coupon_for_order( $completed_order );
+				if ( is_array( $next_purchase ) && '' !== (string) ( $next_purchase['code'] ?? '' ) ) {
+					$next_purchase_code   = (string) $next_purchase['code'];
+					$next_purchase_amount = Next_Purchase_Coupon_Service::FIXED_AMOUNT;
+				}
+			}
+
 			return array(
 				'orderId'              => (int) $order_id,
 				'ticketIds'            => $ids,
@@ -1036,6 +1046,11 @@ class Bookings_Checkout_Service {
 				'appliedCouponCodes'   => $applied_coupon_codes,
 				'discountTotal'        => wc_format_decimal( $discount_order, wc_get_price_decimals() ),
 				'discountTotalFormatted' => self::format_price_plain_for_rest( $discount_order ),
+				'nextPurchaseCoupon'    => '' === $next_purchase_code ? null : array(
+					'code'              => $next_purchase_code,
+					'amount'            => wc_format_decimal( $next_purchase_amount, wc_get_price_decimals() ),
+					'amountFormatted'   => self::format_price_plain_for_rest( $next_purchase_amount ),
+				),
 			);
 		} catch ( Throwable $e ) {
 			$result = new WP_Error(

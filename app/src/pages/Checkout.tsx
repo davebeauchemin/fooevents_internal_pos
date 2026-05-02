@@ -178,6 +178,7 @@ export default function Checkout() {
 				paymentMethodLabel?: string;
 				checkedInCount?: number;
 				checkedInTicketIds?: number[];
+				nextPurchaseCoupon?: { code?: string; amountFormatted?: string } | null;
 			};
 			const q = res.totalQty ?? res.qty ?? 0;
 			const ticketPart = q > 1 ? `${ q } tickets` : '1 ticket';
@@ -190,6 +191,12 @@ export default function Checkout() {
 					? ` · Checked in (${ res.checkedInCount } ticket${ res.checkedInCount === 1 ? '' : 's' })`
 					: '';
 			toast.success( `Booked order #${ res.orderId } · ${ ticketPart }${ methodPart }${ totalPart }${ checkInPart }` );
+			const npc = res.nextPurchaseCoupon;
+			if ( npc && typeof npc.code === 'string' && npc.code.length > 0 ) {
+				const amt = npc.amountFormatted ? htmlToPlainText( npc.amountFormatted ) : '';
+				const amtPart = amt ? ` for ${ amt } off` : '';
+				toast.success( `Next-purchase coupon: ${ npc.code }${ amtPart }`, { duration: 12_000 } );
+			}
 			clearCart();
 			setFirst( '' );
 			setLast( '' );
