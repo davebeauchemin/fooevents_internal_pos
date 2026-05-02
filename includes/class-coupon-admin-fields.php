@@ -36,10 +36,10 @@ class Coupon_Admin_Fields {
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules{box-sizing:border-box;padding-block:14px 10px;padding-inline:20px;margin-block-start:4px;} ' .
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules>h3{margin:0 0 10px;line-height:1.3;} ' .
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules>p.fipos-coupon-rules-intro{margin:0 0 14px;padding:0;float:none;clear:left;line-height:1.55;max-width:none;} ' .
-			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field{padding-bottom:14px;margin-bottom:4px;} ' .
-			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field span.description{display:block;margin-top:10px;line-height:1.5;max-width:36rem;} ' .
-			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field label{margin-right:.5em;} ' .
-			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field input[type="checkbox"]{margin-inline-end:.5em;} ' .
+			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field.form-field{display:grid;grid-template-columns:150px minmax(0,1fr);grid-template-rows:auto auto;column-gap:14px;row-gap:6px;align-items:start;padding-bottom:14px;margin-bottom:4px;float:none;} ' .
+			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field.form-field>label{float:none!important;width:auto!important;margin:6px 0 0!important;padding:0!important;grid-column:1;grid-row:1/-1;align-self:start;} ' .
+			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field.form-field>input[type=checkbox]{grid-column:2;grid-row:1;margin:8px 0 0!important;} ' .
+			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field.form-field>span.description{grid-column:2;grid-row:2;display:block;margin:0!important;line-height:1.5;max-width:36rem;} ' .
 			'</style>';
 	}
 
