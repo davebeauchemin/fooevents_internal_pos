@@ -123,7 +123,7 @@ export function useGenerateSlots( eventId ) {
 }
 
 /**
- * Add one slot–date row without replacing FooEvents serialized options (slotdate products only).
+ * Add one slot–date row without replacing FooEvents serialized options (slot-first and date-first booking).
  *
  * Body: `{ date: 'Y-m-d', time: 'HH:MM', capacity: number, label?: string }`
  *

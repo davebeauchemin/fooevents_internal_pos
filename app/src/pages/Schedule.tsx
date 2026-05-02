@@ -247,10 +247,6 @@ export default function Schedule() {
 	const addManual = useAddManualSlot( eventId );
 	const delManual = useDeleteManualSlot( eventId );
 
-	const bookingMethodNorm =
-		eventData?.bookingMethod === 'dateslot' ? 'dateslot' : 'slotdate';
-	const manualSlotsAllowed = bookingMethodNorm !== 'dateslot';
-
 	const sortedDateGroups = useMemo( () => {
 		const rows = Array.isArray( eventData?.dates )
 			? [ ...eventData!.dates ]
@@ -331,9 +327,6 @@ export default function Schedule() {
 
 	async function submitManualSlot( ev: FormEvent ) {
 		ev.preventDefault();
-		if ( ! manualSlotsAllowed ) {
-			return;
-		}
 		try {
 			const payload: Record<string, unknown> = {
 				date: manualDate.trim(),
@@ -429,14 +422,13 @@ export default function Schedule() {
 				<h1 className="text-2xl font-bold tracking-tight">Manage schedule</h1>
 				<p className="text-muted-foreground text-sm">
 					{ eventData?.title } — use <strong>Manual sessions</strong> to add or delete a single
-					time on one day without changing anything else. The bulk schedule form below still
-					generates FooEvents <strong>slotdate</strong> data and{' '}
-					<strong>replaces</strong> every slot on this product when saved.
+					time on one day without changing anything else (works for slot-first and date-first
+					booking). The bulk schedule form below still <strong>replaces</strong> every slot on
+					this product when saved and is oriented to slot-first generation in FooEvents.
 				</p>
 			</div>
 
-			{ manualSlotsAllowed ? (
-				<>
+			<>
 					<Card className="border-primary/30">
 						<CardHeader className="pb-2">
 							<CardTitle className="flex items-center gap-2 text-lg">
@@ -600,13 +592,7 @@ export default function Schedule() {
 					</Card>
 
 					<Separator />
-				</>
-			) : (
-				<div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
-					This product uses <strong>date-first (dateslot)</strong> booking mode. One-off add/remove
-					from this page is only available for slot-first (slotdate) events.
-				</div>
-			) }
+			</>
 
 			<Card>
 				<CardHeader>

@@ -1,13 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { format, parseISO } from 'date-fns';
-import { Clock3 } from 'lucide-react';
+import { Clock3, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAddManualSlot, useDeleteManualSlot } from '../api/queries.js';
 import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
 import BookingScheduleSummaryCards, {
 	type BookingScheduleSummaryPayload,
 } from '@/components/BookingScheduleSummaryCards';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
 import {
 	capacityLabelForSlots,
 	formatSlotTime,
@@ -40,6 +54,7 @@ export type EventDetailForSchedule = {
 	labels?: { date: string; slot: string };
 	price?: number | null;
 	priceHtml?: string;
+	bookingMethod?: string;
 };
 
 function findNextAvailable( days: DayApi[] ) {
@@ -63,15 +78,23 @@ type Props = {
 	siteTodayYmd?: string;
 };
 
-/**
- * Read-only schedule for event detail: dates, summary stats, and slot availability per hour.
- * Does not use cart or booking toggles — use the calendar page to build an order.
- */
+/** Schedule overview on event detail: availability by hour plus optional manual sessions (slot-first and date-first booking). */
 export default function EventSlotOverview( {
 	detail,
 	siteTodayYmd: siteTodayYmdProp,
 }: Props ) {
+	const { canManageEvents } = useAuth();
 	const { dates, labels } = detail;
+	const manageSlotsUi =
+		canManageEvents
+		&& typeof detail.id === 'number'
+		&& Number.isFinite( detail.id );
+
+	const [ pendingDelete, setPendingDelete ] = useState< {
+		slotId: string;
+		dateId: string;
+		title: string;
+	} | null >( null );
 	const siteTodayYmd = siteTodayYmdProp ?? format( new Date(), 'yyyy-MM-dd' );
 	const [ selectedYmd, setSelectedYmd ] = useState( () => detail.dates[ 0 ]?.date ?? '' );
 
@@ -172,10 +195,34 @@ export default function EventSlotOverview( {
 								: 'Schedule' }
 						</CardTitle>
 						<CardDescription>
-							Slot availability grouped by hour (read-only; book from Calendar)
+							<span className="block">
+								Slot availability grouped by hour. Book orders from Calendar (checkout in cart).
+							</span>
+							{ manageSlotsUi && (
+								<span className="text-muted-foreground mt-2 block font-normal leading-relaxed">
+									You can also add or remove sessions for{' '}
+									<span className="font-mono text-xs">{ selectedDay?.date }</span> below (same as
+									Manage schedule manual sessions).
+								</span>
+							) }
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4 pt-0">
+						{ manageSlotsUi && selectedDay?.date ? (
+							<EventOverviewManualAddToolbar
+								eventId={ detail.id as number }
+								selectedYmd={ selectedDay.date }
+							/>
+						) : null }
+
+						{ manageSlotsUi ? (
+							<EventOverviewDeleteConfirmDialog
+								eventId={ detail.id as number }
+								pendingDelete={ pendingDelete }
+								clearPending={ () => setPendingDelete( null ) }
+							/>
+						) : null }
+
 						{ ! selectedDay?.slots?.length && (
 							<p className="text-muted-foreground text-sm">No slots on this day.</p>
 						) }
@@ -222,12 +269,33 @@ export default function EventSlotOverview( {
 															s.stock,
 															siteTodayYmd,
 														);
+													const sid = String( s.id ?? '' ).trim();
+													const did = String( s.dateId ?? '' ).trim();
+													const canRemove = sid !== '' && did !== '';
 													return (
 														<SlotOverviewCard
 															key={ `${ s.id }-${ s.dateId ?? '' }` }
 															timeText={ formatSlotTime( s ) }
 															stock={ s.stock }
 															emphasized={ bookable }
+															manageSlots={ manageSlotsUi }
+															canRemoveSlot={ canRemove }
+															removeDisabled={ pendingDelete !== null }
+															onRequestRemove={
+																canRemove
+																	? () =>
+																		setPendingDelete( {
+																			slotId: sid,
+																			dateId: did,
+																			title:
+																				[ s.label, formatSlotTime( s ) ]
+																					.filter( Boolean )
+																					.join( ' · ' )
+																					.trim() ||
+																					`Slot ${ sid }`,
+																		} )
+																	: undefined
+															}
 														/>
 													);
 												} ) }
@@ -248,15 +316,25 @@ function SlotOverviewCard( {
 	timeText,
 	stock,
 	emphasized,
+	manageSlots,
+	canRemoveSlot,
+	removeDisabled,
+	onRequestRemove,
 }: {
 	timeText: string;
 	stock: number | null;
 	emphasized: boolean;
+	manageSlots?: boolean;
+	canRemoveSlot?: boolean;
+	removeDisabled?: boolean;
+	onRequestRemove?: () => void;
 } ) {
 	const availability = slotAvailabilityText( stock );
 	const full =
 		stock !== null && stock !== undefined && stock <= 0;
 	const unlimited = stock === null || stock === undefined;
+	const showTrash =
+		manageSlots && canRemoveSlot && typeof onRequestRemove === 'function';
 	return (
 		<div
 			aria-label={ `${ timeText }. ${ availability }.` }
@@ -269,18 +347,193 @@ function SlotOverviewCard( {
 				unlimited && emphasized && 'border-secondary/60',
 			) }
 		>
-			<div className="text-muted-foreground flex shrink-0 items-center gap-1 font-mono text-sm tabular-nums">
+			<div className="text-muted-foreground flex min-w-0 shrink-0 items-center gap-1 font-mono text-sm tabular-nums">
 				<Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-				<span>{ timeText }</span>
+				<span className="truncate">{ timeText }</span>
 			</div>
-			<span
-				className={ cn(
-					'text-muted-foreground shrink-0 tabular-nums text-xs',
-					full && 'text-destructive font-medium',
-				) }
-			>
-				{ availability }
-			</span>
+			<div className="flex shrink-0 items-center gap-2">
+				<span
+					className={ cn(
+						'text-muted-foreground tabular-nums text-xs',
+						full && 'text-destructive font-medium',
+					) }
+				>
+					{ availability }
+				</span>
+				{ showTrash ? (
+					<Button
+						type="button"
+						size="icon"
+						variant="ghost"
+						className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+						disabled={ removeDisabled }
+						aria-label={ `Remove session ${ timeText }` }
+						onClick={ onRequestRemove }
+					>
+						<Trash2 className="size-4" />
+					</Button>
+				) : null }
+			</div>
 		</div>
+	);
+}
+
+function EventOverviewManualAddToolbar( {
+	eventId,
+	selectedYmd,
+}: {
+	eventId: number;
+	selectedYmd: string;
+} ) {
+	const [ manualTime, setManualTime ] = useState( '09:00' );
+	const [ manualCapacity, setManualCapacity ] = useState( 10 );
+	const [ manualLabel, setManualLabel ] = useState( '' );
+	const addManual = useAddManualSlot( eventId );
+
+	async function onSubmit( ev: FormEvent ) {
+		ev.preventDefault();
+		try {
+			const payload: Record<string, unknown> = {
+				date: selectedYmd.trim(),
+				time: manualTime.trim(),
+				capacity: manualCapacity < 0 ? 0 : manualCapacity,
+			};
+			const lab = manualLabel.trim();
+			if ( lab ) {
+				payload.label = lab;
+			}
+			await addManual.mutateAsync( payload );
+			toast.success( 'Session added to this date.' );
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	return (
+		<form
+			onSubmit={ onSubmit }
+			className="flex flex-col gap-3 rounded-lg border border-border/80 bg-muted/20 p-3 sm:flex-row sm:flex-wrap sm:items-end"
+		>
+			<div className="text-muted-foreground w-full shrink-0 text-xs font-medium sm:w-auto">
+				Add session · { ' ' }
+				<span className="font-mono">{ selectedYmd }</span>
+			</div>
+			<div className="space-y-1.5">
+				<Label htmlFor="overview-manual-time" className="text-xs">
+					Time
+				</Label>
+				<Input
+					id="overview-manual-time"
+					type="time"
+					value={ manualTime }
+					onChange={ ( e ) => setManualTime( e.target.value ) }
+					disabled={ addManual.isPending }
+					required
+					className="w-[140px]"
+				/>
+			</div>
+			<div className="space-y-1.5">
+				<Label htmlFor="overview-manual-cap" className="text-xs">
+					Capacity
+				</Label>
+				<Input
+					id="overview-manual-cap"
+					type="number"
+					min={ 0 }
+					className="w-[104px]"
+					value={ manualCapacity }
+					onChange={ ( e ) =>
+						setManualCapacity( parseInt( e.target.value, 10 ) || 0 )
+					}
+					disabled={ addManual.isPending }
+					required
+				/>
+			</div>
+			<div className="min-w-[140px] flex-1 space-y-1.5">
+				<Label htmlFor="overview-manual-label" className="text-xs">
+					Label <span className="text-muted-foreground font-normal">(optional)</span>
+				</Label>
+				<Input
+					id="overview-manual-label"
+					placeholder="e.g. Regular"
+					value={ manualLabel }
+					onChange={ ( e ) => setManualLabel( e.target.value ) }
+					disabled={ addManual.isPending }
+					maxLength={ 60 }
+					autoComplete="off"
+				/>
+			</div>
+			<Button type="submit" disabled={ addManual.isPending } className="shrink-0">
+				{ addManual.isPending ? 'Adding…' : 'Add session' }
+			</Button>
+		</form>
+	);
+}
+
+function EventOverviewDeleteConfirmDialog( {
+	eventId,
+	pendingDelete,
+	clearPending,
+}: {
+	eventId: number;
+	pendingDelete: { slotId: string; dateId: string; title: string } | null;
+	clearPending: () => void;
+} ) {
+	const delManual = useDeleteManualSlot( eventId );
+
+	async function confirmDelete() {
+		if ( ! pendingDelete ) {
+			return;
+		}
+		try {
+			await delManual.mutateAsync( {
+				slotId: pendingDelete.slotId,
+				dateId: pendingDelete.dateId,
+			} );
+			toast.success( 'Slot removed.' );
+			clearPending();
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	return (
+		<Dialog
+			open={ pendingDelete !== null }
+			onOpenChange={ ( open ) => {
+				if ( ! open && ! delManual.isPending ) {
+					clearPending();
+				}
+			} }
+		>
+			<DialogContent showCloseButton={ ! delManual.isPending }>
+				<DialogHeader>
+					<DialogTitle>Remove this session?</DialogTitle>
+					<DialogDescription>
+						This stops new bookings for{' '}
+						<span className="text-foreground font-medium">{ pendingDelete?.title }</span>.
+						The server will refuse removal if tickets already exist for this slot and date.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ clearPending }
+						disabled={ delManual.isPending }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						variant="destructive"
+						onClick={ confirmDelete }
+						disabled={ delManual.isPending }
+					>
+						{ delManual.isPending ? 'Removing…' : 'Remove session' }
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }

@@ -270,7 +270,10 @@ class Slot_Generator_Service {
 	}
 
 	/**
-	 * Append one slot–date cell to FooEvents slotdate serialization without replacing existing options.
+	 * Append one slot–date cell without replacing FooEvents serialized options (slot-first or date-first booking).
+	 *
+	 * Raw `fooevents_bookings_options_serialized` is the same slot-id map for both modes; booking method meta
+	 * controls how FooEvents processes it. Products in `dateslot` mode remain `dateslot` after append.
 	 *
 	 * Body keys: date (Y-m-d), time (HH:MM), capacity (>=0), label (optional schedule name — empty uses time label).
 	 *
@@ -285,13 +288,7 @@ class Slot_Generator_Service {
 			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
 
-		if ( 'dateslot' === $this->bookings_method_for_product( $product ) ) {
-			return new WP_Error(
-				'unsupported_method',
-				__( 'Manual slot editing is supported for slot-first (slotdate) booking products only.', 'fooevents-internal-pos' ),
-				array( 'status' => 400 )
-			);
-		}
+		$bookings_method = $this->bookings_method_for_product( $product );
 
 		$ymd_raw = isset( $params['date'] ) ? (string) $params['date'] : ( isset( $params['bookingDate'] ) ? (string) $params['bookingDate'] : '' );
 		$time_in = isset( $params['time'] ) ? (string) $params['time'] : '';
@@ -424,7 +421,10 @@ class Slot_Generator_Service {
 		if ( is_wp_error( $maybe_err ) ) {
 			return $maybe_err;
 		}
-		update_post_meta( $product_id, 'WooCommerceEventsBookingsMethod', 'slotdate' );
+		// Slot-first products historically normalized empty/`1` method to explicit slotdate. Never flip dateslot→slotdate.
+		if ( 'dateslot' !== $bookings_method ) {
+			update_post_meta( $product_id, 'WooCommerceEventsBookingsMethod', 'slotdate' );
+		}
 
 		return array(
 			'slotId'           => $used_slot_id,
@@ -434,7 +434,7 @@ class Slot_Generator_Service {
 	}
 
 	/**
-	 * Remove one slot–date cell (slot-first / slotdate). Blocks if FooEvents tickets exist for that pairing.
+	 * Remove one slot–date cell. Blocks if FooEvents tickets exist for that pairing (slot-first or date-first).
 	 *
 	 * @param int    $product_id Product ID.
 	 * @param string $slot_id    FooEvents slot row id.
@@ -452,13 +452,6 @@ class Slot_Generator_Service {
 		$product = wc_get_product( $product_id );
 		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
 			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
-		}
-		if ( 'dateslot' === $this->bookings_method_for_product( $product ) ) {
-			return new WP_Error(
-				'unsupported_method',
-				__( 'Manual slot editing is supported for slot-first (slotdate) booking products only.', 'fooevents-internal-pos' ),
-				array( 'status' => 400 )
-			);
 		}
 
 		$blocked = new WP_Query(
