@@ -190,7 +190,11 @@ class Slot_Generator_Service {
 			}
 		);
 
-		$seq   = (int) ( microtime( true ) * 1000 );
+		/*
+		 * Use non-leading-digit prefixes so PHP/FooEvents never auto-casts add_date keys to int
+		 * (fixes WP admin Edit Ticket strict === mismatch and POS delete resolver).
+		 */
+		$seq = (int) ( microtime( true ) * 1000 );
 		$out   = array();
 		$sample = array();
 
@@ -221,7 +225,7 @@ class Slot_Generator_Service {
 				$label = $time_key;
 			}
 
-			$slot_id = (string) ( $seq++ );
+			$slot_id = 's' . str_pad( (string) ( $seq++ ), 14, '0', STR_PAD_LEFT );
 			// Key order must match what FooEvents process_booking_options() expects:
 			// 'add_time' must be iterated after hour/minute/period or formatted_time is never set.
 			$slot    = array(
@@ -238,7 +242,7 @@ class Slot_Generator_Service {
 					continue;
 				}
 				$display = date_i18n( $date_format, $ts );
-				$did     = (string) ( $seq++ );
+				$did     = 'd' . str_pad( (string) ( $seq++ ), 14, '0', STR_PAD_LEFT );
 				$slot[ $did . '_add_date' ] = $display;
 				$slot[ $did . '_stock' ]   = $stock;
 			}
@@ -513,7 +517,26 @@ class Slot_Generator_Service {
 			);
 		}
 		if ( '' === $inner_date_id ) {
-			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+			$suffixes = array();
+			foreach ( array_keys( $row ) as $k ) {
+				if ( preg_match( '/^(.+)_add_date$/', (string) $k, $m ) ) {
+					$norm = $this->normalize_booking_raw_date_suffix( $m[1] );
+					if ( '' !== $norm ) {
+						$suffixes[] = $norm;
+					}
+				}
+			}
+			$suffixes = array_values( array_unique( $suffixes ) );
+			return new WP_Error(
+				'not_found',
+				__( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ),
+				array(
+					'status'         => 404,
+					'normalized_did' => $date_id,
+					'ymd_hint'       => $ymd_hint,
+					'available_keys' => $suffixes,
+				)
+			);
 		}
 
 		$ticket_date_ids = array_values(
@@ -671,14 +694,15 @@ class Slot_Generator_Service {
 	 */
 	private function next_unique_internal_prefix( array $raw ) {
 		// Allow multiple adds in one PHP request — microtime-backed id with collision avoidance.
+		// Prefix with 'p' so keys are never purely numeric (PHP int-casts add_date keys and breaks FooEvents admin ===).
 		$base = (int) floor( microtime( true ) * 1000000 );
 		for ( $try = $base; $try < $base + 10000; ++$try ) {
-			$candidate = (string) $try;
+			$candidate = 'p' . (string) $try;
 			if ( ! $this->raw_uses_inner_date_prefix_anywhere( $raw, $candidate ) ) {
 				return $candidate;
 			}
 		}
-		return (string) wp_rand( 100000000, 990000000 );
+		return 'p' . (string) wp_rand( 100000000, 990000000 );
 	}
 
 	/**
@@ -707,11 +731,14 @@ class Slot_Generator_Service {
 	private function next_unique_slot_key( array $raw ) {
 		$max = 0;
 		foreach ( array_keys( $raw ) as $sid ) {
-			if ( ctype_digit( (string) $sid ) ) {
-				$max = max( $max, (int) $sid );
+			$s = (string) $sid;
+			if ( preg_match( '/^s(\d+)$/i', $s, $m ) ) {
+				$max = max( $max, (int) $m[1] );
+			} elseif ( ctype_digit( $s ) ) {
+				$max = max( $max, (int) $s );
 			}
 		}
-		return (string) ( $max + 1 );
+		return 's' . (string) ( $max + 1 );
 	}
 
 	/**
@@ -748,6 +775,8 @@ class Slot_Generator_Service {
 	 * @return string|null Matching raw date suffix, or null.
 	 */
 	private function find_date_id_with_ymd_in_slot_raw( array $slot_row, $ymd ) {
+		$tz      = $this->bookings->get_wp_timezone();
+		$wp_fmt  = trim( (string) get_option( 'date_format' ) );
 		foreach ( $slot_row as $key => $_val ) {
 			if ( ! preg_match( '/^(.+)_add_date$/', (string) $key, $m ) ) {
 				continue;
@@ -756,9 +785,24 @@ class Slot_Generator_Service {
 			if ( '' === $suffix ) {
 				continue;
 			}
-			$display = is_string( $_val ) ? $_val : '';
-			$parsed  = $this->bookings->date_string_to_ymd( $display );
-			if ( (string) $parsed === (string) $ymd ) {
+			$display = is_string( $_val ) ? trim( $_val ) : '';
+			if ( '' === $display ) {
+				continue;
+			}
+			$parsed_ymd = null;
+			if ( '' !== $wp_fmt ) {
+				$dtcf = DateTime::createFromFormat( $wp_fmt, $display, $tz );
+				if ( $dtcf instanceof DateTime ) {
+					$errs = DateTime::getLastErrors();
+					if ( is_array( $errs ) && empty( $errs['warning_count'] ) && empty( $errs['error_count'] ) ) {
+						$parsed_ymd = $dtcf->format( 'Y-m-d' );
+					}
+				}
+			}
+			if ( null === $parsed_ymd ) {
+				$parsed_ymd = $this->bookings->date_string_to_ymd( $display );
+			}
+			if ( null !== $parsed_ymd && (string) $parsed_ymd === (string) $ymd ) {
 				return $suffix;
 			}
 		}

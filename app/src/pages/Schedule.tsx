@@ -226,6 +226,20 @@ function todayYmdLocal(): string {
 	);
 }
 
+type DeleteNotFoundDiagnostics = {
+	normalized_did?: string;
+	ymd_hint?: string;
+	available_keys?: string[];
+};
+
+function parseRestWpPayload( err: unknown ): { code?: string; message?: string; data?: DeleteNotFoundDiagnostics } | null {
+	const wp = ( err as { wp?: unknown } )?.wp;
+	if ( ! wp || typeof wp !== 'object' ) {
+		return null;
+	}
+	return wp as { code?: string; message?: string; data?: DeleteNotFoundDiagnostics };
+}
+
 export default function Schedule() {
 	const { id } = useParams();
 	const eventId = id ? String( id ) : '';
@@ -280,6 +294,9 @@ export default function Schedule() {
 		ymd: string;
 		title: string;
 	} | null >( null );
+	const [ deleteNotFoundDetail, setDeleteNotFoundDetail ] = useState<DeleteNotFoundDiagnostics | null>(
+		null,
+	);
 	const [ blocks, setBlocks ] = useState<ScheduleBlock[]>( [ emptyBlock( 0 ) ] );
 	const [ sessionMinutes, setSessionMinutes ] = useState( 10 );
 	const [ capacity, setCapacity ] = useState( 10 );
@@ -349,6 +366,7 @@ export default function Schedule() {
 		if ( ! deleteSlotConfirm ) {
 			return;
 		}
+		setDeleteNotFoundDetail( null );
 		try {
 			await delManual.mutateAsync( {
 				slotId: deleteSlotConfirm.slotId,
@@ -357,8 +375,14 @@ export default function Schedule() {
 			} );
 			toast.success( 'Slot removed.' );
 			setDeleteSlotConfirm( null );
+			setDeleteNotFoundDetail( null );
 		} catch ( e ) {
-			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+			const msg = String( ( e as Error )?.message || e || 'Request failed' );
+			toast.error( msg );
+			const wp = parseRestWpPayload( e );
+			if ( wp?.code === 'not_found' && wp.data ) {
+				setDeleteNotFoundDetail( wp.data );
+			}
 		}
 	}
 
@@ -518,6 +542,44 @@ export default function Schedule() {
 							</p>
 						</CardHeader>
 						<CardContent className="space-y-4">
+							{ deleteNotFoundDetail ? (
+								<div className="border-destructive/50 bg-destructive/5 text-destructive space-y-2 rounded-md border p-3 text-sm">
+									<p className="font-medium">
+										Session remove failed: server could not match this listing to FooEvents booking
+										data (<code className="text-xs">not_found</code>).
+									</p>
+									<p className="text-muted-foreground text-xs">
+										If IDs are all digits, regenerate the schedule (numeric keys break WP admin strict
+										comparisons). Details from the API:
+									</p>
+									<ul className="text-foreground font-mono text-[11px] leading-relaxed break-all space-y-0.5">
+										<li>
+											<span className="text-muted-foreground">normalized dateId:</span>{ ' ' }
+											{ deleteNotFoundDetail.normalized_did ?? '(empty)' }
+										</li>
+										<li>
+											<span className="text-muted-foreground">ymd hint:</span>{ ' ' }
+											{ deleteNotFoundDetail.ymd_hint ?? '(empty)' }
+										</li>
+										<li>
+											<span className="text-muted-foreground">raw slot date suffixes:</span>{ ' ' }
+											{ deleteNotFoundDetail.available_keys?.length
+												? deleteNotFoundDetail.available_keys.slice( 0, 20 ).join( ', ' )
+												: '(none)' }
+											{ ( deleteNotFoundDetail.available_keys?.length ?? 0 ) > 20 ? ' …' : '' }
+										</li>
+									</ul>
+									<Button
+										type="button"
+										size="sm"
+										variant="outline"
+										className="mt-1 border-destructive/40 text-destructive hover:bg-destructive/10"
+										onClick={ () => setDeleteNotFoundDetail( null ) }
+									>
+										Dismiss diagnostics
+									</Button>
+								</div>
+							) : null }
 							{ sortedDateGroups.length === 0 ? (
 								<p className="text-muted-foreground text-sm">
 									No upcoming sessions. Add one above or use bulk generate.
@@ -574,6 +636,7 @@ export default function Schedule() {
 																if ( ! canDel ) {
 																	return;
 																}
+																setDeleteNotFoundDetail( null );
 																setDeleteSlotConfirm( {
 																	slotId: sid,
 																	dateId: did,

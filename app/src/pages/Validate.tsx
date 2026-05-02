@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+	useDashboard,
 	useRescheduleTicket,
 	useTicketDetail,
 	useTicketSearch,
@@ -49,6 +50,19 @@ import {
 } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import {
+	computeValidateSessionDelta,
+	flattenDashboardToSessionPicks,
+	pickDefaultValidateSession,
+	readStoredValidateSessionPick,
+	ticketHasBookingSlotIds,
+	type BookingSessionPayload,
+	type DashboardDayResponse,
+	type ValidateSessionDelta,
+	type ValidateSessionPick,
+	validateSessionOptionKey,
+	writeStoredValidateSessionPick,
+} from '@/lib/validateSession';
+import {
 	formatSlotTime,
 	groupSlotsByHour,
 	hidePastHourBucketsForToday,
@@ -58,21 +72,6 @@ import { cn } from '@/lib/utils';
 
 const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
 const SCAN_REGION_CHECKIN = 'fooevents-checkin-scan-region';
-
-/** Non-empty booking meta id from API (string or number). */
-function normalizedBookingMetaId( v: unknown ): string {
-	if ( v == null ) {
-		return '';
-	}
-	return String( v ).trim();
-}
-
-function ticketHasBookingSlotIds( ticket: FooTicketPayload ): boolean {
-	return (
-		normalizedBookingMetaId( ticket.WooCommerceEventsBookingSlotID ) !== ''
-		&& normalizedBookingMetaId( ticket.WooCommerceEventsBookingDateID ) !== ''
-	);
-}
 
 /** @param {unknown} s */
 function isNonEmptyStr( s: unknown ): s is string {
@@ -152,6 +151,7 @@ function resolveTicketTone( args: {
 	loading: boolean;
 	error: boolean;
 	justCheckedInNumericId: string | null;
+	sessionDelta?: ValidateSessionDelta;
 } ): TicketTone {
 	if ( args.error ) {
 		return 'red';
@@ -170,6 +170,9 @@ function resolveTicketTone( args: {
 	}
 	switch ( String( t.WooCommerceEventsStatus ?? '' ) ) {
 		case 'Not Checked In':
+			if ( args.sessionDelta?.offSession ) {
+				return 'yellow';
+			}
 			return 'blue';
 		case 'Checked In':
 			return 'yellow';
@@ -193,6 +196,7 @@ function ticketResultCopy( args: {
 	ticket?: FooTicketPayload;
 	error: boolean;
 	justCheckedInNumericId: string | null;
+	sessionDelta?: ValidateSessionDelta;
 } ): ResultPanelCopy {
 	if ( args.error ) {
 		return {
@@ -222,12 +226,34 @@ function ticketResultCopy( args: {
 		};
 	}
 	switch ( String( t.WooCommerceEventsStatus ?? '' ) ) {
-		case 'Not Checked In':
+		case 'Not Checked In': {
+			const sd = args.sessionDelta;
+			if ( sd?.kind === 'no_selection' ) {
+				return {
+					ResultIcon: CircleAlert,
+					headline: 'Choose gate session',
+					subtitle:
+						sd.detailLine
+						|| sd.subtitleExtra
+						|| 'Select the current gate session above to verify timing.',
+				};
+			}
+			if ( sd?.offSession && sd.kind !== 'non_booking' ) {
+				return {
+					ResultIcon: CircleAlert,
+					headline: 'Review timing',
+					subtitle:
+						sd.detailLine
+						|| sd.subtitleExtra
+						|| 'Booking does not match the selected gate session.',
+				};
+			}
 			return {
 				ResultIcon: CheckCircle2,
 				headline: 'Valid ticket',
 				subtitle: 'Ready to check in.',
 			};
+		}
 		case 'Checked In':
 			return {
 				ResultIcon: CircleAlert,
@@ -265,6 +291,7 @@ type FooTicketPayload = Record< string, unknown > & {
 	WooCommerceEventsBookingSlotID?: string | number;
 	WooCommerceEventsBookingDateID?: string | number;
 	eventDisplayName?: string;
+	bookingSession?: BookingSessionPayload;
 };
 
 type EventDetailForReschedule = {
@@ -673,6 +700,34 @@ export default function Validate() {
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
 	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
 
+	const [ validationDayYmd, setValidationDayYmd ] = useState( '' );
+	const [ siteTodayYmd, setSiteTodayYmd ] = useState< string | null >( null );
+	const [ selectedValidateSession, setSelectedValidateSession ] =
+		useState< ValidateSessionPick | null >( null );
+
+	const dashboardQuery = useDashboard( validationDayYmd );
+	const dashboardData = dashboardQuery.data as DashboardDayResponse | undefined;
+
+	const dashboardEventsSig = useMemo( () => {
+		if ( ! dashboardData?.events ) {
+			return '';
+		}
+		return dashboardData.events
+			.flatMap( ( ev ) =>
+				ev.slots.map(
+					( s ) =>
+						`${ ev.eventId }\t${ s.id }\t${ s.dateId }\t${ s.startsAtLocal ?? '' }\t${ s.time }`,
+				),
+			)
+			.sort()
+			.join( '\n' );
+	}, [ dashboardData?.events ] );
+
+	const flatSessionPicks = useMemo(
+		() => flattenDashboardToSessionPicks( dashboardData ),
+		[ dashboardData ],
+	);
+
 	const scanRegionId =
 		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
 
@@ -682,11 +737,60 @@ export default function Validate() {
 
 	const ticket = detailQuery.data?.ticket as FooTicketPayload | undefined;
 
+	const sessionDelta = useMemo(
+		() => computeValidateSessionDelta( ticket, selectedValidateSession ),
+		[ ticket, selectedValidateSession ],
+	);
+
 	const autoCheckInHandledKeyRef = useRef< string >( '' );
 
 	/** Stable lookup for mutate (same logic as mutation body). */
 	const getLookupFromTicket = ( t?: FooTicketPayload ) =>
 		t ? ticketLookupArg( t, selectedTicketId ) : '';
+
+	useEffect( () => {
+		if ( validationDayYmd === '' && dashboardData?.date ) {
+			setSiteTodayYmd( ( prev ) => prev ?? dashboardData.date );
+		}
+	}, [ validationDayYmd, dashboardData?.date ] );
+
+	useEffect( () => {
+		if (
+			! dashboardQuery.data?.date
+			|| ! Array.isArray( dashboardQuery.data.events )
+		) {
+			return;
+		}
+		const d = dashboardQuery.data as DashboardDayResponse;
+		const flat = flattenDashboardToSessionPicks( d );
+		if ( ! flat.length ) {
+			setSelectedValidateSession( null );
+			return;
+		}
+		const effToday =
+			siteTodayYmd
+			?? ( validationDayYmd === '' && d.date ? d.date : null )
+			?? format( new Date(), 'yyyy-MM-dd' );
+		setSelectedValidateSession( ( prev ) => {
+			const stored = readStoredValidateSessionPick( d.date, flat );
+			const next = stored ?? pickDefaultValidateSession( d, effToday );
+			if ( ! next ) {
+				return null;
+			}
+			if (
+				prev
+				&& validateSessionOptionKey( prev ) === validateSessionOptionKey( next )
+			) {
+				return prev;
+			}
+			return next;
+		} );
+	}, [
+		dashboardQuery.data?.date,
+		dashboardEventsSig,
+		siteTodayYmd,
+		validationDayYmd,
+	] );
 
 	useEffect( () => {
 		if ( ! scannerOpen ) {
@@ -756,6 +860,17 @@ export default function Validate() {
 				autoCheckInHandledKeyRef.current = key;
 				return;
 			}
+			const delta = computeValidateSessionDelta(
+				ticket,
+				selectedValidateSession,
+			);
+			if ( delta.offSession ) {
+				autoCheckInHandledKeyRef.current = key;
+				if ( delta.autoCheckInToast ) {
+					toast.warning( delta.autoCheckInToast );
+				}
+				return;
+			}
 			if ( statusMutation.isPending ) {
 				return;
 			}
@@ -795,6 +910,7 @@ export default function Validate() {
 		detailQuery.isLoading,
 		detailQuery.isError,
 		selectedTicketId,
+		selectedValidateSession,
 		statusMutation.isPending,
 	] );
 
@@ -851,12 +967,14 @@ export default function Validate() {
 				loading: detailQuery.isLoading,
 				error: detailQuery.isError,
 				justCheckedInNumericId,
+				sessionDelta,
 			} );
 		const resultCopy =
 			ticketResultCopy( {
 				ticket,
 				error: detailQuery.isError,
 				justCheckedInNumericId,
+				sessionDelta,
 			} );
 		const DisplayResultIcon = resultCopy.ResultIcon;
 		const displayIdLarge = ticket
@@ -985,6 +1103,17 @@ export default function Validate() {
 										{ isNonEmptyStr( ticket.WooCommerceEventsBookingSlot ) && (
 											<span className="block">{ ticket.WooCommerceEventsBookingSlot }</span>
 										) }
+										{ selectedValidateSession && (
+											<span className="mt-2 block border-t border-dashed border-border pt-2 text-xs leading-relaxed">
+												<span className="text-foreground font-semibold">Selected gate:</span>{ ' ' }
+												{ selectedValidateSession.eventTitle } ·{ ' ' }
+												{ selectedValidateSession.slotTime }{ ' ' }
+												{ selectedValidateSession.slotLabel }
+												<span className="ml-1 font-mono tabular-nums">
+													({ selectedValidateSession.viewDateYmd })
+												</span>
+											</span>
+										) }
 									</CardDescription>
 								</div>
 								<Badge
@@ -1044,14 +1173,24 @@ export default function Validate() {
 										type="button"
 										className={ cn(
 											'w-full sm:min-h-11 sm:min-w-[11rem]',
-											ticket.WooCommerceEventsStatus === 'Not Checked In' &&
-												'shadow-md ring-2 ring-blue-600/35 dark:ring-blue-400/30',
+											ticket.WooCommerceEventsStatus === 'Not Checked In'
+												&& sessionDelta.offSession
+												&& sessionDelta.kind !== 'non_booking'
+												&& 'shadow-md ring-2 ring-amber-600/45 dark:ring-amber-400/35',
+											ticket.WooCommerceEventsStatus === 'Not Checked In'
+												&& ! (
+													sessionDelta.offSession
+													&& sessionDelta.kind !== 'non_booking'
+												)
+												&& 'shadow-md ring-2 ring-blue-600/35 dark:ring-blue-400/30',
 										) }
 										size="lg"
 										disabled={ statusMutation.isPending || ticket.WooCommerceEventsStatus === 'Checked In' }
 										onClick={ () => applyStatus( 'Checked In' ) }
 									>
-										Check in now
+										{ sessionDelta.offSession && sessionDelta.kind !== 'non_booking'
+											? 'Check in anyway'
+											: 'Check in now' }
 									</Button>
 									<Button
 										type="button"
@@ -1141,8 +1280,127 @@ export default function Validate() {
 				</h1>
 				<p className="text-muted-foreground mt-1 max-w-prose text-sm leading-relaxed">
 					Validate only (lookup) or check in on scan — or search by email, phone number, or ticket ID.
+					Scan check-in pauses when the ticket does not match the selected gate session until you tap{ ' ' }
+					<strong>Check in anyway</strong>.
 				</p>
 			</div>
+
+			<Card className="border-muted-foreground/25">
+				<CardHeader className="pb-3">
+					<CardTitle className="text-lg">Gate session</CardTitle>
+					<CardDescription>
+						Choose the time slot you are admitting at (site timezone). Compared against each ticket&apos;s
+						booking.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="flex min-w-0 flex-col gap-2 sm:max-w-md">
+						<Label htmlFor={ `${ formId }-gate-day` }>Schedule day</Label>
+						<div className="flex flex-wrap items-center gap-2">
+							<Input
+								id={ `${ formId }-gate-day` }
+								type="date"
+								className="w-auto min-w-[10.5rem]"
+								value={ validationDayYmd || dashboardData?.date || '' }
+								onChange={ ( e ) => setValidationDayYmd( e.target.value ) }
+							/>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={ () => setValidationDayYmd( '' ) }
+							>
+								Site today
+							</Button>
+						</div>
+						<p className="text-muted-foreground text-xs tabular-nums">
+							Loaded schedule date:{ ' ' }
+							<span className="font-mono">{ dashboardData?.date ?? '—' }</span>
+							{ validationDayYmd === '' && (
+								<span className="ml-1">(WordPress default)</span>
+							) }
+						</p>
+					</div>
+
+					{ dashboardQuery.isLoading && (
+						<div className="text-muted-foreground flex items-center gap-2 text-sm">
+							<Loader2 className="size-4 animate-spin" aria-hidden />
+							Loading sessions…
+						</div>
+					) }
+
+					{ dashboardQuery.isError && (
+						<p className="text-destructive text-sm">
+							{ dashboardQuery.error instanceof Error
+								? dashboardQuery.error.message
+								: 'Could not load schedule.' }
+						</p>
+					) }
+
+					{ ! dashboardQuery.isLoading
+						&& ! dashboardQuery.isError
+						&& flatSessionPicks.length > 0 && (
+						<div className="space-y-2">
+							<Label htmlFor={ `${ formId }-gate-session` }>Session</Label>
+							<select
+								id={ `${ formId }-gate-session` }
+								className={ cn(
+									'border-input bg-background w-full max-w-full rounded-md border px-3 py-2 text-sm shadow-xs',
+									'outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
+								) }
+								value={
+									selectedValidateSession
+										? validateSessionOptionKey( selectedValidateSession )
+										: ''
+								}
+								onChange={ ( e ) => {
+									const v = e.target.value;
+									const pick = flatSessionPicks.find(
+										( p ) => validateSessionOptionKey( p ) === v,
+									);
+									if ( pick ) {
+										setSelectedValidateSession( pick );
+										writeStoredValidateSessionPick( pick );
+									}
+								} }
+							>
+								{ dashboardData?.events.map( ( ev ) => (
+									<optgroup key={ ev.eventId } label={ ev.eventTitle }>
+										{ ev.slots.map( ( s ) => {
+											const pick: ValidateSessionPick = {
+												viewDateYmd: dashboardData!.date,
+												eventId: ev.eventId,
+												eventTitle: ev.eventTitle,
+												slotId: s.id,
+												dateId: s.dateId,
+												slotLabel: s.label,
+												slotTime: formatSlotTime( s ),
+												startsAtLocal: s.startsAtLocal ?? null,
+											};
+											return (
+												<option
+													key={ `${ ev.eventId }-${ s.id }-${ s.dateId }` }
+													value={ validateSessionOptionKey( pick ) }
+												>
+													{ formatSlotTime( s ) } · { s.label }
+												</option>
+											);
+										} ) }
+									</optgroup>
+								) ) }
+							</select>
+						</div>
+					) }
+
+					{ ! dashboardQuery.isLoading
+						&& ! dashboardQuery.isError
+						&& flatSessionPicks.length === 0 && (
+						<p className="text-muted-foreground text-sm">
+							No sessions on this day in the POS schedule.
+						</p>
+					) }
+				</CardContent>
+			</Card>
 
 			<div className="grid gap-6 lg:grid-cols-2">
 				<Card className="h-fit">
@@ -1276,7 +1534,9 @@ export default function Validate() {
 							) }
 						</div>
 						<CardDescription>
-							Two modes: lookup only without changing status, or scan to check in automatically when the ticket is unused.
+							Two modes: lookup only without changing status, or scan to check in automatically when the
+							ticket is unused and matches the selected gate session (otherwise use
+							<strong> Check in anyway</strong>).
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -1291,7 +1551,7 @@ export default function Validate() {
 									aria-live="polite"
 								>
 									{ scannerKind === 'checkin'
-										? 'Grant camera access if prompted; valid unused tickets check in automatically after the read.'
+										? 'Grant camera access if prompted; unused tickets that match the selected gate session check in automatically after the read.'
 										: 'Grant camera access if prompted; ticket details load after a successful read.' }
 								</p>
 							</>

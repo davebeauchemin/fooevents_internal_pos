@@ -787,6 +787,18 @@ class Rest_API {
 			if ( ! $have_date ) {
 				$data['WooCommerceEventsBookingDateID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true );
 			}
+			if ( empty( $data['WooCommerceEventsBookingDateTimestamp'] ) ) {
+				$ts_meta = get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateTimestamp', true );
+				if ( null !== $ts_meta && '' !== $ts_meta ) {
+					$data['WooCommerceEventsBookingDateTimestamp'] = $ts_meta;
+				}
+			}
+			if ( empty( $data['WooCommerceEventsBookingDateMySQLFormat'] ) ) {
+				$mysql_meta = get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateMySQLFormat', true );
+				if ( null !== $mysql_meta && '' !== trim( (string) $mysql_meta ) ) {
+					$data['WooCommerceEventsBookingDateMySQLFormat'] = (string) $mysql_meta;
+				}
+			}
 		}
 
 		$slot_ok = isset( $data['WooCommerceEventsBookingSlotID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingSlotID'] );
@@ -800,6 +812,9 @@ class Rest_API {
 			if ( $product ) {
 				$data['eventDisplayName'] = $product->get_name();
 			}
+			$data['bookingSession'] = $this->bookings->get_validate_booking_session( $pid, $data );
+		} else {
+			$data['bookingSession'] = $this->bookings->get_validate_booking_session( 0, $data );
 		}
 
 		return rest_ensure_response(

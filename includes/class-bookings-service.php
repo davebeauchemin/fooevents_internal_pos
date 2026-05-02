@@ -413,6 +413,286 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Parse FooEvents booking timestamp meta to site-local DateTime.
+	 *
+	 * @param mixed           $raw Raw meta (often Unix seconds).
+	 * @param \DateTimeZone $tz  Site timezone.
+	 * @return DateTime|null
+	 */
+	private function parse_booking_timestamp_to_datetime( $raw, \DateTimeZone $tz ) {
+		if ( null === $raw || '' === $raw ) {
+			return null;
+		}
+		if ( is_numeric( $raw ) ) {
+			$dt = new DateTime( '@' . (int) $raw );
+			$dt->setTimezone( $tz );
+			return $dt;
+		}
+		return null;
+	}
+
+	/**
+	 * Resolve slot start from internal booking ids using processed options (includes past dates).
+	 *
+	 * @param int            $product_id Event product id.
+	 * @param string         $slot_id    WooCommerceEventsBookingSlotID.
+	 * @param string         $date_id    WooCommerceEventsBookingDateID.
+	 * @param \DateTimeZone $tz         Site timezone.
+	 * @return array<string,mixed>|null  Keys: dateYmd, time, startsAtLocal, dateLabelResolved, slotLabelResolved.
+	 */
+	private function resolve_booking_slot_datetime_from_ids( $product_id, $slot_id, $date_id, \DateTimeZone $tz ) {
+		$product_id = absint( $product_id );
+		$slot_id    = trim( (string) $slot_id );
+		$date_id    = trim( (string) $date_id );
+		if ( $product_id <= 0 || '' === $slot_id || '' === $date_id ) {
+			return null;
+		}
+
+		$ctx     = $this->get_processed_options( $product_id );
+		$method  = $ctx['method'];
+		$options = $ctx['options'];
+		if ( ! is_array( $options ) ) {
+			return null;
+		}
+
+		if ( 'dateslot' === $method ) {
+			foreach ( $options as $date_display => $slots_for_date ) {
+				if ( ! is_array( $slots_for_date ) ) {
+					continue;
+				}
+				$ymd = $this->date_string_to_ymd( (string) $date_display );
+				if ( null === $ymd ) {
+					continue;
+				}
+				foreach ( $slots_for_date as $sid => $row ) {
+					if ( ! is_array( $row ) ) {
+						continue;
+					}
+					if ( (string) $sid !== $slot_id ) {
+						continue;
+					}
+					$rid = (string) ( $row['date_id'] ?? '' );
+					if ( $rid !== $date_id ) {
+						continue;
+					}
+					$slot_label = (string) ( $row['slot_label'] ?? $sid );
+					$slot_time  = isset( $row['slot_time'] ) ? (string) $row['slot_time'] : '';
+					$full_label = trim( $slot_label . ( '' !== $slot_time ? ' ' . $slot_time : '' ) );
+					$time_hhmm  = $this->extract_time( $full_label );
+					if ( '' === $time_hhmm && '' !== $slot_time ) {
+						$time_hhmm = $this->extract_time( $slot_time );
+					}
+					$time_part = '' !== $time_hhmm ? $time_hhmm : '00:00';
+					$dt        = DateTime::createFromFormat( 'Y-m-d H:i', $ymd . ' ' . $time_part, $tz );
+					if ( ! $dt instanceof DateTime ) {
+						return null;
+					}
+					return array(
+						'dateYmd'           => $ymd,
+						'time'              => $time_hhmm,
+						'startsAtLocal'     => $dt->format( 'c' ),
+						'dateLabelResolved' => (string) $date_display,
+						'slotLabelResolved' => $full_label,
+					);
+				}
+			}
+			return null;
+		}
+
+		// slotdate: options keyed by slot id.
+		if ( ! isset( $options[ $slot_id ] ) || ! is_array( $options[ $slot_id ] ) ) {
+			return null;
+		}
+		$opt = $options[ $slot_id ];
+		$add = isset( $opt['add_date'] ) && is_array( $opt['add_date'] ) ? $opt['add_date'] : array();
+		$drow = null;
+		if ( isset( $add[ $date_id ] ) && is_array( $add[ $date_id ] ) ) {
+			$drow = $add[ $date_id ];
+		} else {
+			foreach ( $add as $dk => $dv ) {
+				if ( (string) $dk === $date_id && is_array( $dv ) ) {
+					$drow = $dv;
+					break;
+				}
+			}
+		}
+		if ( ! is_array( $drow ) || empty( $drow['date'] ) ) {
+			return null;
+		}
+
+		$hour       = isset( $opt['hour'] ) ? (string) $opt['hour'] : '';
+		$minute     = isset( $opt['minute'] ) ? (string) $opt['minute'] : '';
+		$time_hhmm  = ( '' === $hour || '' === $minute ) ? '' : sprintf( '%02d:%02d', (int) $hour, (int) $minute );
+		$ymd        = $this->date_string_to_ymd( (string) $drow['date'] );
+		if ( null === $ymd ) {
+			return null;
+		}
+		$base_label = trim( (string) ( $opt['label'] ?? $slot_id ) );
+		$time_part  = '' !== $time_hhmm ? $time_hhmm : '00:00';
+		$dt         = DateTime::createFromFormat( 'Y-m-d H:i', $ymd . ' ' . $time_part, $tz );
+		if ( ! $dt instanceof DateTime ) {
+			return null;
+		}
+
+		return array(
+			'dateYmd'           => $ymd,
+			'time'              => $time_hhmm,
+			'startsAtLocal'     => $dt->format( 'c' ),
+			'dateLabelResolved' => (string) $drow['date'],
+			'slotLabelResolved' => $base_label,
+		);
+	}
+
+	/**
+	 * Booking session timing for Validate UI (past dates included; not filtered like get_event_detail).
+	 *
+	 * @param int                  $product_id  Event product id.
+	 * @param array<string,mixed> $ticket_data FooEvents ticket payload (+ optional meta).
+	 * @return array<string,mixed>
+	 */
+	public function get_validate_booking_session( $product_id, array $ticket_data ) {
+		$product_id = absint( $product_id );
+		$empty      = array(
+			'eventId'         => $product_id,
+			'slotId'          => '',
+			'dateId'          => '',
+			'dateYmd'         => null,
+			'time'            => '',
+			'dateLabel'       => '',
+			'slotLabel'       => '',
+			'startsAtLocal'   => null,
+			'source'          => 'none',
+		);
+
+		if ( $product_id <= 0 ) {
+			return $empty;
+		}
+
+		$product = wc_get_product( $product_id );
+		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+			return $empty;
+		}
+
+		$tz           = $this->get_wp_timezone();
+		$slot_id      = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlotID'] ?? '' ) );
+		$date_id      = trim( (string) ( $ticket_data['WooCommerceEventsBookingDateID'] ?? '' ) );
+		$slot_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlot'] ?? '' ) );
+		$date_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingDate'] ?? '' ) );
+
+		$raw_ts = $ticket_data['WooCommerceEventsBookingDateTimestamp'] ?? null;
+		$dt_ts  = $this->parse_booking_timestamp_to_datetime( $raw_ts, $tz );
+		if ( $dt_ts instanceof DateTime ) {
+			return array(
+				'eventId'       => $product_id,
+				'slotId'        => $slot_id,
+				'dateId'        => $date_id,
+				'dateYmd'       => $dt_ts->format( 'Y-m-d' ),
+				'time'          => $dt_ts->format( 'H:i' ),
+				'dateLabel'     => $date_lbl_disp,
+				'slotLabel'     => $slot_lbl_disp,
+				'startsAtLocal' => $dt_ts->format( 'c' ),
+				'source'        => 'timestamp',
+			);
+		}
+
+		$mysql = isset( $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] )
+			? trim( (string) $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] ) : '';
+		if ( '' !== $mysql ) {
+			$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i:s', $mysql, $tz );
+			if ( ! $dt_mysql instanceof DateTime ) {
+				$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i', $mysql, $tz );
+			}
+			if ( $dt_mysql instanceof DateTime ) {
+				return array(
+					'eventId'       => $product_id,
+					'slotId'        => $slot_id,
+					'dateId'        => $date_id,
+					'dateYmd'       => $dt_mysql->format( 'Y-m-d' ),
+					'time'          => $dt_mysql->format( 'H:i' ),
+					'dateLabel'     => $date_lbl_disp,
+					'slotLabel'     => $slot_lbl_disp,
+					'startsAtLocal' => $dt_mysql->format( 'c' ),
+					'source'        => 'mysql',
+				);
+			}
+		}
+
+		if ( '' !== $slot_id && '' !== $date_id ) {
+			$res = $this->resolve_booking_slot_datetime_from_ids( $product_id, $slot_id, $date_id, $tz );
+			if ( is_array( $res ) ) {
+				return array(
+					'eventId'       => $product_id,
+					'slotId'        => $slot_id,
+					'dateId'        => $date_id,
+					'dateYmd'       => (string) $res['dateYmd'],
+					'time'          => (string) $res['time'],
+					'dateLabel'     => $date_lbl_disp ? $date_lbl_disp : (string) $res['dateLabelResolved'],
+					'slotLabel'     => $slot_lbl_disp ? $slot_lbl_disp : (string) $res['slotLabelResolved'],
+					'startsAtLocal' => (string) $res['startsAtLocal'],
+					'source'        => 'slot_ids',
+				);
+			}
+		}
+
+		$ymd_f  = $this->date_string_to_ymd( $date_lbl_disp );
+		$time_f = $this->extract_time( $slot_lbl_disp );
+		if ( null !== $ymd_f && '' !== $time_f ) {
+			$dt_disp = DateTime::createFromFormat( 'Y-m-d H:i', $ymd_f . ' ' . $time_f, $tz );
+			if ( $dt_disp instanceof DateTime ) {
+				return array(
+					'eventId'       => $product_id,
+					'slotId'        => $slot_id,
+					'dateId'        => $date_id,
+					'dateYmd'       => $ymd_f,
+					'time'          => $time_f,
+					'dateLabel'     => $date_lbl_disp,
+					'slotLabel'     => $slot_lbl_disp,
+					'startsAtLocal' => $dt_disp->format( 'c' ),
+					'source'        => 'display_parse',
+				);
+			}
+		}
+
+		return array(
+			'eventId'       => $product_id,
+			'slotId'        => $slot_id,
+			'dateId'        => $date_id,
+			'dateYmd'       => $ymd_f,
+			'time'          => $time_f,
+			'dateLabel'     => $date_lbl_disp,
+			'slotLabel'     => $slot_lbl_disp,
+			'startsAtLocal' => null,
+			'source'        => 'none',
+		);
+	}
+
+	/**
+	 * ISO 8601 instant for a slot on a calendar day in site TZ (for POS time compares).
+	 *
+	 * @param string          $ymd   Y-m-d.
+	 * @param string          $time  HH:MM or empty.
+	 * @param string          $label Slot label fallback for time extraction.
+	 * @param \DateTimeZone $tz    Site TZ.
+	 * @return string|null
+	 */
+	private function slot_starts_at_local_iso( $ymd, $time, $label, \DateTimeZone $tz ) {
+		$ymd = trim( (string) $ymd );
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd ) ) {
+			return null;
+		}
+		$time_s = trim( (string) $time );
+		if ( '' === $time_s || ! preg_match( '/^([01]?\d|2[0-3]):([0-5]\d)$/', $time_s, $tm ) ) {
+			$time_s = $this->extract_time( (string) $label );
+		}
+		if ( '' === $time_s || ! preg_match( '/^([01]?\d|2[0-3]):([0-5]\d)$/', $time_s, $tm ) ) {
+			return null;
+		}
+		$norm = sprintf( '%02d:%02d', (int) $tm[1], (int) $tm[2] );
+		$dt   = DateTime::createFromFormat( 'Y-m-d H:i', $ymd . ' ' . $norm, $tz );
+		return $dt instanceof DateTime ? $dt->format( 'c' ) : null;
+	}
+
+	/**
 	 * All bookable slots for a single day (Y-m-d in site timezone), for dashboard.
 	 *
 	 * @param string $ymd Y-m-d or empty (defaults to today).
@@ -452,11 +732,17 @@ class Bookings_Service {
 					$stock_meta = isset( $s['stock'] ) ? $s['stock'] : null;
 
 					$slots[] = array(
-						'id'     => (string) ( $s['id'] ?? '' ),
-						'dateId' => (string) ( $s['dateId'] ?? '' ),
-						'label'  => $label,
-						'time'   => $time,
-						'stock'  => $stock_meta,
+						'id'              => (string) ( $s['id'] ?? '' ),
+						'dateId'          => (string) ( $s['dateId'] ?? '' ),
+						'label'           => $label,
+						'time'            => $time,
+						'stock'           => $stock_meta,
+						'startsAtLocal'   => $this->slot_starts_at_local_iso(
+							$ddy,
+							$time,
+							$label,
+							$this->get_wp_timezone()
+						),
 					);
 				}
 

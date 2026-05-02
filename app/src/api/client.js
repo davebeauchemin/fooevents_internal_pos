@@ -42,7 +42,17 @@ export async function restFetch(path, init = {}) {
 	});
 	if (!res.ok) {
 		const text = await res.text();
-		throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+		const err = new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`);
+		/** @type {unknown} */
+		let wp = null;
+		try {
+			wp = JSON.parse(text);
+		} catch {
+			// not JSON
+		}
+		Object.defineProperty(err, 'wp', { value: wp, enumerable: false });
+		Object.defineProperty(err, 'status', { value: res.status, enumerable: false });
+		throw err;
 	}
 	return res.json();
 }
