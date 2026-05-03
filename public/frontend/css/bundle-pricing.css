@@ -1,53 +1,40 @@
-/* Dynamic bundle pricing — badge layout (single product) */
+/* Dynamic bundle pricing — stack under WooCommerce price; chips use ACSS .btn styles */
 
-.fipos-dynamic-bundle-pricing {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 0.625rem;
+.fipos-dynamic-bundle-pricing.fipos-dynamic-bundle-pricing--below-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
-  vertical-align: middle;
-  line-height: 1.35;
+  margin-top: 0.5rem;
 }
 
-/* When Woo / builder wraps price in flex row, keep badges from colliding */
-p.price .fipos-dynamic-bundle-pricing {
-  flex: 1 1 auto;
-  min-width: min(100%, 12rem);
+/* Price row is often flex; force the bundle block onto its own row */
+p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pricing--below-price {
+  flex: 0 0 100%;
 }
 
 .fipos-dynamic-bundle-pricing__base {
   font-size: 0.9em;
-  line-height: inherit;
-  white-space: nowrap;
+  line-height: 1.35;
   opacity: 0.9;
 }
 
-.fipos-dynamic-bundle-pricing__badge {
-  display: inline-flex;
+.fipos-dynamic-bundle-pricing__badges {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  box-sizing: border-box;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  line-height: 1.25;
-  padding: 0.35em 0.75em;
-  border-radius: 999px;
-  white-space: nowrap;
-  letter-spacing: 0.01em;
-  /* Neutral pill; override in theme if needed */
-  color: #0f172a;
-  background: #e8eef6;
-  border: 1px solid #c5d0e0;
+  gap: 0.5rem 0.625rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  .fipos-dynamic-bundle-pricing__badge {
-    color: #e2e8f0;
-    background: rgba(148, 163, 184, 0.15);
-    border-color: rgba(148, 163, 184, 0.35);
-  }
+/* Layout only — colors/spacing come from ACSS `btn btn--primary` */
+.fipos-dynamic-bundle-pricing__badge {
+  white-space: nowrap;
+}
 
-  .fipos-dynamic-bundle-pricing__base {
-    opacity: 0.95;
-  }
+.fipos-dynamic-bundle-pricing__badge.btn {
+  cursor: default;
+  vertical-align: middle;
 }

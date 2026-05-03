@@ -205,13 +205,30 @@ class Product_Bundle_Pricing {
 			$inner .= '<span class="fipos-dynamic-bundle-pricing__base">' . esc_html( $base_text ) . '</span>';
 		}
 
+		$badges = '';
 		foreach ( $rows as $row ) {
 			$qty  = isset( $row['qty'] ) ? (int) $row['qty'] : 0;
 			$text = isset( $row['text'] ) ? (string) $row['text'] : '';
 			if ( $qty < 1 || '' === $text ) {
 				continue;
 			}
-			$inner .= '<span class="fipos-dynamic-bundle-pricing__badge" data-fipos-bundle-qty="' . esc_attr( (string) $qty ) . '">' . esc_html( $text ) . '</span>';
+
+			/**
+			 * CSS classes for each bundle chip (Automatic.css / ACSS: `btn btn--primary`).
+			 *
+			 * @param string     $classes Space‑separated classes.
+			 * @param WC_Product $product Product.
+			 * @param int        $qty     Tickets in this tier.
+			 */
+			$chip_classes = (string) apply_filters( 'fipos_dynamic_bundle_pricing_badge_classes', 'btn btn--primary', $product, $qty );
+			$chip_classes = self::sanitize_html_class_list( $chip_classes );
+			$full_class   = trim( 'fipos-dynamic-bundle-pricing__badge' . ( '' !== $chip_classes ? ' ' . $chip_classes : '' ) );
+
+			$badges .= '<span class="' . esc_attr( $full_class ) . '" data-fipos-bundle-qty="' . esc_attr( (string) $qty ) . '">' . esc_html( $text ) . '</span>';
+		}
+
+		if ( '' !== $badges ) {
+			$inner .= '<span class="fipos-dynamic-bundle-pricing__badges">' . $badges . '</span>';
 		}
 
 		if ( '' === $inner ) {
@@ -219,7 +236,7 @@ class Product_Bundle_Pricing {
 		}
 
 		$group_label = __( 'Bundle pricing options', 'fooevents-internal-pos' );
-		$html        = '<span class="fipos-dynamic-bundle-pricing" role="group" aria-label="' . esc_attr( $group_label ) . '">' . $inner . '</span>';
+		$html        = '<span class="fipos-dynamic-bundle-pricing fipos-dynamic-bundle-pricing--below-price" role="group" aria-label="' . esc_attr( $group_label ) . '">' . $inner . '</span>';
 
 		return wp_kses(
 			$html,
@@ -232,6 +249,32 @@ class Product_Bundle_Pricing {
 				),
 			)
 		);
+	}
+
+	/**
+	 * Sanitize a space‑separated class list for HTML class="…".
+	 *
+	 * @param string $classes Raw classes.
+	 * @return string Space‑separated sanitized tokens (empty tokens dropped).
+	 */
+	private static function sanitize_html_class_list( $classes ) {
+		$classes = trim( preg_replace( '/\s+/', ' ', (string) $classes ) );
+		if ( '' === $classes ) {
+			return '';
+		}
+		$out = array();
+		foreach ( explode( ' ', $classes ) as $token ) {
+			$token = trim( (string) $token );
+			if ( '' === $token ) {
+				continue;
+			}
+			// Preserve ACSS/BEM tokens; wp lacks multi-class sanitizer.
+			if ( ! preg_match( '/^[a-zA-Z0-9_\-]+$/', $token ) ) {
+				continue;
+			}
+			$out[] = $token;
+		}
+		return implode( ' ', $out );
 	}
 
 	/**
