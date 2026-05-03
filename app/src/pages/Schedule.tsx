@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Plus } from 'lucide-react';
+import { Plus, TriangleAlert } from 'lucide-react';
 import { useAddManualSlot, useAddSlotStock, useEvent, useGenerateSlots } from '../api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,13 +17,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select';
 import {
 	Select,
 	SelectContent,
@@ -802,6 +795,29 @@ export default function Schedule() {
 					<Separator />
 			</>
 
+			<section
+				aria-labelledby="schedule-danger-zone-heading"
+				className="bg-destructive/[0.06] space-y-6 rounded-lg border border-destructive/35 p-4 sm:p-5 dark:bg-destructive/10"
+			>
+				<div className="bg-background/85 flex gap-3 rounded-md border border-destructive/45 px-4 py-3 dark:bg-background/55">
+					<TriangleAlert
+						className="text-destructive mt-0.5 size-5 shrink-0"
+						aria-hidden
+					/>
+					<div className="space-y-2 text-sm">
+						<p id="schedule-danger-zone-heading" className="text-destructive font-semibold">
+							Danger zone
+						</p>
+						<p className="text-muted-foreground leading-relaxed">
+							Saving from this section <strong className="text-foreground">overwrites</strong> every
+							existing FooEvents booking slot and date on this product with a freshly generated
+							schedule. Existing ticket counts and bookings may no longer line up with the new
+							grid—customers could see the wrong session, or the same slot could effectively be
+							booked twice. Only use this when you intend a full reset and understand the impact.
+						</p>
+					</div>
+				</div>
+
 			{ blocks.map( ( b, idx ) => (
 				<Card key={ b.id }>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -948,6 +964,7 @@ export default function Schedule() {
 			>
 				{ gen.isPending ? 'Saving…' : 'Generate and replace' }
 			</Button>
+			</section>
 
 			<Dialog open={ confirmOpen } onOpenChange={ setConfirmOpen }>
 				<DialogContent>

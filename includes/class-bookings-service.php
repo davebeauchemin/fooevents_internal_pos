@@ -219,15 +219,19 @@ class Bookings_Service {
 					if ( ! is_array( $row ) ) {
 						continue;
 					}
-					$stock = $row['stock'] ?? '';
-					$slot_label = (string) ( $row['slot_label'] ?? $slot_id );
-					if ( ! empty( $row['slot_time'] ) ) {
-						$slot_label .= ' ' . (string) $row['slot_time'];
+					$stock           = $row['stock'] ?? '';
+					$slot_label_base = (string) ( $row['slot_label'] ?? $slot_id );
+					$slot_time_part  = ! empty( $row['slot_time'] ) ? (string) $row['slot_time'] : '';
+					$full_label      = trim( $slot_label_base . ( '' !== $slot_time_part ? ' ' . $slot_time_part : '' ) );
+					$time_hhmm_cell  = $this->extract_time( $full_label );
+					if ( '' === $time_hhmm_cell && '' !== $slot_time_part ) {
+						$time_hhmm_cell = $this->extract_time( $slot_time_part );
 					}
 					$slot_rows[] = array(
 						'id'     => (string) $slot_id,
 						'dateId' => (string) ( $row['date_id'] ?? '' ),
-						'label'  => trim( $slot_label ),
+						'label'  => $full_label,
+						'time'   => $time_hhmm_cell,
 						'stock'  => $this->normalize_stock( $stock ),
 					);
 				}
@@ -252,6 +256,9 @@ class Bookings_Service {
 				$hour      = isset( $opt['hour'] ) ? (string) $opt['hour'] : '';
 				$minute    = isset( $opt['minute'] ) ? (string) $opt['minute'] : '';
 				$time_hhmm = ( '' === $hour || '' === $minute ) ? '' : sprintf( '%02d:%02d', (int) $hour, (int) $minute );
+				if ( '' === $time_hhmm ) {
+					$time_hhmm = $this->extract_time( $base_label );
+				}
 				$period     = array_key_exists( 'period', $opt ) ? (string) $opt['period'] : '';
 				foreach ( $opt['add_date'] as $date_id => $drow ) {
 					if ( ! is_array( $drow ) || empty( $drow['date'] ) ) {
@@ -420,6 +427,19 @@ class Bookings_Service {
 				$h += 12;
 			}
 			if ( 'am' === $ap && 12 === $h ) {
+				$h = 0;
+			}
+			return sprintf( '%02d:%02d', $h, $min );
+		}
+		// e.g. "9:00 a.m." / "9:00 p.m." (FooEvents-style).
+		if ( preg_match( '/\b(\d{1,2}):([0-5]\d)\s*([ap])\.\s*m\.?\b/i', $label, $m ) ) {
+			$h   = (int) $m[1];
+			$min = (int) $m[2];
+			$ap  = strtolower( (string) $m[3] );
+			if ( 'p' === $ap && $h < 12 ) {
+				$h += 12;
+			}
+			if ( 'a' === $ap && 12 === $h ) {
 				$h = 0;
 			}
 			return sprintf( '%02d:%02d', $h, $min );
