@@ -242,6 +242,32 @@ export function useAddManualSlot( eventId ) {
 }
 
 /**
+ * Add capacity to an existing slot–date cell (finite stock only).
+ *
+ * Body: `{ slotId, dateId, date: 'Y-m-d', addSpots: number }`
+ *
+ * @param {number|string|undefined} eventId
+ */
+export function useAddSlotStock( eventId ) {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'slotStockAdd', eventId ],
+		mutationFn: ( body ) =>
+			restFetch( `${ prefix }/events/${ eventId }/slots/stock`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify( body ),
+			} ),
+		onSuccess: async () => {
+			await invalidateAndRefetchEvent( qc, eventId );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
+		},
+	} );
+}
+
+/**
  * Remove one slot–date row by internal ids (blocked if tickets exist server-side).
  * Pass `ymd` (Y-m-d calendar day) when the UI has it so dateslot rows resolve to raw meta reliably.
  *

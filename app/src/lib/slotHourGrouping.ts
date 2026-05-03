@@ -25,6 +25,122 @@ export function formatSlotTime( slot: Pick<SlotLike, 'label' | 'time' | 'stock' 
 	return '—';
 }
 
+function normHhmm( hhmm: string ): string | null {
+	const m = hhmm.trim().match( /^(\d{1,2}):(\d{2})$/ );
+	if ( ! m ) {
+		return null;
+	}
+	const h = parseInt( m[ 1 ], 10 );
+	const min = parseInt( m[ 2 ], 10 );
+	if ( h < 0 || h > 23 || min < 0 || min > 59 ) {
+		return null;
+	}
+	return `${ String( h ).padStart( 2, '0' ) }:${ String( min ).padStart( 2, '0' ) }`;
+}
+
+function slotNormHhmm( slot: Pick< SlotLike, 'label' | 'time' | 'stock' > ): string | null {
+	const fromTime = normHhmm( ( slot.time ?? '' ).trim() );
+	if ( fromTime ) {
+		return fromTime;
+	}
+	const ft = formatSlotTime( slot );
+	if ( ft && ft !== '—' ) {
+		const n = normHhmm( ft );
+		if ( n ) {
+			return n;
+		}
+		const m12 = ft.match( /^(\d{1,2}):(\d{2})\s*([ap])(?:\.\s*m|m\.?)?\.?/i );
+		if ( m12 ) {
+			let h = parseInt( m12[ 1 ], 10 );
+			const min = parseInt( m12[ 2 ], 10 );
+			const ap = m12[ 3 ].toLowerCase();
+			if ( ap === 'p' && h !== 12 ) {
+				h += 12;
+			}
+			if ( ap === 'a' && h === 12 ) {
+				h = 0;
+			}
+			return normHhmm( `${ h }:${ min }` );
+		}
+	}
+	return null;
+}
+
+function primaryHhmmFromSlotLabel( label: string ): string | null {
+	const m = label.trim().match( /^(\d{1,2}):(\d{2})\b/ );
+	return m ? normHhmm( `${ m[ 1 ] }:${ m[ 2 ] }` ) : null;
+}
+
+/**
+ * Whether a manual add for this calendar day would duplicate an existing slot–date cell
+ * (mirrors server duplicate_slot / label+time semantics).
+ */
+export function manualSlotWouldDuplicateExisting(
+	existingSlots: SlotLike[],
+	manualTimeHhmm: string,
+	manualLabel: string,
+): boolean {
+	const mh = normHhmm( manualTimeHhmm.trim() );
+	if ( ! mh ) {
+		return false;
+	}
+	const manualName = manualLabel.trim().toLowerCase();
+	const manualEff = manualName || mh.toLowerCase();
+
+	for ( const s of existingSlots ) {
+		const sh = slotNormHhmm( s );
+		if ( ! sh || sh !== mh ) {
+			continue;
+		}
+		const sLab = ( s.label ?? '' ).trim();
+		if ( ! sLab ) {
+			if ( manualEff === mh.toLowerCase() ) {
+				return true;
+			}
+			continue;
+		}
+		const sEff = sLab.toLowerCase();
+		if ( manualEff === sEff ) {
+			return true;
+		}
+		if ( manualEff === mh.toLowerCase() ) {
+			if ( sEff.startsWith( mh.toLowerCase() ) ) {
+				return true;
+			}
+			const lead = primaryHhmmFromSlotLabel( sLab );
+			if ( lead === mh ) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/** Stable Select value for a slot + date cell (manual stock UI). */
+export function encodeManualSlotDateRef( slot: Pick< SlotLike, 'id' > & { dateId?: string } ): string {
+	return JSON.stringify( [
+		String( slot.id ?? '' ).trim(),
+		String( slot.dateId ?? '' ).trim(),
+	] );
+}
+
+export function decodeManualSlotDateRef( v: string ): { slotId: string; dateId: string } | null {
+	try {
+		const a = JSON.parse( v ) as unknown;
+		if ( ! Array.isArray( a ) || a.length < 2 ) {
+			return null;
+		}
+		const slotId = String( a[ 0 ] ?? '' ).trim();
+		const dateId = String( a[ 1 ] ?? '' ).trim();
+		if ( ! slotId || ! dateId ) {
+			return null;
+		}
+		return { slotId, dateId };
+	} catch {
+		return null;
+	}
+}
+
 /**
  * 24h hour 0–23, or null.
  */

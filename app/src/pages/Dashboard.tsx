@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { addDays, format, formatDistanceToNow, isSameDay, parseISO } from 'date-fns';
+import { addDays, format, formatDistanceToNow, parseISO } from 'date-fns';
 import { CalendarIcon, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -17,10 +17,11 @@ import {
 	AccordionTrigger,
 } from '@/components/ui/accordion';
 import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from '@/components/ui/popover';
+	Dialog,
+	DialogContent,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
 import Cart from '@/components/Cart';
 import BookingScheduleSummaryCards from '@/components/BookingScheduleSummaryCards';
 import type {
@@ -117,6 +118,7 @@ export default function Dashboard() {
 	 * `data.date` is always the *viewed* day, so it must not drive Today/Tomorrow labels after the user picks another date.
 	 */
 	const [siteTodayYmd, setSiteTodayYmd] = useState<string | null>(null);
+	const [otherDateDialogOpen, setOtherDateDialogOpen] = useState(false);
 	const [ticketQtyByEventId, setTicketQtyByEventId] = useState<
 		Record<number, number>
 	>({});
@@ -163,7 +165,7 @@ export default function Dashboard() {
 		return parseISO(`${displayYmd}T12:00:00`);
 	}, [displayYmd]);
 
-	/** Site “today” Y-m-d — same source for Today/Tomorrow labels and the fixed 7-day strip. */
+	/** Site “today” Y-m-d — same source for Today/Tomorrow labels and the 3-day strip. */
 	const effectiveSiteTodayYmd = useMemo(
 		() =>
 			siteTodayYmd
@@ -177,14 +179,18 @@ export default function Dashboard() {
 		[effectiveSiteTodayYmd],
 	);
 
-	/** Always site today → today+6. Does not re-anchor when viewing another day. */
+	/** Site today, today+1, today+2 — fixed strip; other dates via dialog. */
 	const quickDates = useMemo(() => {
 		const start = refTodayForLabels;
-		return Array.from({ length: 7 }, (_, i) => {
+		return Array.from({ length: 3 }, (_, i) => {
 			const date = addDays(start, i);
 			return { ymd: format(date, 'yyyy-MM-dd'), date };
 		});
 	}, [refTodayForLabels]);
+
+	const isOtherDateSelected = Boolean(
+		displayYmd && !quickDates.some((p) => p.ymd === displayYmd),
+	);
 
 	useEffect(() => {
 		if (ymd === '' && data?.date) {
@@ -248,8 +254,8 @@ export default function Dashboard() {
 	return (
 		<div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:items-start lg:gap-8">
 			<div className="min-w-0 space-y-6">
-				<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-					<div className="w-full min-w-0 text-left sm:flex-1">
+				<div className="flex flex-col gap-3">
+					<div className="w-full min-w-0 text-left">
 						<h1 className="text-2xl font-bold tracking-tight">Today’s schedule</h1>
 						<p className="text-muted-foreground text-sm">
 							Live schedule · select slots and build an order (checkout in cart) · WooCommerce orders · auto refresh every 30s
@@ -290,85 +296,6 @@ export default function Dashboard() {
 							)}
 						</div>
 					</div>
-					<div className="flex flex-wrap items-center gap-2 sm:flex-1 sm:justify-end">
-						<Popover>
-							<PopoverTrigger asChild>
-								<Button
-									variant="outline"
-									className={cn(
-										'w-[min(100%,240px)] justify-start text-left font-normal',
-									)}
-									type="button"
-								>
-									<CalendarIcon className="mr-2 h-4 w-4" />
-									{displayYmd
-										? format(parseISO(`${displayYmd}T12:00:00`), 'PP')
-										: 'Select date'}
-								</Button>
-							</PopoverTrigger>
-							<PopoverContent
-								className="w-auto p-0"
-								align="start"
-								onOpenAutoFocus={(e) => e.preventDefault()}
-							>
-								<Calendar
-									mode="single"
-									selected={calendarDate}
-									onSelect={(d) => {
-										if (d) {
-											setYmd(format(d, 'yyyy-MM-dd'));
-										}
-									}}
-									initialFocus
-								/>
-							</PopoverContent>
-						</Popover>
-						<Button
-							variant="secondary"
-							type="button"
-							onClick={() => setYmd('')}
-						>
-							Today
-						</Button>
-					</div>
-				</div>
-
-				<div>
-					<p className="text-muted-foreground mb-2 text-sm font-medium">Date</p>
-					<div className="flex flex-wrap gap-2 overflow-x-auto pb-1">
-						{quickDates.map((pill) => {
-							const title = (() => {
-								if (isSameDay(pill.date, refTodayForLabels)) {
-									return 'Today';
-								}
-								if (isSameDay(pill.date, addDays(refTodayForLabels, 1))) {
-									return 'Tomorrow';
-								}
-								return format(pill.date, 'PP');
-							})();
-							const isSelected = Boolean(displayYmd) && displayYmd === pill.ymd;
-							return (
-								<button
-									key={pill.ymd}
-									type="button"
-									onClick={() => setYmd(pill.ymd)}
-									className={cn(
-										'rounded-lg border px-3 py-2 text-left text-sm transition',
-										isSelected
-											? 'border-primary bg-primary/10 text-foreground'
-											: 'border-border bg-card hover:border-primary/50',
-									)}
-								>
-									<div className="max-w-[200px] truncate font-medium">
-										{title}
-									</div>
-									<div className="text-muted-foreground text-xs">
-										{pill.ymd}
-									</div>
-								</button>
-							);
-						})}
-					</div>
 				</div>
 
 				<div className="space-y-3">
@@ -382,6 +309,81 @@ export default function Dashboard() {
 						isLoading={isLoading && !data}
 					/>
 				</div>
+
+				<div>
+					<p className="text-muted-foreground mb-2 text-sm font-medium">Date</p>
+					<div className="flex flex-wrap gap-2 overflow-x-auto pb-1">
+						{quickDates.map((pill, idx) => {
+							const title =
+								idx === 0 ? 'Today' : idx === 1 ? 'Tomorrow' : 'Day after tomorrow';
+							const todayYmd = quickDates[0]?.ymd;
+							const isTodayCard = idx === 0;
+							const showSelected = isTodayCard
+								? Boolean(displayYmd && todayYmd && displayYmd === todayYmd && (ymd === '' || ymd === todayYmd))
+								: Boolean(displayYmd) && displayYmd === pill.ymd;
+							return (
+								<button
+									key={pill.ymd}
+									type="button"
+									onClick={() => (isTodayCard ? setYmd('') : setYmd(pill.ymd))}
+									className={cn(
+										'rounded-lg border px-3 py-2 text-left text-sm transition',
+										showSelected
+											? 'border-primary bg-primary/10 text-foreground'
+											: 'border-border bg-card hover:border-primary/50',
+									)}
+								>
+									<div className="max-w-[200px] truncate font-medium">
+										{title}
+									</div>
+									<div className="text-muted-foreground text-xs">
+										{pill.ymd}
+									</div>
+								</button>
+							);
+						})}
+						<button
+							type="button"
+							onClick={() => setOtherDateDialogOpen(true)}
+							className={cn(
+								'rounded-lg border px-3 py-2 text-left text-sm transition',
+								isOtherDateSelected
+									? 'border-primary bg-primary/10 text-foreground'
+									: 'border-border bg-card hover:border-primary/50',
+							)}
+						>
+							<div className="flex max-w-[220px] items-center gap-2 truncate font-medium">
+								<CalendarIcon className="size-4 shrink-0 opacity-70" aria-hidden />
+								<span>Select another date</span>
+							</div>
+							<div className="text-muted-foreground text-xs">
+								{isOtherDateSelected && displayYmd ? displayYmd : 'Pick any day'}
+							</div>
+						</button>
+					</div>
+				</div>
+
+				<Dialog open={otherDateDialogOpen} onOpenChange={setOtherDateDialogOpen}>
+					<DialogContent
+						className="sm:max-w-fit"
+						onOpenAutoFocus={(e) => e.preventDefault()}
+					>
+						<DialogHeader>
+							<DialogTitle>Select a date</DialogTitle>
+						</DialogHeader>
+						<Calendar
+							mode="single"
+							selected={calendarDate}
+							onSelect={(d) => {
+								if (d) {
+									setYmd(format(d, 'yyyy-MM-dd'));
+									setOtherDateDialogOpen(false);
+								}
+							}}
+							initialFocus
+						/>
+					</DialogContent>
+				</Dialog>
 
 				{isLoading && !data && (
 					<div className="space-y-3">

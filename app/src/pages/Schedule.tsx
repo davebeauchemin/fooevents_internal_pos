@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
-import { useAddManualSlot, useEvent, useGenerateSlots } from '../api/queries.js';
+import { useAddManualSlot, useAddSlotStock, useEvent, useGenerateSlots } from '../api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,8 +24,23 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select';
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+	decodeManualSlotDateRef,
+	encodeManualSlotDateRef,
+	formatSlotTime,
+	manualSlotWouldDuplicateExisting,
+	type SlotLike,
+} from '@/lib/slotHourGrouping';
 
 type ScheduleBlock = {
 	id: string;
@@ -231,11 +246,16 @@ export default function Schedule() {
 	};
 	const gen = useGenerateSlots( eventId );
 	const addManual = useAddManualSlot( eventId );
+	const addStock = useAddSlotStock( eventId );
 
 	const [ manualDate, setManualDate ] = useState( todayYmdLocal );
 	const [ manualTime, setManualTime ] = useState( '09:00' );
 	const [ manualCapacity, setManualCapacity ] = useState( 10 );
 	const [ manualLabel, setManualLabel ] = useState( '' );
+	const [ manualAddMode, setManualAddMode ] = useState< 'newSession' | 'extraSpots' >( 'newSession' );
+	const [ manualSpotSelectValue, setManualSpotSelectValue ] = useState( '' );
+	const [ manualAddSpotsDelta, setManualAddSpotsDelta ] = useState( 1 );
+	const [ manualStockConfirmOpen, setManualStockConfirmOpen ] = useState( false );
 	const [ blocks, setBlocks ] = useState<ScheduleBlock[]>( [ emptyBlock( 0 ) ] );
 	const [ sessionMinutes, setSessionMinutes ] = useState( 10 );
 	const [ capacity, setCapacity ] = useState( 10 );
@@ -262,6 +282,80 @@ export default function Schedule() {
 		[ blocks, sessionMinutes ],
 	);
 
+	const slotsOnManualDate = useMemo( (): SlotLike[] => {
+		const raw = eventData?.dates as
+			| Array<{ date?: string; slots?: SlotLike[] }>
+			| undefined;
+		if ( ! raw ) {
+			return [];
+		}
+		const ymd = manualDate.trim();
+		const day = raw.find( ( d ) => String( d?.date ?? '' ).trim() === ymd );
+		return day?.slots ?? [];
+	}, [ eventData?.dates, manualDate ] );
+
+	const manualAddWouldDuplicate = useMemo(
+		() =>
+			manualAddMode === 'newSession'
+			&& manualSlotWouldDuplicateExisting(
+				slotsOnManualDate,
+				manualTime,
+				manualLabel,
+			),
+		[ manualAddMode, slotsOnManualDate, manualTime, manualLabel ],
+	);
+
+	const spotsEligibleSchedule = useMemo(
+		() =>
+			slotsOnManualDate.filter( ( s ) => {
+				const sid = String( s.id ?? '' ).trim();
+				const did = String( s.dateId ?? '' ).trim();
+				return Boolean( sid && did && s.stock !== null && s.stock !== undefined );
+			} ),
+		[ slotsOnManualDate ],
+	);
+
+	useEffect( () => {
+		if ( manualAddMode !== 'extraSpots' ) {
+			return;
+		}
+		if ( spotsEligibleSchedule.length === 0 ) {
+			setManualSpotSelectValue( '' );
+			return;
+		}
+		setManualSpotSelectValue( ( prev ) => {
+			if ( prev && spotsEligibleSchedule.some( ( s ) => encodeManualSlotDateRef( s ) === prev ) ) {
+				return prev;
+			}
+			return encodeManualSlotDateRef( spotsEligibleSchedule[ 0 ] );
+		} );
+	}, [ manualAddMode, spotsEligibleSchedule ] );
+
+	const selectedSpotSchedule = useMemo( () => {
+		if ( ! manualSpotSelectValue ) {
+			return undefined;
+		}
+		return spotsEligibleSchedule.find(
+			( s ) => encodeManualSlotDateRef( s ) === manualSpotSelectValue,
+		);
+	}, [ spotsEligibleSchedule, manualSpotSelectValue ] );
+
+	const scheduleManualBusy = addManual.isPending || addStock.isPending;
+
+	const manualDuplicateMessage =
+		'That date and session time already exist for this slot. Change the time, schedule label, or day.';
+
+	function scheduleSlotPickerLabel( s: SlotLike ): string {
+		const t = formatSlotTime( s );
+		const lab = ( s.label ?? '' ).trim();
+		const head = lab || t;
+		const cap =
+			s.stock === null || s.stock === undefined
+				? 'Unlimited'
+				: `${ s.stock } cap`;
+		return `${ head } · ${ t } · ${ cap }`;
+	}
+
 	function updateBlock( blockId: string, patch: Partial<ScheduleBlock> ) {
 		setBlocks( ( prev ) =>
 			prev.map( ( b ) => ( b.id === blockId ? { ...b, ...patch } : b ) )
@@ -284,6 +378,29 @@ export default function Schedule() {
 
 	async function submitManualSlot( ev: FormEvent ) {
 		ev.preventDefault();
+		if ( manualAddMode === 'extraSpots' ) {
+			if ( spotsEligibleSchedule.length === 0 ) {
+				toast.error(
+					'No sessions with a set capacity on that date. Use New session or pick a date that already has numeric limits.',
+				);
+				return;
+			}
+			const parsed = decodeManualSlotDateRef( manualSpotSelectValue );
+			if ( ! parsed ) {
+				toast.error( 'Select a session to add spots to.' );
+				return;
+			}
+			if ( manualAddSpotsDelta < 1 ) {
+				toast.error( 'Add at least 1 spot.' );
+				return;
+			}
+			setManualStockConfirmOpen( true );
+			return;
+		}
+		if ( manualAddWouldDuplicate ) {
+			toast.error( manualDuplicateMessage );
+			return;
+		}
 		try {
 			const payload: Record<string, unknown> = {
 				date: manualDate.trim(),
@@ -296,6 +413,25 @@ export default function Schedule() {
 			}
 			await addManual.mutateAsync( payload );
 			toast.success( 'Session added to this product schedule.' );
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	async function commitManualStockAdd() {
+		const parsed = decodeManualSlotDateRef( manualSpotSelectValue );
+		if ( ! parsed || manualAddSpotsDelta < 1 ) {
+			return;
+		}
+		try {
+			await addStock.mutateAsync( {
+				slotId: parsed.slotId,
+				dateId: parsed.dateId,
+				date: manualDate.trim(),
+				addSpots: manualAddSpotsDelta,
+			} );
+			toast.success( `Added ${ manualAddSpotsDelta } ticket spot(s).` );
+			setManualStockConfirmOpen( false );
 		} catch ( e ) {
 			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
 		}
@@ -426,76 +562,242 @@ export default function Schedule() {
 								Manual sessions
 							</CardTitle>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								Adds one WooCommerce slot–date cell. Matches an existing slot when the label
-								and time are the same so you can add an extra day to that row.
+								For one calendar day: create a <strong>new session</strong> (new time / label) or{' '}
+								<strong>add ticket spots</strong> to a session that already exists with a numeric
+								capacity (not unlimited).
 							</p>
 						</CardHeader>
-						<CardContent>
-							<form
-								className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end"
-								onSubmit={ submitManualSlot }
-							>
-								<div className="space-y-2">
-									<Label htmlFor="manual-date">Date</Label>
-									<Input
-										id="manual-date"
-										type="date"
-										value={ manualDate }
-										onChange={ ( e ) => setManualDate( e.target.value ) }
-										disabled={ addManual.isPending }
-										required
-									/>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="manual-time">Time</Label>
-									<Input
-										id="manual-time"
-										type="time"
-										value={ manualTime }
-										onChange={ ( e ) => setManualTime( e.target.value ) }
-										disabled={ addManual.isPending }
-										required
-									/>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="manual-cap">Capacity</Label>
-									<p className="text-muted-foreground text-xs">0 = unlimited</p>
-									<Input
-										id="manual-cap"
-										type="number"
-										min={ 0 }
-										className="w-[120px]"
-										value={ manualCapacity }
-										onChange={ ( e ) =>
-											setManualCapacity(
-												parseInt( e.target.value, 10 ) || 0,
-											)
+						<CardContent className="space-y-4">
+							<div className="space-y-2">
+								<Label htmlFor="manual-date">Date</Label>
+								<Input
+									id="manual-date"
+									type="date"
+									value={ manualDate }
+									onChange={ ( e ) => setManualDate( e.target.value ) }
+									disabled={ scheduleManualBusy }
+									required
+									className="max-w-xs"
+								/>
+							</div>
+							<div className="space-y-2">
+								<p className="text-muted-foreground text-xs font-medium">What do you want to do?</p>
+								<ToggleGroup
+									type="single"
+									value={ manualAddMode }
+									onValueChange={ ( v ) => {
+										if ( v === 'newSession' || v === 'extraSpots' ) {
+											setManualAddMode( v );
 										}
-										disabled={ addManual.isPending }
-										required
-									/>
-								</div>
-								<div className="min-w-[200px] flex-1 space-y-2">
-									<Label htmlFor="manual-label">Schedule label (optional)</Label>
-									<Input
-										id="manual-label"
-										placeholder="Same as bulk blocks (e.g. Regular)"
-										value={ manualLabel }
-										onChange={ ( e ) => setManualLabel( e.target.value ) }
-										disabled={ addManual.isPending }
-										maxLength={ 60 }
-										autoComplete="off"
-									/>
-								</div>
-								<Button
-									type="submit"
-									disabled={ addManual.isPending || gen.isPending }
+									} }
+									disabled={ scheduleManualBusy || gen.isPending }
+									className="grid w-full max-w-md grid-cols-2 gap-2"
 								>
-									{ addManual.isPending ? 'Adding…' : 'Add session' }
-								</Button>
-							</form>
+									<ToggleGroupItem value="newSession" className="text-sm">
+										New session
+									</ToggleGroupItem>
+									<ToggleGroupItem value="extraSpots" className="text-sm">
+										Add ticket spots
+									</ToggleGroupItem>
+								</ToggleGroup>
+							</div>
+							{ manualAddMode === 'extraSpots' ? (
+								<form className="space-y-4" onSubmit={ submitManualSlot }>
+									<div className="space-y-2">
+										<Label>Session on this date</Label>
+										{ spotsEligibleSchedule.length === 0 ? (
+											<p className="text-muted-foreground text-sm">
+												No sessions with a fixed capacity on that date. Pick another date or use
+												New session.
+											</p>
+										) : (
+											<Select
+												value={ manualSpotSelectValue }
+												onValueChange={ setManualSpotSelectValue }
+												disabled={ scheduleManualBusy || gen.isPending }
+											>
+												<SelectTrigger className="w-full max-w-xl">
+													<SelectValue placeholder="Choose session" />
+												</SelectTrigger>
+												<SelectContent>
+													{ spotsEligibleSchedule.map( ( s ) => (
+														<SelectItem
+															key={ encodeManualSlotDateRef( s ) }
+															value={ encodeManualSlotDateRef( s ) }
+														>
+															{ scheduleSlotPickerLabel( s ) }
+														</SelectItem>
+													) ) }
+												</SelectContent>
+											</Select>
+										) }
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="sched-add-spots">Additional spots</Label>
+										<p className="text-muted-foreground text-xs">
+											Adds to the session&apos;s current numeric limit.
+										</p>
+										<Input
+											id="sched-add-spots"
+											type="number"
+											min={ 1 }
+											className="w-[120px]"
+											value={ manualAddSpotsDelta }
+											onChange={ ( e ) => {
+												const n = parseInt( e.target.value, 10 );
+												setManualAddSpotsDelta(
+													Number.isFinite( n ) && n >= 1 ? n : 1,
+												);
+											} }
+											disabled={
+												scheduleManualBusy
+												|| gen.isPending
+												|| spotsEligibleSchedule.length === 0
+											}
+											required
+										/>
+									</div>
+									<Button
+										type="submit"
+										disabled={
+											scheduleManualBusy
+											|| gen.isPending
+											|| spotsEligibleSchedule.length === 0
+											|| manualAddSpotsDelta < 1
+										}
+									>
+										Continue
+									</Button>
+								</form>
+							) : (
+								<form
+									className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end"
+									onSubmit={ submitManualSlot }
+								>
+									<div className="space-y-2">
+										<Label htmlFor="manual-time">Time</Label>
+										<Input
+											id="manual-time"
+											type="time"
+											value={ manualTime }
+											onChange={ ( e ) => setManualTime( e.target.value ) }
+											disabled={ scheduleManualBusy }
+											required
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="manual-cap">Capacity</Label>
+										<p className="text-muted-foreground text-xs">0 = unlimited</p>
+										<Input
+											id="manual-cap"
+											type="number"
+											min={ 0 }
+											className="w-[120px]"
+											value={ manualCapacity }
+											onChange={ ( e ) =>
+												setManualCapacity(
+													parseInt( e.target.value, 10 ) || 0,
+												)
+											}
+											disabled={ scheduleManualBusy }
+											required
+										/>
+									</div>
+									<div className="min-w-[200px] flex-1 space-y-2">
+										<Label htmlFor="manual-label">Schedule label (optional)</Label>
+										<Input
+											id="manual-label"
+											placeholder="Same as bulk blocks (e.g. Regular)"
+											value={ manualLabel }
+											onChange={ ( e ) => setManualLabel( e.target.value ) }
+											disabled={ scheduleManualBusy }
+											maxLength={ 60 }
+											autoComplete="off"
+										/>
+									</div>
+									{ manualAddWouldDuplicate ? (
+										<p className="text-destructive w-full text-sm">{ manualDuplicateMessage }</p>
+									) : null }
+									<Button
+										type="submit"
+										disabled={
+											scheduleManualBusy || gen.isPending || manualAddWouldDuplicate
+										}
+									>
+										{ addManual.isPending ? 'Adding…' : 'Add session' }
+									</Button>
+								</form>
+							) }
 						</CardContent>
 					</Card>
+
+					<Dialog
+						open={ manualStockConfirmOpen }
+						onOpenChange={ ( open ) => {
+							if ( ! scheduleManualBusy ) {
+								setManualStockConfirmOpen( open );
+							}
+						} }
+					>
+						<DialogContent showCloseButton={ ! scheduleManualBusy }>
+							<DialogHeader>
+								<DialogTitle>Add ticket spots?</DialogTitle>
+								<DialogDescription>
+									Extra capacity for this session on{ ' ' }
+									<span className="font-mono text-foreground">{ manualDate.trim() }</span>.
+								</DialogDescription>
+							</DialogHeader>
+							<div className="bg-muted/40 border-border space-y-2 rounded-lg border px-3 py-3 text-sm">
+								<div className="flex flex-wrap justify-between gap-2">
+									<span className="text-muted-foreground">Session</span>
+									<span className="max-w-[min(100%,16rem)] text-right font-medium break-words">
+										{ selectedSpotSchedule
+											? scheduleSlotPickerLabel( selectedSpotSchedule )
+											: '—' }
+									</span>
+								</div>
+								<div className="flex flex-wrap justify-between gap-2">
+									<span className="text-muted-foreground">Current capacity</span>
+									<span className="font-medium tabular-nums">
+										{ selectedSpotSchedule != null
+										&& typeof selectedSpotSchedule.stock === 'number'
+											? selectedSpotSchedule.stock
+											: '—' }
+									</span>
+								</div>
+								<div className="flex flex-wrap justify-between gap-2">
+									<span className="text-muted-foreground">Adding</span>
+									<span className="font-medium tabular-nums">+{ manualAddSpotsDelta }</span>
+								</div>
+								<div className="flex flex-wrap justify-between gap-2">
+									<span className="text-muted-foreground">New capacity</span>
+									<span className="font-medium tabular-nums">
+										{ selectedSpotSchedule != null
+										&& typeof selectedSpotSchedule.stock === 'number'
+											? selectedSpotSchedule.stock + manualAddSpotsDelta
+											: '—' }
+									</span>
+								</div>
+							</div>
+							<DialogFooter className="gap-2 sm:gap-0">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={ () => setManualStockConfirmOpen( false ) }
+									disabled={ scheduleManualBusy }
+								>
+									Cancel
+								</Button>
+								<Button
+									type="button"
+									onClick={ commitManualStockAdd }
+									disabled={ scheduleManualBusy }
+								>
+									{ addStock.isPending ? 'Saving…' : 'Confirm add spots' }
+								</Button>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
 
 					<Separator />
 			</>

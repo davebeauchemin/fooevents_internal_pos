@@ -73,7 +73,7 @@ function App() {
 				<AppSidebar />
 				<SidebarInset>
 					<header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/80 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 backdrop-blur">
-						<div className="flex items-center gap-2 px-4">
+						<div className="flex items-center gap-2 px-4 sm:px-6">
 							<SidebarTrigger className="-ml-1" />
 							<Separator
 								orientation="vertical"
@@ -96,7 +96,7 @@ function App() {
 							</Breadcrumb>
 						</div>
 					</header>
-					<div className="mx-auto w-full max-w-7xl flex-1 px-4 pb-4 pt-6">
+					<div className="mx-auto w-full max-w-7xl flex-1 px-4 pb-12 pt-6 sm:px-6">
 						<Routes>
 							<Route path="/" element={ <Dashboard /> } />
 							<Route path="/calendar" element={ <Dashboard /> } />

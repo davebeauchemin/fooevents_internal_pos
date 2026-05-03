@@ -3,6 +3,13 @@ import { Link } from 'react-router-dom';
 import { Minus, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { cartLineKey, useCart, type CartLine } from '@/context/CartContext';
@@ -12,6 +19,9 @@ import { cn } from '@/lib/utils';
 /** Numeric field only; ± buttons stay immediate to avoid racing preview while typing. */
 const QTY_INPUT_DEBOUNCE_MS = 320;
 
+const cartCheckoutButtonClassName =
+	'h-12 w-full justify-center bg-emerald-600 text-base font-semibold text-white hover:bg-emerald-700 focus-visible:border-emerald-500/50 focus-visible:ring-emerald-500/30 dark:bg-emerald-600 dark:text-white dark:hover:bg-emerald-500';
+
 type Props = {
 	variant?: 'full' | 'panel';
 	className?: string;
@@ -19,62 +29,105 @@ type Props = {
 
 export default function Cart( { variant = 'panel', className }: Props ) {
 	const { items, totalQty, lineCount, updateQty, removeLine, clearCart } = useCart();
+	const [ clearCartDialogOpen, setClearCartDialogOpen ] = useState( false );
 
 	const subtotalDisplay = useMemo( () => cartSubtotalDisplay( items ), [ items ] );
 
 	if ( variant === 'panel' ) {
 		return (
-			<Card className={ cn( 'shadow-sm', className ) }>
-				<CardHeader className="space-y-1 pb-3">
-					<div className="flex flex-wrap items-baseline justify-between gap-2">
-						<CardTitle className="text-lg">Cart</CardTitle>
-						<p className="text-muted-foreground text-xs tabular-nums">
-							{ lineCount === 0
-								? 'Empty'
-								: `${ lineCount } line${ lineCount === 1 ? '' : 's' } · ${ totalQty } ticket${ totalQty === 1 ? '' : 's' }` }
-						</p>
-					</div>
-				</CardHeader>
-				<CardContent className="space-y-4 pt-0">
-					{ items.length === 0 ? (
-						<p className="text-muted-foreground border-border rounded-lg border border-dashed p-4 text-center text-sm">
-							Your cart is empty. Select a time slot to start.
-						</p>
-					) : (
-						<ul className="max-h-[min(60vh,28rem)] space-y-3 overflow-y-auto pr-1">
-							{ items.map( ( line ) => (
-								<li key={ cartLineKey( line ) }>
-									<CartLineRow
-										line={ line }
-										onQty={ ( q ) => updateQty( cartLineKey( line ), q ) }
-										onRemove={ () => removeLine( cartLineKey( line ) ) }
-									/>
-								</li>
-							) ) }
-						</ul>
-					) }
-					{ lineCount > 0 && (
-						<CartSubtotalRow display={ subtotalDisplay } />
-					) }
-					<Separator />
-					<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-						{ lineCount > 0 && (
-							<Button type="button" variant="outline" size="sm" onClick={ clearCart }>
-								Clear cart
-							</Button>
+			<>
+				<Card className={ cn( 'shadow-sm', className ) }>
+					<CardHeader className="space-y-0 pb-3">
+						<div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+							<CardTitle className="text-lg">Cart</CardTitle>
+							<div className="flex flex-col items-end gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+								<p className="text-muted-foreground text-xs tabular-nums">
+									{ lineCount === 0
+										? 'Empty'
+										: `${ lineCount } line${ lineCount === 1 ? '' : 's' } · ${ totalQty } ticket${ totalQty === 1 ? '' : 's' }` }
+								</p>
+								{ lineCount > 0 && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="shrink-0"
+										onClick={ () => setClearCartDialogOpen( true ) }
+									>
+										Clear cart
+									</Button>
+								) }
+							</div>
+						</div>
+					</CardHeader>
+					<CardContent className="space-y-4 pt-0">
+						{ items.length === 0 ? (
+							<p className="text-muted-foreground border-border rounded-lg border border-dashed p-4 text-center text-sm">
+								Your cart is empty. Select a time slot to start.
+							</p>
+						) : (
+							<ul className="max-h-[min(60vh,28rem)] space-y-3 overflow-y-auto pr-1">
+								{ items.map( ( line ) => (
+									<li key={ cartLineKey( line ) }>
+										<CartLineRow
+											line={ line }
+											onQty={ ( q ) => updateQty( cartLineKey( line ), q ) }
+											onRemove={ () => removeLine( cartLineKey( line ) ) }
+										/>
+									</li>
+								) ) }
+							</ul>
 						) }
+						{ lineCount > 0 && (
+							<CartSubtotalRow display={ subtotalDisplay } />
+						) }
+						<Separator />
 						{ lineCount === 0 ? (
-							<Button type="button" className="sm:ml-auto" disabled>
+							<Button
+								type="button"
+								size="lg"
+								className={ cartCheckoutButtonClassName }
+								disabled
+							>
 								Checkout
 							</Button>
 						) : (
-							<Button type="button" className="sm:ml-auto" asChild>
+							<Button type="button" size="lg" className={ cartCheckoutButtonClassName } asChild>
 								<Link to="/checkout">Checkout</Link>
 							</Button>
 						) }
-					</div>
-				</CardContent>
-			</Card>
+					</CardContent>
+				</Card>
+				<Dialog open={ clearCartDialogOpen } onOpenChange={ setClearCartDialogOpen }>
+					<DialogContent showCloseButton={ false }>
+						<DialogHeader>
+							<DialogTitle>Clear cart?</DialogTitle>
+							<DialogDescription>
+								All tickets will be removed from your cart. You can add them again from the schedule.
+							</DialogDescription>
+						</DialogHeader>
+						<div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+							<Button
+								type="button"
+								variant="outline"
+								onClick={ () => setClearCartDialogOpen( false ) }
+							>
+								Cancel
+							</Button>
+							<Button
+								type="button"
+								variant="destructive"
+								onClick={ () => {
+									clearCart();
+									setClearCartDialogOpen( false );
+								} }
+							>
+								Clear cart
+							</Button>
+						</div>
+					</DialogContent>
+				</Dialog>
+			</>
 		);
 	}
 
@@ -271,8 +324,14 @@ export function CartLineRow( {
 	);
 
 	const priceEach = htmlToPlainText( line.priceHtml );
+	const lineSummary = [ htmlToPlainText( line.eventTitle ), line.dateLabel, line.slotTime ]
+		.filter( Boolean )
+		.join( ' · ' );
+
+	const [ removeDialogOpen, setRemoveDialogOpen ] = useState( false );
 
 	return (
+		<>
 		<div className="border-border bg-card space-y-2 rounded-lg border p-3 text-sm shadow-sm">
 			<div className="flex flex-wrap items-start justify-between gap-2">
 				<div className="min-w-0 flex-1">
@@ -285,7 +344,14 @@ export function CartLineRow( {
 						<p className="text-muted-foreground mt-1 text-xs">{ priceEach } each</p>
 					) : null }
 				</div>
-				<Button type="button" variant="ghost" size="icon" className="size-8 shrink-0 text-destructive" onClick={ onRemove } aria-label="Remove line">
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+					onClick={ () => setRemoveDialogOpen( true ) }
+					aria-label="Remove line"
+				>
 					<Trash2 className="size-4" />
 				</Button>
 			</div>
@@ -331,5 +397,38 @@ export function CartLineRow( {
 				<span className="text-muted-foreground text-xs">max { cap }</span>
 			</div>
 		</div>
+		<Dialog open={ removeDialogOpen } onOpenChange={ setRemoveDialogOpen }>
+			<DialogContent showCloseButton={ false }>
+				<DialogHeader>
+					<DialogTitle>Remove this line?</DialogTitle>
+					<DialogDescription>
+						<span className="text-foreground font-medium">{ lineSummary }</span>
+						{ ' ' }
+						will be removed from your cart. You can add it again from the schedule.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ () => setRemoveDialogOpen( false ) }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						variant="destructive"
+						onClick={ () => {
+							onRemove();
+							setRemoveDialogOpen( false );
+						} }
+					>
+						<Trash2 className="size-4" aria-hidden />
+						Remove
+					</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
+		</>
 	);
 }

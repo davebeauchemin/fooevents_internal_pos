@@ -123,6 +123,22 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/slots/stock',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_slots_stock' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/events/(?P<id>\\d+)/slots/(?P<slotId>[^/]+)/dates/(?P<dateId>[^/]+)',
 			array(
 				'methods'             => WP_REST_Server::DELETABLE,
@@ -377,6 +393,25 @@ class Rest_API {
 			$params = array();
 		}
 		$result = $this->slot_generator->manual_add_slot_date( $id, $params );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * POST /events/{id}/slots/stock — add ticket spots to an existing finite-capacity slot–date cell.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_slots_stock( WP_REST_Request $request ) {
+		$id     = (int) $request['id'];
+		$params = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$result = $this->slot_generator->manual_add_slot_stock( $id, $params );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
