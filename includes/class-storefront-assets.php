@@ -46,6 +46,12 @@ class Storefront_Assets {
 
 		if ( function_exists( 'is_product' ) && is_product() ) {
 			wp_enqueue_style(
+				'fipos-bundle-pricing',
+				$url . 'css/bundle-pricing.css',
+				array(),
+				$ver
+			);
+			wp_enqueue_style(
 				'fipos-date-slot-picker',
 				$url . 'css/date-slot-picker.css',
 				array(),

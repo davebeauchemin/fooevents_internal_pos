@@ -94,12 +94,12 @@ class Product_Bundle_Pricing {
 	}
 
 	/**
-	 * Plain text segments for bundles (no HTML).
+	 * Bundle tiers for display: ticket count + label (plain text).
 	 *
 	 * @param WC_Product $product Product.
-	 * @return string[] Labels like "2 tickets for $35.00".
+	 * @return array<int, array{qty:int, text:string}>
 	 */
-	public static function get_bundle_line_segments( $product ) {
+	public static function get_bundle_tier_rows( $product ) {
 		if ( ! $product instanceof WC_Product || ! Coupon_Rules::is_fooevents_booking_product( $product ) ) {
 			return array();
 		}
@@ -114,7 +114,6 @@ class Product_Bundle_Pricing {
 			return array();
 		}
 
-		// Display ascending by ticket count (2-pack before 4-pack).
 		usort(
 			$tiers,
 			static function ( $a, $b ) {
@@ -136,20 +135,39 @@ class Product_Bundle_Pricing {
 				continue;
 			}
 
-			/* translators: 1: ticket count, 2: formatted price */
-			$out[] = sprintf( __( '%1$d tickets for %2$s', 'fooevents-internal-pos' ), $qty, wp_strip_all_tags( wc_price( $final ) ) );
+			$out[] = array(
+				'qty'  => $qty,
+				/* translators: 1: ticket count, 2: formatted price */
+				'text' => sprintf( __( '%1$d tickets for %2$s', 'fooevents-internal-pos' ), $qty, wp_strip_all_tags( wc_price( $final ) ) ),
+			);
 		}
 
 		return $out;
 	}
 
 	/**
-	 * Full marketing line: base per-person + bundle segments.
+	 * Plain segments for bundle lines only (backward compatibility).
 	 *
 	 * @param WC_Product $product Product.
-	 * @return string HTML-safe fragment (uses wc_price).
+	 * @return string[]
+	 * @deprecated 0.1.2.9 Prefer get_bundle_tier_rows() or get_bundle_pricing_markup().
 	 */
-	public static function get_formatted_html( $product ) {
+	public static function get_bundle_line_segments( $product ) {
+		$rows = self::get_bundle_tier_rows( $product );
+		$out  = array();
+		foreach ( $rows as $row ) {
+			$out[] = isset( $row['text'] ) ? (string) $row['text'] : '';
+		}
+		return array_filter( $out );
+	}
+
+	/**
+	 * Markup: wrapper + separate spans (base + one badge per tier).
+	 *
+	 * @param WC_Product $product Product.
+	 * @return string HTML (wp_kses-allowed spans).
+	 */
+	public static function get_bundle_pricing_markup( $product ) {
 		if ( ! $product instanceof WC_Product || ! self::is_dynamic_enabled_for_product( $product ) ) {
 			return '';
 		}
@@ -163,26 +181,73 @@ class Product_Bundle_Pricing {
 			return '';
 		}
 
-		$segments = self::get_bundle_line_segments( $product );
-		if ( empty( $segments ) ) {
+		$rows = self::get_bundle_tier_rows( $product );
+		if ( empty( $rows ) ) {
 			return '';
 		}
 
-		$base = sprintf(
+		/**
+		 * Show the per-person line before bundle badges.
+		 *
+		 * @param bool       $show    Whether to show.
+		 * @param WC_Product $product Product.
+		 */
+		$show_base = (bool) apply_filters( 'fipos_dynamic_bundle_pricing_show_base', true, $product );
+
+		$base_text = sprintf(
 			/* translators: %s: formatted unit price */
 			__( '%s / person', 'fooevents-internal-pos' ),
 			wp_strip_all_tags( wc_price( $unit ) )
 		);
 
-		$sep = apply_filters( 'fipos_dynamic_bundle_pricing_separator', ' · ' );
+		$inner = '';
+		if ( $show_base ) {
+			$inner .= '<span class="fipos-dynamic-bundle-pricing__base">' . esc_html( $base_text ) . '</span>';
+		}
 
-		return esc_html( $base ) . esc_html( $sep ) . implode( esc_html( $sep ), array_map( 'esc_html', $segments ) );
+		foreach ( $rows as $row ) {
+			$qty  = isset( $row['qty'] ) ? (int) $row['qty'] : 0;
+			$text = isset( $row['text'] ) ? (string) $row['text'] : '';
+			if ( $qty < 1 || '' === $text ) {
+				continue;
+			}
+			$inner .= '<span class="fipos-dynamic-bundle-pricing__badge" data-fipos-bundle-qty="' . esc_attr( (string) $qty ) . '">' . esc_html( $text ) . '</span>';
+		}
+
+		if ( '' === $inner ) {
+			return '';
+		}
+
+		$group_label = __( 'Bundle pricing options', 'fooevents-internal-pos' );
+		$html        = '<span class="fipos-dynamic-bundle-pricing" role="group" aria-label="' . esc_attr( $group_label ) . '">' . $inner . '</span>';
+
+		return wp_kses(
+			$html,
+			array(
+				'span' => array(
+					'class'                 => true,
+					'data-fipos-bundle-qty' => true,
+					'role'                  => true,
+					'aria-label'            => true,
+				),
+			)
+		);
+	}
+
+	/**
+	 * Full marketing line HTML (wrapper + parts).
+	 *
+	 * @param WC_Product $product Product.
+	 * @return string
+	 */
+	public static function get_formatted_html( $product ) {
+		return self::get_bundle_pricing_markup( $product );
 	}
 
 	/**
 	 * Shortcode [fipos_dynamic_bundle_pricing product_id="123"] — product_id optional on singular product.
 	 *
-	 * @param array<string, string> $atts Atts.
+	 * @param array<string, string>|string $atts Atts.
 	 * @return string
 	 */
 	public function shortcode_dynamic_bundle_pricing( $atts ) {
@@ -208,12 +273,8 @@ class Product_Bundle_Pricing {
 			return '';
 		}
 
-		$html = self::get_formatted_html( $product );
-		if ( '' === $html ) {
-			return '';
-		}
-
-		return '<span class="fipos-dynamic-bundle-pricing">' . $html . '</span>';
+		$html = self::get_bundle_pricing_markup( $product );
+		return '' === $html ? '' : $html;
 	}
 
 	/**
@@ -252,13 +313,13 @@ class Product_Bundle_Pricing {
 			return $price;
 		}
 
-		$extra = self::get_formatted_html( $product );
+		$extra = self::get_bundle_pricing_markup( $product );
 		if ( '' === $extra ) {
 			return $price;
 		}
 
 		$sep = apply_filters( 'fipos_dynamic_bundle_pricing_html_append_separator', ' ' );
 
-		return $price . wp_kses_post( $sep ) . '<span class="fipos-dynamic-bundle-pricing">' . $extra . '</span>';
+		return $price . wp_kses_post( $sep ) . $extra;
 	}
 }

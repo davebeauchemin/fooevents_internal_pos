@@ -3,7 +3,7 @@
  * Plugin Name:       FooEvents Internal POS
  * Plugin URI:         https://github.com/TBD/fooevents-internal-pos
  * Description:        Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
- * Version:            0.1.2.8
+ * Version:            0.1.2.9
  * Requires at least:  6.0
  * Requires PHP:       7.4
  * Author:             Module Rouge
@@ -21,7 +21,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.2.8' );
+define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.2.9' );
 define( 'FOOEVENTS_INTERNAL_POS_FILE', __FILE__ );
 define( 'FOOEVENTS_INTERNAL_POS_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FOOEVENTS_INTERNAL_POS_URL', plugin_dir_url( __FILE__ ) );

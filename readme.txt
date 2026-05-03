@@ -4,7 +4,7 @@ Tags: fooevents, woocommerce, pos, bookings
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.1.2.8
+Stable tag: 0.1.2.9
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,9 @@ Single product: enable **Show dynamic bundle pricing** under **Product data → 
 4. For Git Updater: set the GitHub Plugin URI in the main plugin file header, push public repo, install Git Updater on the site, bump Version on each release.
 
 == Changelog ==
+
+= 0.1.2.9 =
+* Storefront: dynamic bundle pricing outputs separate elements per tier (`.fipos-dynamic-bundle-pricing__badge`), pill styling via `css/bundle-pricing.css` on single product.
 
 = 0.1.2.8 =
 * Storefront: product-level **Show dynamic bundle pricing** (General tab); shortcode `[fipos_dynamic_bundle_pricing]` and optional append after native single-product price from storefront bundle-tier coupons.

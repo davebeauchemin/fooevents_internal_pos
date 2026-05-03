@@ -1,0 +1,53 @@
+/* Dynamic bundle pricing — badge layout (single product) */
+
+.fipos-dynamic-bundle-pricing {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.625rem;
+  max-width: 100%;
+  vertical-align: middle;
+  line-height: 1.35;
+}
+
+/* When Woo / builder wraps price in flex row, keep badges from colliding */
+p.price .fipos-dynamic-bundle-pricing {
+  flex: 1 1 auto;
+  min-width: min(100%, 12rem);
+}
+
+.fipos-dynamic-bundle-pricing__base {
+  font-size: 0.9em;
+  line-height: inherit;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.fipos-dynamic-bundle-pricing__badge {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 0.35em 0.75em;
+  border-radius: 999px;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  /* Neutral pill; override in theme if needed */
+  color: #0f172a;
+  background: #e8eef6;
+  border: 1px solid #c5d0e0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .fipos-dynamic-bundle-pricing__badge {
+    color: #e2e8f0;
+    background: rgba(148, 163, 184, 0.15);
+    border-color: rgba(148, 163, 184, 0.35);
+  }
+
+  .fipos-dynamic-bundle-pricing__base {
+    opacity: 0.95;
+  }
+}
