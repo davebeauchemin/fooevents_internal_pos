@@ -293,10 +293,12 @@ class Slot_Generator_Service {
 	}
 
 	/**
-	 * Merge generated block sessions onto calendar days that have no existing slot–date cells.
+	 * Merge generated block sessions into the fill date range (add-only).
 	 *
-	 * Never removes or replaces existing rows. Skips a generated cell when the same label+time+date
-	 * already exists (warning only). Requires mode fillEmpty and fillFrom/fillTo on the validated config.
+	 * For each block-derived (label, session time, day), appends a slot–date cell if it does not already
+	 * exist. Days that already have sessions still receive new times (e.g. later hours). Never removes
+	 * or replaces existing rows. Duplicate label+time+date is skipped with a warning. Requires mode
+	 * fillEmpty and fillFrom/fillTo on the validated config.
 	 *
 	 * @param int   $product_id Product ID.
 	 * @param array $config     Request body after {@see validate_config()}.
@@ -394,9 +396,8 @@ class Slot_Generator_Service {
 			}
 		}
 
-		$raw_slots  = $this->decode_booking_options_raw_array( $product_id );
-		$occupied   = $this->collect_occupied_calendar_ymds_from_raw( $raw_slots );
-		$cells      = $this->count_slot_date_cells_raw( $raw_slots );
+		$raw_slots = $this->decode_booking_options_raw_array( $product_id );
+		$cells     = $this->count_slot_date_cells_raw( $raw_slots );
 		$capacity   = $config['capacity'];
 		$stock      = ( 0 === (int) $capacity ) ? '' : (string) (int) $capacity;
 
@@ -408,9 +409,6 @@ class Slot_Generator_Service {
 						continue;
 					}
 					if ( strcmp( $ymd, $fill_from ) < 0 || strcmp( $ymd, $fill_to ) > 0 ) {
-						continue;
-					}
-					if ( isset( $occupied[ $ymd ] ) ) {
 						continue;
 					}
 					$candidates[] = array(
@@ -468,7 +466,7 @@ class Slot_Generator_Service {
 		if ( 0 === $added && 0 === $skipped_duplicates ) {
 			return new WP_Error(
 				'no_empty_days_in_range',
-				__( 'No empty calendar days in this fill range match your blocks (every day in range already has sessions, or weekdays do not overlap).', 'fooevents-internal-pos' ),
+				__( 'Nothing new to add in this fill range for your blocks (weekdays or block dates may not overlap the range, or every session time in the blocks already exists on those days).', 'fooevents-internal-pos' ),
 				array( 'status' => 422 )
 			);
 		}

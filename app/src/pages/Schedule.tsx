@@ -290,13 +290,12 @@ function previewStats( blocks: ScheduleBlock[], sessionM: number ) {
 	};
 }
 
-/** Preview for fill-empty mode: only days in [fillFrom, fillTo] with no existing sessions. */
+/** Preview for add-missing mode: block sessions in [fillFrom, fillTo] ∩ today+ (server skips ones that already exist). */
 function previewStatsFillEmpty(
 	blocks: ScheduleBlock[],
 	sessionM: number,
 	fillFrom: string,
 	fillTo: string,
-	occupied: Set<string>,
 	todayYmd: string,
 ) {
 	const byNameTime = new Map<string, { name: string; time: string; dates: Set<string> }>();
@@ -321,9 +320,6 @@ function previewStatsFillEmpty(
 					continue;
 				}
 				if ( ymd < fillFrom || ymd > fillTo ) {
-					continue;
-				}
-				if ( occupied.has( ymd ) ) {
 					continue;
 				}
 				row.dates.add( ymd );
@@ -384,7 +380,6 @@ export default function Schedule() {
 					dates?: unknown[];
 					id?: number;
 					bookingMethod?: string;
-					calendarDaysWithSlots?: string[];
 			  }
 			| undefined;
 		isLoading: boolean;
@@ -432,24 +427,6 @@ export default function Schedule() {
 		[ blocks, sessionMinutes ],
 	);
 
-	const occupiedCalendarDays = useMemo( (): Set<string> => {
-		const raw = eventData?.calendarDaysWithSlots;
-		if ( Array.isArray( raw ) ) {
-			return new Set(
-				raw.map( ( s ) => String( s ).trim() ).filter( ( s ) => /^\d{4}-\d{2}-\d{2}$/.test( s ) ),
-			);
-		}
-		const dates = eventData?.dates as Array<{ date?: string }> | undefined;
-		if ( Array.isArray( dates ) ) {
-			return new Set(
-				dates
-					.map( ( d ) => String( d?.date ?? '' ).trim() )
-					.filter( ( s ) => /^\d{4}-\d{2}-\d{2}$/.test( s ) ),
-			);
-		}
-		return new Set<string>();
-	}, [ eventData?.calendarDaysWithSlots, eventData?.dates ] );
-
 	const fillPreview = useMemo(
 		() =>
 			previewStatsFillEmpty(
@@ -457,16 +434,9 @@ export default function Schedule() {
 				sessionMinutes,
 				fillFromYmd.trim(),
 				fillToYmd.trim(),
-				occupiedCalendarDays,
 				todayYmdLocal(),
 			),
-		[
-			blocks,
-			sessionMinutes,
-			fillFromYmd,
-			fillToYmd,
-			occupiedCalendarDays,
-		],
+		[ blocks, sessionMinutes, fillFromYmd, fillToYmd ],
 	);
 
 	const fillRangeInvalid =
@@ -474,10 +444,10 @@ export default function Schedule() {
 		|| ! /^\d{4}-\d{2}-\d{2}$/.test( fillToYmd.trim() )
 		|| fillFromYmd.trim() > fillToYmd.trim();
 
-	function calendarOnlyEmptySelectable( date: Date ) {
+	/** Block past days in fill range pickers; occupied days are allowed (e.g. extend hours). */
+	function fillRangeCalendarDisablePast( date: Date ) {
 		const y = format( date, 'yyyy-MM-dd' );
-		const t = todayYmdLocal();
-		return y < t || occupiedCalendarDays.has( y );
+		return y < todayYmdLocal();
 	}
 
 	const slotsOnManualDate = useMemo( (): SlotLike[] => {
@@ -703,8 +673,8 @@ export default function Schedule() {
 			const skipped = res.skippedDuplicates ?? 0;
 			toast.success(
 				skipped > 0
-					? `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s). ${ skipped } conflict(s) were skipped because those sessions already existed.`
-					: `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s) on previously empty days.`,
+					? `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s). ${ skipped } were skipped because those sessions already existed.`
+					: `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s).`,
 			);
 			navigate( `/event/${ eventId }` );
 		} catch ( e ) {
@@ -744,9 +714,9 @@ export default function Schedule() {
 				<p className="text-muted-foreground text-sm">
 					{ eventData?.title } — use <strong>Manual sessions</strong> to add a single time on one
 					day without changing anything else (slot-first and date-first). Use{' '}
-					<strong>Fill empty calendar days</strong> to generate block sessions only on days that
-					have no schedule yet (below). The <strong>danger zone</strong> still replaces the entire
-					grid when you generate there. See the{ ' ' }
+					<strong>Add missing sessions</strong> below to merge new block times into a date range
+					(including extra hours on days that already have sessions). The{ ' ' }
+					<strong>danger zone</strong> still replaces the entire grid. See the{ ' ' }
 					<Link to={ `/event/${ eventId }` } className="text-primary underline">
 						event page
 					</Link>{ ' ' }
@@ -1045,10 +1015,9 @@ export default function Schedule() {
 							Schedule blocks
 						</h2>
 						<p className="text-muted-foreground text-sm">
-							These blocks drive both <strong>fill empty days</strong> and{' '}
-							<strong>replace all</strong> in the danger zone. Block start/end define where sessions
-							might exist; the fill tool only writes on empty days inside your fill-from / fill-to
-							window.
+							These blocks drive both <strong>add missing sessions</strong> (merge) and{' '}
+							<strong>replace all</strong> in the danger zone. Start/end set which calendar days
+							each block applies to; open/close set the session times generated for those days.
 						</p>
 						<div className="space-y-4">
 							{ blocks.map( ( b, idx ) => (
@@ -1151,13 +1120,14 @@ export default function Schedule() {
 					>
 						<div className="space-y-2">
 							<h2 id="fill-empty-heading" className="text-lg font-semibold tracking-tight">
-								Fill empty calendar days
+								Add missing sessions
 							</h2>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								Choose a date range where <strong>no day yet has any session</strong>. The server
-								adds your block schedule on those days only and leaves existing slot rows
-								untouched. If a generated time would duplicate an existing session, it is skipped
-								and you get a warning; other cells in the run are still created.
+								Pick a fill-from / fill-to range. The server adds every session from your blocks
+								that falls in that range and <strong>is not already on the schedule</strong> — on
+								brand-new days or on days that already have earlier hours (e.g. extend closing from
+								16:50 to 19:50). Existing slot rows are never removed. True duplicates are skipped
+								with a warning.
 							</p>
 						</div>
 						<div className="flex flex-wrap gap-3">
@@ -1167,7 +1137,7 @@ export default function Schedule() {
 								onSelectYmd={ setFillFromYmd }
 								triggerId="fill-from-ymd"
 								disabled={ gen.isPending }
-								isDateDisabled={ calendarOnlyEmptySelectable }
+								isDateDisabled={ fillRangeCalendarDisablePast }
 							/>
 							<ScheduleBlockDatePicker
 								label="Fill to"
@@ -1175,7 +1145,7 @@ export default function Schedule() {
 								onSelectYmd={ setFillToYmd }
 								triggerId="fill-to-ymd"
 								disabled={ gen.isPending }
-								isDateDisabled={ calendarOnlyEmptySelectable }
+								isDateDisabled={ fillRangeCalendarDisablePast }
 							/>
 						</div>
 						{ fillRangeInvalid ? (
@@ -1185,7 +1155,7 @@ export default function Schedule() {
 						) : null }
 						<Card className="border-border/80 bg-background/80">
 							<CardHeader className="pb-2">
-								<CardTitle className="text-base">Preview (empty days in range only)</CardTitle>
+								<CardTitle className="text-base">Preview (candidate cells in range)</CardTitle>
 							</CardHeader>
 							<CardContent className="space-y-2 text-sm">
 								<p>
@@ -1193,7 +1163,7 @@ export default function Schedule() {
 									<Badge>{ fillPreview.totalEntries }</Badge>
 								</p>
 								<p>
-									<span className="text-muted-foreground">Distinct empty calendar days used:</span>{ ' ' }
+									<span className="text-muted-foreground">Distinct calendar days in preview:</span>{ ' ' }
 									<strong>{ fillPreview.dateCount }</strong>
 								</p>
 								{ fillPreview.categories.length > 0 && (
@@ -1212,9 +1182,9 @@ export default function Schedule() {
 									</div>
 								) }
 								<p className="text-muted-foreground text-xs">
-									Calendars only let you pick days that are still empty (and not before today).
-									Preview uses your browser timezone; the server uses the WordPress timezone when
-									saving.
+									Cannot pick dates before today. Preview counts every block session in range; the
+									server may add fewer if some already exist. Uses your browser timezone for the
+									preview; WordPress timezone when saving.
 								</p>
 							</CardContent>
 						</Card>
@@ -1230,22 +1200,21 @@ export default function Schedule() {
 							}
 							onClick={ () => setFillConfirmOpen( true ) }
 						>
-							{ gen.isPending ? 'Saving…' : 'Add to empty days…' }
+							{ gen.isPending ? 'Saving…' : 'Add missing sessions…' }
 						</Button>
 					</section>
 
 					<Dialog open={ fillConfirmOpen } onOpenChange={ setFillConfirmOpen }>
 						<DialogContent>
 							<DialogHeader>
-								<DialogTitle>Add sessions on empty days?</DialogTitle>
+								<DialogTitle>Add missing sessions?</DialogTitle>
 								<DialogDescription>
-									This will <strong>keep</strong> all existing FooEvents slots and append about{ ' ' }
+									This <strong>keeps</strong> all existing FooEvents slots and appends up to about{ ' ' }
 									<strong>{ fillPreview.totalEntries }</strong> new slot–date cell(s) between{ ' ' }
 									<span className="font-mono text-foreground">{ fillFromYmd.trim() }</span> and{ ' ' }
-									<span className="font-mono text-foreground">{ fillToYmd.trim() }</span>, using the
-									schedule blocks on this page together with session length and capacity in Defaults.
-									Days that already have any session are skipped. If something still conflicts, those
-									cells are skipped with a warning.
+									<span className="font-mono text-foreground">{ fillToYmd.trim() }</span>, from the
+									blocks and Defaults. Times that already exist for a day are skipped (with a
+									warning when applicable).
 								</DialogDescription>
 							</DialogHeader>
 							<DialogFooter>
