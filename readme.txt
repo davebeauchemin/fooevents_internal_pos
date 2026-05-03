@@ -4,7 +4,7 @@ Tags: fooevents, woocommerce, pos, bookings
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.1.2.1
+Stable tag: 0.1.2.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,6 +26,8 @@ Advanced fallback: legacy auto codes for POS-only `apply_coupon` flow may still 
 
 Alter bundle tier rows programmatically via `fooevents_internal_pos_bundle_tiers`.
 
+Single product: enable **Show dynamic bundle pricing** under **Product data → General** on a FooEvents booking product to list package prices from storefront bundle-tier coupons (`[fipos_dynamic_bundle_pricing]` or appended after the WooCommerce price on the main product). Changing the product price or a coupon’s fixed cart discount updates the display. Full-page caches may need a purge after coupon edits.
+
 == Installation ==
 
 1. Install WooCommerce, FooEvents, and FooEvents Bookings.
@@ -34,6 +36,9 @@ Alter bundle tier rows programmatically via `fooevents_internal_pos_bundle_tiers
 4. For Git Updater: set the GitHub Plugin URI in the main plugin file header, push public repo, install Git Updater on the site, bump Version on each release.
 
 == Changelog ==
+
+= 0.1.2.8 =
+* Storefront: product-level **Show dynamic bundle pricing** (General tab); shortcode `[fipos_dynamic_bundle_pricing]` and optional append after native single-product price from storefront bundle-tier coupons.
 
 = 0.1.2.1 =
 * Admin: top-level **Internal POS** menu (visible to shop managers and FooEvents POS cashiers).

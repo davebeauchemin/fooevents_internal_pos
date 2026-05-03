@@ -57,6 +57,8 @@ You can still symlink `fooevents_internal_pos` into `wp-content/plugins/` and ru
 
 The plugin enqueues `public/frontend/css|js` on single product and on cart/checkout (slot line formatting + Woo button styling). On the product page, the **custom time-slot pill grid is on by default** (same text as the native FooEvents slot options, without reformatting). To use the native slot `<select>` only: `add_filter( 'fipos_enable_custom_time_slot_picker', '__return_false' );`. If you still enqueue the same files from a child theme, remove the duplicate enqueues to avoid double-loading.
 
+**Dynamic bundle pricing:** On **WooCommerce → Products → [product] → Product data → General**, enable **Show dynamic bundle pricing** for a FooEvents booking product. The storefront then shows per-person plus each tier (e.g. 2 tickets for $X) computed from the product price and active storefront **bundle tier** coupons (fixed cart discount = discount per bundle). Use shortcode `[fipos_dynamic_bundle_pricing]` in the page builder, or rely on the default append after the WooCommerce price on the main single product. To show only the shortcode line: `add_filter( 'fipos_dynamic_bundle_pricing_append_to_price_html', '__return_false' );`. Full-page caches may need purging after coupon amount changes.
+
 ## Release (Git Updater)
 
 1. `npm run build` in `app/`

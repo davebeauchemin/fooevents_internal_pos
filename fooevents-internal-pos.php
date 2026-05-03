@@ -3,7 +3,7 @@
  * Plugin Name:       FooEvents Internal POS
  * Plugin URI:         https://github.com/TBD/fooevents-internal-pos
  * Description:        Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and shop managers can take bookings, validate and check in tickets, and generate slot schedules from a single React-powered dashboard. Built on FooEvents, FooEvents Bookings, and WooCommerce.
- * Version:            0.1.2.7
+ * Version:            0.1.2.8
  * Requires at least:  6.0
  * Requires PHP:       7.4
  * Author:             Module Rouge
@@ -21,7 +21,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.2.1' );
+define( 'FOOEVENTS_INTERNAL_POS_VERSION', '0.1.2.8' );
 define( 'FOOEVENTS_INTERNAL_POS_FILE', __FILE__ );
 define( 'FOOEVENTS_INTERNAL_POS_DIR', plugin_dir_path( __FILE__ ) );
 define( 'FOOEVENTS_INTERNAL_POS_URL', plugin_dir_url( __FILE__ ) );
@@ -47,6 +47,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-coupon-admin-fields.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-bundles.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-product-bundle-pricing.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-login-redirect.php';
 
 /**
@@ -67,6 +68,7 @@ function fooevents_internal_pos_init() {
 
 	( new \FooEvents_Internal_POS\Coupon_Admin_Fields() )->init();
 	( new \FooEvents_Internal_POS\Storefront_Bundles() )->init();
+	( new \FooEvents_Internal_POS\Product_Bundle_Pricing() )->init();
 	( new \FooEvents_Internal_POS\Next_Purchase_Coupon_Service() )->init();
 }
 add_action( 'plugins_loaded', 'fooevents_internal_pos_init', 20 );
