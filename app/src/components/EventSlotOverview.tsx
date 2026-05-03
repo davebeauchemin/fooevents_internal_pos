@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
-import { CalendarIcon, Clock3, Trash2 } from 'lucide-react';
+import { CalendarIcon, Clock3, Minus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAddManualSlot, useAddSlotStock, useDeleteManualSlot } from '../api/queries.js';
+import { useAddManualSlot, useAddSlotStock, useDeleteManualSlot, useRemoveSlotStock } from '../api/queries.js';
 import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
 import BookingScheduleSummaryCards, {
 	type BookingScheduleSummaryPayload,
@@ -40,6 +40,7 @@ import {
 	decodeManualSlotDateRef,
 	encodeManualSlotDateRef,
 	manualSlotWouldDuplicateExisting,
+	normalizeTimeInputToHhmm,
 	slotSelectable,
 } from '@/lib/slotHourGrouping';
 
@@ -133,6 +134,13 @@ export default function EventSlotOverview( {
 		dateId: string;
 		ymd: string;
 		title: string;
+	} | null >( null );
+	const [ pendingReduce, setPendingReduce ] = useState< {
+		slotId: string;
+		dateId: string;
+		ymd: string;
+		title: string;
+		currentStock: number;
 	} | null >( null );
 	const siteTodayYmd = siteTodayYmdProp ?? format( new Date(), 'yyyy-MM-dd' );
 	const [ selectedYmd, setSelectedYmd ] = useState( () => detail.dates[ 0 ]?.date ?? '' );
@@ -324,9 +332,9 @@ export default function EventSlotOverview( {
 							</span>
 							{ manageSlotsUi && (
 								<span className="text-muted-foreground mt-2 block font-normal leading-relaxed">
-									You can also add or remove sessions for{' '}
-									<span className="font-mono text-xs">{ selectedDay?.date }</span> below (same as
-									Manage schedule manual sessions).
+									You can add or remove ticket spots, delete a session for{' '}
+									<span className="font-mono text-xs">{ selectedDay?.date }</span>, or use Manage
+									schedule for bulk changes.
 								</span>
 							) }
 						</CardDescription>
@@ -337,6 +345,14 @@ export default function EventSlotOverview( {
 								eventId={ detail.id as number }
 								selectedYmd={ selectedDay.date }
 								existingSlots={ selectedDay.slots ?? [] }
+							/>
+						) : null }
+
+						{ manageSlotsUi ? (
+							<EventOverviewReduceStockDialog
+								eventId={ detail.id as number }
+								pendingReduce={ pendingReduce }
+								clearPending={ () => setPendingReduce( null ) }
 							/>
 						) : null }
 
@@ -397,6 +413,12 @@ export default function EventSlotOverview( {
 													const sid = String( s.id ?? '' ).trim();
 													const did = String( s.dateId ?? '' ).trim();
 													const canRemove = sid !== '' && did !== '';
+													const canReduceStock =
+														canRemove
+														&& typeof s.stock === 'number'
+														&& s.stock > 0;
+													const slotBusy =
+														pendingDelete !== null || pendingReduce !== null;
 													return (
 														<SlotOverviewCard
 															key={ `${ s.id }-${ s.dateId ?? '' }` }
@@ -405,7 +427,7 @@ export default function EventSlotOverview( {
 															emphasized={ bookable }
 															manageSlots={ manageSlotsUi }
 															canRemoveSlot={ canRemove }
-															removeDisabled={ pendingDelete !== null }
+															slotActionsDisabled={ slotBusy }
 															onRequestRemove={
 																canRemove
 																	? () =>
@@ -414,6 +436,19 @@ export default function EventSlotOverview( {
 																			dateId: did,
 																			ymd: selectedDay.date,
 																			title: slotTitleForRemoveConfirm( s ),
+																		} )
+																	: undefined
+															}
+															canReduceStock={ canReduceStock }
+															onRequestReduce={
+																canReduceStock
+																	? () =>
+																		setPendingReduce( {
+																			slotId: sid,
+																			dateId: did,
+																			ymd: selectedDay.date,
+																			title: slotTitleForRemoveConfirm( s ),
+																			currentStock: s.stock as number,
 																		} )
 																	: undefined
 															}
@@ -439,16 +474,20 @@ function SlotOverviewCard( {
 	emphasized,
 	manageSlots,
 	canRemoveSlot,
-	removeDisabled,
+	slotActionsDisabled,
 	onRequestRemove,
+	canReduceStock,
+	onRequestReduce,
 }: {
 	timeText: string;
 	stock: number | null;
 	emphasized: boolean;
 	manageSlots?: boolean;
 	canRemoveSlot?: boolean;
-	removeDisabled?: boolean;
+	slotActionsDisabled?: boolean;
 	onRequestRemove?: () => void;
+	canReduceStock?: boolean;
+	onRequestReduce?: () => void;
 } ) {
 	const availability = slotAvailabilityText( stock );
 	const full =
@@ -456,6 +495,10 @@ function SlotOverviewCard( {
 	const unlimited = stock === null || stock === undefined;
 	const showTrash =
 		manageSlots && canRemoveSlot && typeof onRequestRemove === 'function';
+	const showReduce =
+		manageSlots
+		&& canReduceStock
+		&& typeof onRequestReduce === 'function';
 	return (
 		<div
 			aria-label={ `${ timeText }. ${ availability }.` }
@@ -472,7 +515,7 @@ function SlotOverviewCard( {
 				<Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
 				<span className="truncate">{ timeText }</span>
 			</div>
-			<div className="flex shrink-0 items-center gap-2">
+			<div className="flex shrink-0 items-center gap-1">
 				<span
 					className={ cn(
 						'text-muted-foreground tabular-nums text-xs',
@@ -481,13 +524,26 @@ function SlotOverviewCard( {
 				>
 					{ availability }
 				</span>
+				{ showReduce ? (
+					<Button
+						type="button"
+						size="icon"
+						variant="ghost"
+						className="text-muted-foreground hover:text-foreground size-8 shrink-0"
+						disabled={ slotActionsDisabled }
+						aria-label={ `Remove ticket spots for ${ timeText }` }
+						onClick={ onRequestReduce }
+					>
+						<Minus className="size-4" />
+					</Button>
+				) : null }
 				{ showTrash ? (
 					<Button
 						type="button"
 						size="icon"
 						variant="ghost"
 						className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-						disabled={ removeDisabled }
+						disabled={ slotActionsDisabled }
 						aria-label={ `Remove session ${ timeText }` }
 						onClick={ onRequestRemove }
 					>
@@ -563,7 +619,7 @@ function EventOverviewManualAddToolbar( {
 	);
 
 	const duplicateMessage =
-		'That date and session time already exist for this slot. Change the time, schedule label, or day.';
+		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
 
 	const isBusy = addManual.isPending || addStock.isPending;
 
@@ -619,10 +675,15 @@ function EventOverviewManualAddToolbar( {
 			toast.error( duplicateMessage );
 			return;
 		}
+		const timeNorm = normalizeTimeInputToHhmm( manualTime.trim() );
+		if ( ! timeNorm ) {
+			toast.error( 'Enter a valid time (HH:MM).' );
+			return;
+		}
 		try {
 			const payload: Record<string, unknown> = {
 				date: selectedYmd.trim(),
-				time: manualTime.trim(),
+				time: timeNorm,
 				capacity: manualCapacity < 0 ? 0 : manualCapacity,
 			};
 			const lab = manualLabel.trim();
@@ -922,6 +983,132 @@ function EventOverviewManualAddToolbar( {
 				</DialogContent>
 			</Dialog>
 		</>
+	);
+}
+
+function EventOverviewReduceStockDialog( {
+	eventId,
+	pendingReduce,
+	clearPending,
+}: {
+	eventId: number;
+	pendingReduce: {
+		slotId: string;
+		dateId: string;
+		ymd: string;
+		title: string;
+		currentStock: number;
+	} | null;
+	clearPending: () => void;
+} ) {
+	const removeStock = useRemoveSlotStock( eventId );
+	const [ removeDelta, setRemoveDelta ] = useState( 1 );
+
+	useEffect( () => {
+		if ( pendingReduce ) {
+			setRemoveDelta( 1 );
+		}
+	}, [ pendingReduce ] );
+
+	const maxRemove = pendingReduce?.currentStock ?? 1;
+	const clampedDelta =
+		Number.isFinite( removeDelta ) && removeDelta >= 1
+			? Math.min( removeDelta, maxRemove )
+			: 1;
+
+	async function confirmReduce() {
+		if ( ! pendingReduce ) {
+			return;
+		}
+		const target = pendingReduce;
+		const n = Math.min(
+			Math.max( 1, Math.floor( clampedDelta ) ),
+			target.currentStock,
+		);
+		try {
+			await removeStock.mutateAsync( {
+				slotId: target.slotId,
+				dateId: target.dateId,
+				date: target.ymd,
+				removeSpots: n,
+			} );
+			clearPending();
+			toast.success(
+				n === 1
+					? 'Removed 1 ticket spot.'
+					: `Removed ${ n } ticket spots.`,
+			);
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	return (
+		<Dialog
+			open={ pendingReduce !== null }
+			onOpenChange={ ( open ) => {
+				if ( ! open && ! removeStock.isPending ) {
+					clearPending();
+				}
+			} }
+		>
+			<DialogContent showCloseButton={ ! removeStock.isPending }>
+				<DialogHeader>
+					<DialogTitle>Remove ticket spots?</DialogTitle>
+					<DialogDescription>
+						Lowers remaining capacity for{ ' ' }
+						<span className="text-foreground font-medium">{ pendingReduce?.title }</span>
+						{ ' ' }
+						on{ ' ' }
+						<span className="font-mono text-foreground">{ pendingReduce?.ymd }</span>. This does not
+						delete the session (use the trash icon for that). Unlimited sessions are not
+						editable here.
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-2">
+					<Label htmlFor="overview-reduce-delta">Spots to remove</Label>
+					<Input
+						id="overview-reduce-delta"
+						type="number"
+						min={ 1 }
+						max={ maxRemove }
+						value={ removeDelta }
+						onChange={ ( e ) => {
+							const v = parseInt( e.target.value, 10 );
+							setRemoveDelta( Number.isFinite( v ) ? v : 1 );
+						} }
+						disabled={ removeStock.isPending }
+					/>
+					<p className="text-muted-foreground text-xs">
+						Current remaining slots:{ ' ' }
+						<span className="text-foreground font-medium tabular-nums">{ maxRemove }</span>. Cannot
+						go below zero.
+					</p>
+				</div>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ clearPending }
+						disabled={ removeStock.isPending }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						onClick={ confirmReduce }
+						disabled={
+							removeStock.isPending
+							|| maxRemove < 1
+							|| clampedDelta < 1
+							|| clampedDelta > maxRemove
+						}
+					>
+						{ removeStock.isPending ? 'Saving…' : 'Remove spots' }
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

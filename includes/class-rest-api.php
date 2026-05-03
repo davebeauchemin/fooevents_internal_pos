@@ -400,10 +400,12 @@ class Rest_API {
 	}
 
 	/**
-	 * POST /events/{id}/slots/stock — add ticket spots to an existing finite-capacity slot–date cell.
+	 * POST /events/{id}/slots/stock — add or remove ticket spots on a finite-capacity slot–date cell.
+	 *
+	 * Body: addSpots (>=1) or removeSpots (>=1), mutually exclusive, plus slotId, dateId, date (Y-m-d).
 	 *
 	 * @param WP_REST_Request $request Request.
-	 * @return \WP_REST_Response|WP_Error
+	 * @return \WP_REST\Response|WP_Error
 	 */
 	public function post_slots_stock( WP_REST_Request $request ) {
 		$id     = (int) $request['id'];
@@ -411,7 +413,26 @@ class Rest_API {
 		if ( ! is_array( $params ) ) {
 			$params = array();
 		}
-		$result = $this->slot_generator->manual_add_slot_stock( $id, $params );
+		$add    = isset( $params['addSpots'] ) ? (int) $params['addSpots'] : ( isset( $params['add_spots'] ) ? (int) $params['add_spots'] : 0 );
+		$remove = isset( $params['removeSpots'] ) ? (int) $params['removeSpots'] : ( isset( $params['remove_spots'] ) ? (int) $params['remove_spots'] : 0 );
+		if ( $add >= 1 && $remove >= 1 ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'Send either addSpots or removeSpots, not both.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+		if ( $remove >= 1 ) {
+			$result = $this->slot_generator->manual_subtract_slot_stock( $id, $params );
+		} elseif ( $add >= 1 ) {
+			$result = $this->slot_generator->manual_add_slot_stock( $id, $params );
+		} else {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'addSpots or removeSpots is required (at least 1).', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}

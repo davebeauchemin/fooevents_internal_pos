@@ -32,6 +32,7 @@ import {
 	encodeManualSlotDateRef,
 	formatSlotTime,
 	manualSlotWouldDuplicateExisting,
+	normalizeTimeInputToHhmm,
 	type SlotLike,
 } from '@/lib/slotHourGrouping';
 
@@ -336,7 +337,7 @@ export default function Schedule() {
 	const scheduleManualBusy = addManual.isPending || addStock.isPending;
 
 	const manualDuplicateMessage =
-		'That date and session time already exist for this slot. Change the time, schedule label, or day.';
+		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
 
 	function scheduleSlotPickerLabel( s: SlotLike ): string {
 		const t = formatSlotTime( s );
@@ -394,10 +395,15 @@ export default function Schedule() {
 			toast.error( manualDuplicateMessage );
 			return;
 		}
+		const timeNorm = normalizeTimeInputToHhmm( manualTime.trim() );
+		if ( ! timeNorm ) {
+			toast.error( 'Enter a valid time (HH:MM).' );
+			return;
+		}
 		try {
 			const payload: Record<string, unknown> = {
 				date: manualDate.trim(),
-				time: manualTime.trim(),
+				time: timeNorm,
 				capacity: manualCapacity < 0 ? 0 : manualCapacity,
 			};
 			const lab = manualLabel.trim();

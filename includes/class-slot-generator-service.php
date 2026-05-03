@@ -541,6 +541,114 @@ class Slot_Generator_Service {
 	}
 
 	/**
+	 * Reduce capacity (remaining ticket spots) on an existing slot–date cell with a numeric stock limit.
+	 *
+	 * Body keys: slotId, dateId, date (Y-m-d), removeSpots (int >= 1). snake_case accepted.
+	 * Remaining spots cannot go below zero (FooEvents stock is remaining availability).
+	 *
+	 * @param int   $product_id Product ID.
+	 * @param array $params     Parsed JSON body.
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function manual_subtract_slot_stock( $product_id, array $params ) {
+		$product_id = absint( $product_id );
+		$slot_id    = trim( (string) ( $params['slotId'] ?? $params['slot_id'] ?? '' ) );
+		$date_id    = $this->normalize_booking_raw_date_suffix( (string) ( $params['dateId'] ?? $params['date_id'] ?? '' ) );
+		$ymd_raw    = isset( $params['date'] ) ? trim( (string) $params['date'] ) : ( isset( $params['ymd'] ) ? trim( (string) $params['ymd'] ) : '' );
+		$remove     = isset( $params['removeSpots'] ) ? (int) $params['removeSpots'] : ( isset( $params['remove_spots'] ) ? (int) $params['remove_spots'] : 0 );
+
+		if ( '' === $slot_id || '' === $date_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'slotId and dateId are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd_raw ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'date must be Y-m-d.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( $remove < 1 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'removeSpots must be at least 1.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$product = wc_get_product( $product_id );
+		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$raw_slots         = $this->decode_booking_options_raw_array( $product_id );
+		$slot_actual_key = $this->normalize_raw_slot_lookup_key( $raw_slots, $slot_id );
+		if ( null === $slot_actual_key || ! isset( $raw_slots[ $slot_actual_key ] ) || ! is_array( $raw_slots[ $slot_actual_key ] ) ) {
+			return new WP_Error( 'not_found', __( 'Slot not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		$row = &$raw_slots[ $slot_actual_key ];
+
+		$booking_method_eff = $this->bookings_method_for_product( $product );
+
+		$inner_date_id = '';
+		if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $ymd_raw ) ) {
+			$by_ymd = $this->find_date_id_with_ymd_in_slot_raw( $row, $ymd_raw );
+			if ( null !== $by_ymd && $this->raw_date_cell_exists( $row, $by_ymd ) ) {
+				$inner_date_id = $this->normalize_booking_raw_date_suffix( $by_ymd );
+			}
+		}
+		if ( '' === $inner_date_id ) {
+			$inner_date_id = $this->resolve_raw_inner_id_for_manual_remove(
+				$product_id,
+				$booking_method_eff,
+				(string) $slot_id,
+				$row,
+				(string) $date_id
+			);
+		}
+		if ( '' === $inner_date_id || ! $this->raw_date_cell_exists( $row, $inner_date_id ) ) {
+			return new WP_Error( 'not_found', __( 'That date attachment was not found on this slot.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$stock_key = $inner_date_id . '_stock';
+		if ( ! isset( $row[ $stock_key ] ) || '' === (string) $row[ $stock_key ] ) {
+			return new WP_Error(
+				'unlimited_stock',
+				__( 'This session has unlimited capacity; change quantity only when a numeric limit is set.', 'fooevents-internal-pos' ),
+				array( 'status' => 422 )
+			);
+		}
+
+		$current = (int) $row[ $stock_key ];
+		if ( $current < 0 ) {
+			return new WP_Error(
+				'unlimited_stock',
+				__( 'This session has unlimited capacity; change quantity only when a numeric limit is set.', 'fooevents-internal-pos' ),
+				array( 'status' => 422 )
+			);
+		}
+
+		$new = $current - $remove;
+		if ( $new < 0 ) {
+			return new WP_Error(
+				'insufficient_stock',
+				sprintf(
+					/* translators: 1: current remaining spots */
+					__( 'Cannot remove that many spots; only %d remaining in this cell.', 'fooevents-internal-pos' ),
+					$current
+				),
+				array( 'status' => 422 )
+			);
+		}
+
+		$row[ $stock_key ] = (string) $new;
+
+		$maybe_err = $this->persist_raw_booking_slots_or_fail( $product_id, $raw_slots );
+		if ( is_wp_error( $maybe_err ) ) {
+			return $maybe_err;
+		}
+
+		return array(
+			'slotId'         => (string) $slot_actual_key,
+			'dateId'         => (string) $inner_date_id,
+			'previousStock'  => $current,
+			'newStock'       => $new,
+			'removeSpots'    => $remove,
+		);
+	}
+
+	/**
 	 * Normalize a raw booking date suffix (FooEvents `{suffix}_add_date` segment).
 	 *
 	 * FooEvents admin uses random lowercase strings; internal POS may use digits. Rejects path-like/control chars.

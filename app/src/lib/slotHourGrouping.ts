@@ -11,22 +11,9 @@ export type SlotLike = {
 	dateId?: string;
 };
 
-export function formatSlotTime( slot: Pick<SlotLike, 'label' | 'time' | 'stock' > ) {
-	if ( slot.time && /^\d{1,2}:\d{2}$/.test( slot.time.trim() ) ) {
-		return slot.time.trim();
-	}
-	/** 12h with optional a.m. / p.m. */
-	const m = slot.label.match(
-		/(\d{1,2}:\d{2}\s*(?:[ap]\.?\s*m|AM|PM|am|pm|a\.m\.|p\.m\.)?)/i,
-	);
-	if ( m ) {
-		return m[ 1 ].replace( /\s+/g, ' ' ).trim();
-	}
-	return '—';
-}
-
+/** Clock time to 24h HH:MM (handles optional seconds as from <input type="time"> or APIs). */
 function normHhmm( hhmm: string ): string | null {
-	const m = hhmm.trim().match( /^(\d{1,2}):(\d{2})$/ );
+	const m = hhmm.trim().match( /^(\d{1,2}):(\d{2})(?::\d{1,2})?$/ );
 	if ( ! m ) {
 		return null;
 	}
@@ -36,6 +23,28 @@ function normHhmm( hhmm: string ): string | null {
 		return null;
 	}
 	return `${ String( h ).padStart( 2, '0' ) }:${ String( min ).padStart( 2, '0' ) }`;
+}
+
+/** Exported for form submit — ensures REST receives strict HH:MM. */
+export function normalizeTimeInputToHhmm( raw: string ): string | null {
+	return normHhmm( raw );
+}
+
+export function formatSlotTime( slot: Pick<SlotLike, 'label' | 'time' | 'stock' > ) {
+	if ( slot.time ) {
+		const fromTime = normHhmm( slot.time.trim() );
+		if ( fromTime ) {
+			return fromTime;
+		}
+	}
+	/** 12h with optional a.m. / p.m. */
+	const m = slot.label.match(
+		/(\d{1,2}:\d{2}\s*(?:[ap]\.?\s*m|AM|PM|am|pm|a\.m\.|p\.m\.)?)/i,
+	);
+	if ( m ) {
+		return m[ 1 ].replace( /\s+/g, ' ' ).trim();
+	}
+	return '—';
 }
 
 function slotNormHhmm( slot: Pick< SlotLike, 'label' | 'time' | 'stock' > ): string | null {
@@ -72,8 +81,9 @@ function primaryHhmmFromSlotLabel( label: string ): string | null {
 }
 
 /**
- * Whether a manual add for this calendar day would duplicate an existing slot–date cell
- * (mirrors server duplicate_slot / label+time semantics).
+ * Whether a manual add for this calendar day would duplicate an existing slot–date cell.
+ * With an empty schedule label, any session at the same start time counts as duplicate (one row per time).
+ * With a label set, overlaps server-ish semantics (same time + same / compatible name).
  */
 export function manualSlotWouldDuplicateExisting(
 	existingSlots: SlotLike[],
@@ -91,6 +101,9 @@ export function manualSlotWouldDuplicateExisting(
 		const sh = slotNormHhmm( s );
 		if ( ! sh || sh !== mh ) {
 			continue;
+		}
+		if ( manualName === '' ) {
+			return true;
 		}
 		const sLab = ( s.label ?? '' ).trim();
 		if ( ! sLab ) {
