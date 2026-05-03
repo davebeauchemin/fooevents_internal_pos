@@ -328,6 +328,24 @@ class Slot_Generator_Service {
 		$tz          = $this->bookings->get_wp_timezone();
 		$today_ymd   = $this->bookings->today_ymd();
 		$warnings    = array();
+		// Client may send fillFrom from browser-local "today" while the site is already on the next calendar day.
+		if ( strcmp( $fill_from, $today_ymd ) < 0 ) {
+			$warnings[] = sprintf(
+				/* translators: 1: requested fill-from, 2: site today (Y-m-d) */
+				__( 'fillFrom %1$s was before site today (%2$s); using %2$s for this run.', 'fooevents-internal-pos' ),
+				$fill_from,
+				$today_ymd
+			);
+			$fill_from = $today_ymd;
+		}
+		if ( strcmp( $fill_from, $fill_to ) > 0 ) {
+			$fill_to   = $fill_from;
+			$warnings[] = sprintf(
+				/* translators: %s: Y-m-d */
+				__( 'fillTo was before the adjusted fill-from; using %s for the end of the range.', 'fooevents-internal-pos' ),
+				$fill_to
+			);
+		}
 		$by_name_time = array();
 
 		foreach ( $config['blocks'] as $block_idx => $block ) {

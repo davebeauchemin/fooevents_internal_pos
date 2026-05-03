@@ -472,6 +472,29 @@ export default function Schedule() {
 	const [ fillToYmd, setFillToYmd ] = useState( () => todayYmdLocal() );
 	const [ fillConfirmOpen, setFillConfirmOpen ] = useState( false );
 
+	/** Keep fill range aligned with site "today" (WordPress). fill from/to are initialized with the browser calendar; once siteTodayYmd loads, any fill date strictly before it is stale and the server will never enumerate those days. */
+	useEffect( () => {
+		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
+			return;
+		}
+		const f = fillFromYmd.trim();
+		const t = fillToYmd.trim();
+		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( f ) || ! /^\d{4}-\d{2}-\d{2}$/.test( t ) ) {
+			return;
+		}
+		let nf = f < siteTodayYmd ? siteTodayYmd : f;
+		let nt = t < siteTodayYmd ? siteTodayYmd : t;
+		if ( nf > nt ) {
+			nt = nf;
+		}
+		if ( nf !== f ) {
+			setFillFromYmd( nf );
+		}
+		if ( nt !== t ) {
+			setFillToYmd( nt );
+		}
+	}, [ siteTodayYmd, fillFromYmd, fillToYmd ] );
+
 	useEffect( () => {
 		if ( ! eventData || formInitialized ) {
 			return;
