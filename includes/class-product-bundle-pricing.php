@@ -162,12 +162,13 @@ class Product_Bundle_Pricing {
 	}
 
 	/**
-	 * Markup: wrapper + separate spans (base + one badge per tier).
+	 * Markup: wrapper + optional per-person line + tier chips.
 	 *
-	 * @param WC_Product $product Product.
+	 * @param WC_Product                $product Product.
+	 * @param array<string, mixed>|null $args    Optional: `context` (`default`|`append`|`shortcode`), `show_base` (bool|null).
 	 * @return string HTML (wp_kses-allowed spans).
 	 */
-	public static function get_bundle_pricing_markup( $product ) {
+	public static function get_bundle_pricing_markup( $product, $args = null ) {
 		if ( ! $product instanceof WC_Product || ! self::is_dynamic_enabled_for_product( $product ) ) {
 			return '';
 		}
@@ -186,13 +187,29 @@ class Product_Bundle_Pricing {
 			return '';
 		}
 
+		$args = is_array( $args ) ? $args : array();
+
+		$context = isset( $args['context'] ) ? (string) $args['context'] : 'default';
+		if ( ! in_array( $context, array( 'default', 'append', 'shortcode' ), true ) ) {
+			$context = 'default';
+		}
+
+		$show_base = array_key_exists( 'show_base', $args ) ? $args['show_base'] : null;
+		if ( null === $show_base ) {
+			// After native Woo price, the unit amount is already shown — skip "$X / person".
+			$show_base = ( 'append' !== $context );
+		} else {
+			$show_base = (bool) $show_base;
+		}
+
 		/**
-		 * Show the per-person line before bundle badges.
+		 * Show the per-person line before bundle chips.
 		 *
 		 * @param bool       $show    Whether to show.
 		 * @param WC_Product $product Product.
+		 * @param string     $context `default`, `append`, or `shortcode`.
 		 */
-		$show_base = (bool) apply_filters( 'fipos_dynamic_bundle_pricing_show_base', true, $product );
+		$show_base = (bool) apply_filters( 'fipos_dynamic_bundle_pricing_show_base', $show_base, $product, $context );
 
 		$base_text = sprintf(
 			/* translators: %s: formatted unit price */
@@ -297,6 +314,7 @@ class Product_Bundle_Pricing {
 		$atts = shortcode_atts(
 			array(
 				'product_id' => '0',
+				'show_base'  => '',
 			),
 			is_array( $atts ) ? $atts : array(),
 			'fipos_dynamic_bundle_pricing'
@@ -316,7 +334,15 @@ class Product_Bundle_Pricing {
 			return '';
 		}
 
-		$html = self::get_bundle_pricing_markup( $product );
+		$markup_args = array( 'context' => 'shortcode' );
+		$sb          = trim( (string) $atts['show_base'] );
+		if ( '' !== $sb && function_exists( 'wc_string_to_bool' ) ) {
+			$markup_args['show_base'] = wc_string_to_bool( $sb );
+		} elseif ( '' !== $sb ) {
+			$markup_args['show_base'] = in_array( strtolower( $sb ), array( '1', 'yes', 'true', 'on' ), true );
+		}
+
+		$html = self::get_bundle_pricing_markup( $product, $markup_args );
 		return '' === $html ? '' : $html;
 	}
 
@@ -356,7 +382,7 @@ class Product_Bundle_Pricing {
 			return $price;
 		}
 
-		$extra = self::get_bundle_pricing_markup( $product );
+		$extra = self::get_bundle_pricing_markup( $product, array( 'context' => 'append' ) );
 		if ( '' === $extra ) {
 			return $price;
 		}
