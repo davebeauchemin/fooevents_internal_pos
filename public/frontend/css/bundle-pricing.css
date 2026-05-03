@@ -31,10 +31,20 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
 
 /* Layout only — colors/spacing come from ACSS `btn btn--primary` */
 .fipos-dynamic-bundle-pricing__badge {
+  cursor: pointer;
   white-space: nowrap;
 }
 
 .fipos-dynamic-bundle-pricing__badge.btn {
-  cursor: default;
+  cursor: pointer;
   vertical-align: middle;
+}
+
+.fipos-dynamic-bundle-pricing__badge:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.fipos-dynamic-bundle-pricing__badge.is-selected {
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
 }

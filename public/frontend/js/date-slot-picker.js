@@ -10,6 +10,81 @@ jQuery(document).ready(function ($) {
   var $dateSelect = $(DATE_SELECT_ID);
   var $slotSelect = $(SLOT_SELECT_ID);
 
+  // Promo bundle chips set the real WooCommerce quantity field, then let Woo/FooEvents react.
+  function getQuantityInput() {
+    var $qty = $('form.cart input.qty').first();
+    if (!$qty.length) {
+      $qty = $('input[name="quantity"]').first();
+    }
+    return $qty;
+  }
+
+  function numericAttr($el, attr) {
+    var raw = $el.attr(attr);
+    if (raw === undefined || raw === '' || raw === 'any') return null;
+    var val = parseFloat(raw);
+    return Number.isFinite(val) ? val : null;
+  }
+
+  function clampQuantity($qty, requested) {
+    var min = numericAttr($qty, 'min');
+    var max = numericAttr($qty, 'max');
+    var step = numericAttr($qty, 'step');
+    var val = parseFloat(requested);
+
+    if (!Number.isFinite(val)) return null;
+    if (min === null) min = 1;
+    if (step === null || step <= 0) step = 1;
+
+    val = Math.max(min, val);
+    if (max !== null) val = Math.min(max, val);
+
+    // Align to the quantity input step while keeping the value inside bounds.
+    val = min + (Math.round((val - min) / step) * step);
+    if (max !== null) val = Math.min(max, val);
+    val = Math.max(min, val);
+
+    return Math.round(val * 1000000) / 1000000;
+  }
+
+  function syncBundleChipState() {
+    var $qty = getQuantityInput();
+    var current = $qty.length ? parseFloat($qty.val()) : NaN;
+
+    $('.fipos-dynamic-bundle-pricing__badge[data-fipos-bundle-qty]').each(function () {
+      var $chip = $(this);
+      var qty = parseFloat($chip.attr('data-fipos-bundle-qty'));
+      var active = Number.isFinite(current) && Number.isFinite(qty) && current === qty;
+
+      $chip
+        .attr({ role: 'button', tabindex: '0', 'aria-pressed': active ? 'true' : 'false' })
+        .toggleClass('is-selected', active);
+    });
+  }
+
+  $(document).on('click', '.fipos-dynamic-bundle-pricing__badge[data-fipos-bundle-qty]', function (e) {
+    e.preventDefault();
+
+    var $chip = $(this);
+    var $qty = getQuantityInput();
+    if (!$qty.length) return;
+
+    var qty = clampQuantity($qty, $chip.attr('data-fipos-bundle-qty'));
+    if (qty === null) return;
+
+    $qty.val(qty).trigger('input').trigger('change');
+    syncBundleChipState();
+  });
+
+  $(document).on('keydown', '.fipos-dynamic-bundle-pricing__badge[data-fipos-bundle-qty]', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    $(this).trigger('click');
+  });
+
+  $(document).on('input change', 'form.cart input.qty, input[name="quantity"]', syncBundleChipState);
+  syncBundleChipState();
+
   if (!$dateSelect.length) return;
 
   // ─── SVG icons ───────────────────────────────────────────────────────────────
