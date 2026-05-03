@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { CalendarIcon, Plus, TriangleAlert } from 'lucide-react';
 import { useAddManualSlot, useAddSlotStock, useEvent, useGenerateSlots } from '../api/queries.js';
@@ -63,6 +63,26 @@ const WD_LABELS: { n: number; short: string }[] = [
 
 const SESSION_OPTIONS = [ 5, 10, 15, 20, 30, 60 ];
 
+/** Y-m-d in the browser's local calendar (never use toISOString().slice — that is UTC). */
+function dateToLocalYmd( d: Date ): string {
+	return (
+		d.getFullYear() +
+		'-' +
+		String( d.getMonth() + 1 ).padStart( 2, '0' ) +
+		'-' +
+		String( d.getDate() ).padStart( 2, '0' )
+	);
+}
+
+/** Parse Y-m-d as local noon (stable for range iteration and DST). */
+function parseLocalYmd( ymd: string ): Date | undefined {
+	const m = ymd.trim().match( /^(\d{4})-(\d{2})-(\d{2})$/ );
+	if ( ! m ) {
+		return undefined;
+	}
+	return new Date( Number( m[ 1 ] ), Number( m[ 2 ] ) - 1, Number( m[ 3 ] ), 12, 0, 0, 0 );
+}
+
 function newId() {
 	return typeof crypto !== 'undefined' && crypto.randomUUID
 		? crypto.randomUUID()
@@ -70,13 +90,11 @@ function newId() {
 }
 
 function emptyBlock( blockIndex: number ): ScheduleBlock {
-	const t = new Date();
-	const ymd = t.toISOString().slice( 0, 10 );
 	return {
 		id: newId(),
 		name: blockIndex === 0 ? 'Regular' : 'Late',
-		startDate: ymd,
-		endDate: ymd,
+		startDate: dateToLocalYmd( new Date() ),
+		endDate: dateToLocalYmd( new Date() ),
 		weekdays: [ 1, 2, 3, 4, 5 ],
 		openTime: '09:00',
 		closeTime: '17:00',
@@ -127,9 +145,7 @@ function ScheduleBlockDatePicker( {
 } ) {
 	const [ open, setOpen ] = useState( false );
 	const selectedDate =
-		ymd && /^\d{4}-\d{2}-\d{2}$/.test( ymd.trim() )
-			? parseISO( `${ ymd.trim() }T12:00:00` )
-			: undefined;
+		ymd && /^\d{4}-\d{2}-\d{2}$/.test( ymd.trim() ) ? parseLocalYmd( ymd.trim() ) : undefined;
 	return (
 		<div className={ cn( 'space-y-2', className ) }>
 			<Label htmlFor={ triggerId }>{ label }</Label>
@@ -172,7 +188,7 @@ function ScheduleBlockDatePicker( {
 							if ( isDateDisabled?.( d ) ) {
 								return;
 							}
-							onSelectYmd( format( d, 'yyyy-MM-dd' ) );
+							onSelectYmd( dateToLocalYmd( d ) );
 							setOpen( false );
 						} }
 						initialFocus
@@ -205,16 +221,43 @@ function toHHMM( minutes: number ) {
 function listDates( start: string, end: string, weekdays: number[] ) {
 	const wset = new Set( weekdays );
 	const out: string[] = [];
-	const d = new Date( start + 'T12:00:00' );
-	const endD = new Date( end + 'T12:00:00' );
-	for ( let i = 0; i < 2000 && d <= endD; i++ ) {
+	const d0 = parseLocalYmd( start );
+	const endD = parseLocalYmd( end );
+	if ( ! d0 || ! endD ) {
+		return [];
+	}
+	for ( let d = d0, i = 0; i < 2000 && d <= endD; i++ ) {
 		const n = d.getDay() === 0 ? 7 : d.getDay();
 		if ( wset.has( n ) ) {
-			out.push( d.toISOString().slice( 0, 10 ) );
+			out.push( dateToLocalYmd( d ) );
 		}
-		d.setDate( d.getDate() + 1 );
+		const next = new Date( d );
+		next.setDate( next.getDate() + 1 );
+		d = next;
 	}
 	return out;
+}
+
+/** Inclusive calendar-day count from startYmd through endYmd. 0 if invalid or start > end. */
+function countInclusiveCalendarDays( startYmd: string, endYmd: string ): number {
+	const s = startYmd.trim();
+	const e = endYmd.trim();
+	if ( ! /^\d{4}-\d{2}-\d{2}$/.test( s ) || ! /^\d{4}-\d{2}-\d{2}$/.test( e ) || s > e ) {
+		return 0;
+	}
+	const d0 = parseLocalYmd( s );
+	const endD = parseLocalYmd( e );
+	if ( ! d0 || ! endD ) {
+		return 0;
+	}
+	let n = 0;
+	for ( let d = d0, i = 0; i < 2000 && d <= endD; i++ ) {
+		n++;
+		const next = new Date( d );
+		next.setDate( next.getDate() + 1 );
+		d = next;
+	}
+	return n;
 }
 
 function sessionStarts( openM: number, closeM: number, session: number ) {
@@ -290,7 +333,7 @@ function previewStats( blocks: ScheduleBlock[], sessionM: number ) {
 	};
 }
 
-/** Preview for add-missing mode: block sessions in [fillFrom, fillTo] ∩ today+ (server skips ones that already exist). */
+/** Preview for add-missing mode: same block+fill span merge as server, then ∩ [fillFrom,fillTo] ∩ today+. */
 function previewStatsFillEmpty(
 	blocks: ScheduleBlock[],
 	sessionM: number,
@@ -298,6 +341,8 @@ function previewStatsFillEmpty(
 	fillTo: string,
 	todayYmd: string,
 ) {
+	const ff = fillFrom.trim();
+	const ft = fillTo.trim();
 	const byNameTime = new Map<string, { name: string; time: string; dates: Set<string> }>();
 	for ( const b of blocks ) {
 		const openM = parseHHMM( b.openTime );
@@ -306,7 +351,14 @@ function previewStatsFillEmpty(
 			continue;
 		}
 		const name = ( b.name || '' ).trim();
-		const dates = listDates( b.startDate, b.endDate, b.weekdays );
+		const rawEffStart = ymdMin( b.startDate, ff );
+		const rawEffEnd = ymdMax( b.endDate, ft );
+		const enumerStart = ymdMax( todayYmd, rawEffStart );
+		const enumerEnd = rawEffEnd;
+		if ( enumerStart > enumerEnd ) {
+			continue;
+		}
+		const dates = listDates( enumerStart, enumerEnd, b.weekdays );
 		const starts = sessionStarts( openM, closeM, sessionM );
 		for ( const st of starts ) {
 			const timeKey = toHHMM( st );
@@ -316,10 +368,7 @@ function previewStatsFillEmpty(
 			}
 			const row = byNameTime.get( key )!;
 			for ( const ymd of dates ) {
-				if ( ymd < todayYmd ) {
-					continue;
-				}
-				if ( ymd < fillFrom || ymd > fillTo ) {
+				if ( ymd < ff || ymd > ft ) {
 					continue;
 				}
 				row.dates.add( ymd );
@@ -353,20 +402,27 @@ function previewStatsFillEmpty(
 	return {
 		slotCount: byNameTime.size,
 		dateCount: allDates.size,
+		fillRangeInclusiveDays: countInclusiveCalendarDays( ff, ft ),
 		totalEntries,
 		categories,
 	};
 }
 
 function todayYmdLocal(): string {
-	const t = new Date();
-	return (
-		t.getFullYear() +
-		'-' +
-		String( t.getMonth() + 1 ).padStart( 2, '0' ) +
-		'-' +
-		String( t.getDate() ).padStart( 2, '0' )
-	);
+	return dateToLocalYmd( new Date() );
+}
+
+/** Lexicographic min/max for Y-m-d (ISO) strings. */
+function ymdMin( a: string, b: string ): string {
+	const x = a.trim();
+	const y = b.trim();
+	return x <= y ? x : y;
+}
+
+function ymdMax( a: string, b: string ): string {
+	const x = a.trim();
+	const y = b.trim();
+	return x >= y ? x : y;
 }
 
 export default function Schedule() {
@@ -380,6 +436,7 @@ export default function Schedule() {
 					dates?: unknown[];
 					id?: number;
 					bookingMethod?: string;
+					siteTodayYmd?: string;
 			  }
 			| undefined;
 		isLoading: boolean;
@@ -389,6 +446,14 @@ export default function Schedule() {
 	const gen = useGenerateSlots( eventId );
 	const addManual = useAddManualSlot( eventId );
 	const addStock = useAddSlotStock( eventId );
+
+	const siteTodayYmd = useMemo( () => {
+		const raw =
+			eventData && typeof eventData.siteTodayYmd === 'string'
+				? eventData.siteTodayYmd.trim()
+				: '';
+		return /^\d{4}-\d{2}-\d{2}$/.test( raw ) ? raw : todayYmdLocal();
+	}, [ eventData ] );
 
 	const [ manualDate, setManualDate ] = useState( todayYmdLocal );
 	const [ manualTime, setManualTime ] = useState( '09:00' );
@@ -434,9 +499,9 @@ export default function Schedule() {
 				sessionMinutes,
 				fillFromYmd.trim(),
 				fillToYmd.trim(),
-				todayYmdLocal(),
+				siteTodayYmd,
 			),
-		[ blocks, sessionMinutes, fillFromYmd, fillToYmd ],
+		[ blocks, sessionMinutes, fillFromYmd, fillToYmd, siteTodayYmd ],
 	);
 
 	const fillRangeInvalid =
@@ -446,8 +511,7 @@ export default function Schedule() {
 
 	/** Block past days in fill range pickers; occupied days are allowed (e.g. extend hours). */
 	function fillRangeCalendarDisablePast( date: Date ) {
-		const y = format( date, 'yyyy-MM-dd' );
-		return y < todayYmdLocal();
+		return dateToLocalYmd( date ) < siteTodayYmd;
 	}
 
 	const slotsOnManualDate = useMemo( (): SlotLike[] => {
@@ -1123,11 +1187,14 @@ export default function Schedule() {
 								Add missing sessions
 							</h2>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								Pick a fill-from / fill-to range. The server adds every session from your blocks
-								that falls in that range and <strong>is not already on the schedule</strong> — on
-								brand-new days or on days that already have earlier hours (e.g. extend closing from
-								16:50 to 19:50). Existing slot rows are never removed. True duplicates are skipped
-								with a warning.
+								Pick a fill-from / fill-to range. Each schedule block is merged with that range
+								(earlier start / later end) so missing days inside the range are included even when
+								the block&apos;s saved dates start later. The server adds every session from your
+								blocks that falls in the fill range and <strong>is not already on the schedule</strong>{ ' ' }
+								— on brand-new days or on days that already have earlier hours (e.g. extend closing
+								from 16:50 to 19:50). Existing slot rows are never removed. True duplicates are
+								skipped with a warning. Days outside a block&apos;s weekdays still get no sessions
+								for that block.
 							</p>
 						</div>
 						<div className="flex flex-wrap gap-3">
@@ -1163,9 +1230,24 @@ export default function Schedule() {
 									<Badge>{ fillPreview.totalEntries }</Badge>
 								</p>
 								<p>
-									<span className="text-muted-foreground">Distinct calendar days in preview:</span>{ ' ' }
+									<span className="text-muted-foreground">Calendar days in fill range (inclusive):</span>{ ' ' }
+									<strong>{ fillPreview.fillRangeInclusiveDays }</strong>
+								</p>
+								<p>
+									<span className="text-muted-foreground">
+										Distinct days with candidate sessions (weekdays per block):
+									</span>{ ' ' }
 									<strong>{ fillPreview.dateCount }</strong>
 								</p>
+								{ ! fillRangeInvalid
+								&& fillPreview.fillRangeInclusiveDays > 0
+								&& fillPreview.dateCount < fillPreview.fillRangeInclusiveDays ? (
+									<p className="text-muted-foreground text-xs leading-snug">
+										The fill range can include days where no block runs (e.g. a Sunday when this
+										schedule is Mon–Thu only). Add another block for those weekdays if you need
+										sessions on every calendar day.
+									</p>
+								) : null }
 								{ fillPreview.categories.length > 0 && (
 									<div className="text-muted-foreground space-y-1 border-t border-border/60 pt-2 text-xs">
 										<p className="font-medium text-foreground">By schedule name</p>
@@ -1182,9 +1264,10 @@ export default function Schedule() {
 									</div>
 								) }
 								<p className="text-muted-foreground text-xs">
-									Cannot pick dates before today. Preview counts every block session in range; the
-									server may add fewer if some already exist. Uses your browser timezone for the
-									preview; WordPress timezone when saving.
+									Cannot pick dates before the site&apos;s today ({ ' ' }
+									<span className="font-mono text-foreground">{ siteTodayYmd }</span>). Preview
+									matches the server on fill-span merge and range; the server may add fewer if some
+									cells already exist.
 								</p>
 							</CardContent>
 						</Card>

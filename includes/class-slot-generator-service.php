@@ -296,9 +296,11 @@ class Slot_Generator_Service {
 	 * Merge generated block sessions into the fill date range (add-only).
 	 *
 	 * For each block-derived (label, session time, day), appends a slot–date cell if it does not already
-	 * exist. Days that already have sessions still receive new times (e.g. later hours). Never removes
-	 * or replaces existing rows. Duplicate label+time+date is skipped with a warning. Requires mode
-	 * fillEmpty and fillFrom/fillTo on the validated config.
+	 * exist. Enumeration spans merge each block's start/end with fillFrom/fillTo so days inside the fill
+	 * window count even when the block's saved start is later (or end earlier). Days that already have
+	 * sessions still receive new times (e.g. later hours). Never removes or replaces existing rows.
+	 * Duplicate label+time+date is skipped with a warning. Requires mode fillEmpty and fillFrom/fillTo on
+	 * the validated config.
 	 *
 	 * @param int   $product_id Product ID.
 	 * @param array $config     Request body after {@see validate_config()}.
@@ -329,10 +331,15 @@ class Slot_Generator_Service {
 		$by_name_time = array();
 
 		foreach ( $config['blocks'] as $block_idx => $block ) {
-			$start_ymd = (string) $block['startDate'];
-			$end_ymd   = (string) $block['endDate'];
-			$orig_s    = $start_ymd;
-			if ( strcmp( $start_ymd, $today_ymd ) < 0 ) {
+			$block_start = (string) $block['startDate'];
+			$block_end   = (string) $block['endDate'];
+			// Span for this block: merge block dates with the fill-from / fill-to window so days inside
+			// the fill range count even when they fall before the block's saved start (or after its end).
+			$eff_start = ( strcmp( $block_start, $fill_from ) < 0 ) ? $block_start : $fill_from;
+			$eff_end   = ( strcmp( $block_end, $fill_to ) > 0 ) ? $block_end : $fill_to;
+
+			$orig_s = $eff_start;
+			if ( strcmp( $eff_start, $today_ymd ) < 0 ) {
 				$warnings[] = sprintf(
 					/* translators: 1: block, 2: old start, 3: new start */
 					__( 'Block %1$d start was before today; using %3$s instead of %2$s.', 'fooevents-internal-pos' ),
@@ -341,12 +348,14 @@ class Slot_Generator_Service {
 					$today_ymd
 				);
 				$start_ymd = $today_ymd;
+			} else {
+				$start_ymd = $eff_start;
 			}
-			if ( strcmp( $start_ymd, $end_ymd ) > 0 ) {
+			if ( strcmp( $start_ymd, $eff_end ) > 0 ) {
 				return new WP_Error( 'rest_invalid_param', sprintf( /* translators: %d: block */ __( 'Block %d has no valid dates after today.', 'fooevents-internal-pos' ), $block_idx + 1 ), array( 'status' => 400 ) );
 			}
 
-			$dates_in_block = $this->list_dates_in_range( $start_ymd, $end_ymd, $block['weekdays'], $tz );
+			$dates_in_block = $this->list_dates_in_range( $start_ymd, $eff_end, $block['weekdays'], $tz );
 			if ( count( $dates_in_block ) > self::MAX_DATES_PER_BLOCK ) {
 				return new WP_Error(
 					'rest_invalid_param',

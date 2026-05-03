@@ -42,6 +42,7 @@ import {
 	manualSlotWouldDuplicateExisting,
 	normalizeTimeInputToHhmm,
 	slotSelectable,
+	type HourSlotGroup,
 } from '@/lib/slotHourGrouping';
 
 type SlotApi = {
@@ -135,6 +136,10 @@ export default function EventSlotOverview( {
 		ymd: string;
 		title: string;
 	} | null >( null );
+	const [ pendingDeleteHourGroup, setPendingDeleteHourGroup ] = useState<HourSlotGroup | null>(
+		null,
+	);
+	const [ hourGroupDeleteWorking, setHourGroupDeleteWorking ] = useState( false );
 	const [ pendingReduce, setPendingReduce ] = useState< {
 		slotId: string;
 		dateId: string;
@@ -381,6 +386,17 @@ export default function EventSlotOverview( {
 							/>
 						) : null }
 
+						{ manageSlotsUi && selectedDay?.date ? (
+							<EventOverviewDeleteHourGroupDialog
+								eventId={ detail.id as number }
+								eventTitle={ detail.title?.trim() || 'this event' }
+								ymd={ selectedDay.date }
+								pendingGroup={ pendingDeleteHourGroup }
+								clearPending={ () => setPendingDeleteHourGroup( null ) }
+								onWorkingChange={ setHourGroupDeleteWorking }
+							/>
+						) : null }
+
 						{ ! selectedDay?.slots?.length && (
 							<p className="text-muted-foreground text-sm">No slots on this day.</p>
 						) }
@@ -388,6 +404,17 @@ export default function EventSlotOverview( {
 							<div key={ selectedYmd } className="space-y-8">
 								{ hourGroups.map( ( g ) => {
 									const leftLabel = hourRemainingSpotsLabel( g.slots );
+									const allSlotsRemovable = g.slots.every( ( s ) => {
+										const sid = String( s.id ?? '' ).trim();
+										const did = String( s.dateId ?? '' ).trim();
+										return sid !== '' && did !== '';
+									} );
+									const slotActionsLocked =
+										pendingDelete !== null
+										|| pendingReduce !== null
+										|| pendingAdd !== null
+										|| pendingDeleteHourGroup !== null
+										|| hourGroupDeleteWorking;
 									return (
 										<section
 											key={ g.key }
@@ -417,6 +444,19 @@ export default function EventSlotOverview( {
 														{ g.slots.length } slot
 														{ g.slots.length === 1 ? '' : 's' }
 													</span>
+													{ manageSlotsUi && allSlotsRemovable ? (
+														<Button
+															type="button"
+															variant="ghost"
+															size="icon"
+															className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+															disabled={ slotActionsLocked }
+															aria-label={ `Remove all sessions for ${ hourRangeTitle( g.hour ) }` }
+															onClick={ () => setPendingDeleteHourGroup( g ) }
+														>
+															<Trash2 className="size-4" aria-hidden />
+														</Button>
+													) : null }
 												</span>
 											</div>
 											<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 pl-0 sm:pl-1">
@@ -439,7 +479,9 @@ export default function EventSlotOverview( {
 													const slotBusy =
 														pendingDelete !== null
 														|| pendingReduce !== null
-														|| pendingAdd !== null;
+														|| pendingAdd !== null
+														|| pendingDeleteHourGroup !== null
+														|| hourGroupDeleteWorking;
 													return (
 														<SlotOverviewCard
 															key={ `${ s.id }-${ s.dateId ?? '' }` }
@@ -1275,6 +1317,102 @@ function EventOverviewReduceStockDialog( {
 						}
 					>
 						{ removeStock.isPending ? 'Saving…' : 'Remove spots' }
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function EventOverviewDeleteHourGroupDialog( {
+	eventId,
+	eventTitle,
+	ymd,
+	pendingGroup,
+	clearPending,
+	onWorkingChange,
+}: {
+	eventId: number;
+	eventTitle: string;
+	ymd: string;
+	pendingGroup: HourSlotGroup | null;
+	clearPending: () => void;
+	onWorkingChange: ( busy: boolean ) => void;
+} ) {
+	const delManual = useDeleteManualSlot( eventId );
+	const [ working, setWorking ] = useState( false );
+	const busy = working;
+
+	async function confirmDeleteHourGroup() {
+		if ( ! pendingGroup ) {
+			return;
+		}
+		setWorking( true );
+		onWorkingChange( true );
+		const n = pendingGroup.slots.length;
+		try {
+			for ( const s of pendingGroup.slots ) {
+				const sid = String( s.id ?? '' ).trim();
+				const did = String( s.dateId ?? '' ).trim();
+				await delManual.mutateAsync( {
+					slotId: sid,
+					dateId: did,
+					ymd,
+				} );
+			}
+			toast.success(
+				n === 1
+					? 'Removed 1 session.'
+					: `Removed all ${ n } sessions in this hour.`,
+			);
+			clearPending();
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		} finally {
+			setWorking( false );
+			onWorkingChange( false );
+		}
+	}
+
+	const slotCount = pendingGroup?.slots.length ?? 0;
+
+	return (
+		<Dialog
+			open={ pendingGroup !== null }
+			onOpenChange={ ( open ) => {
+				if ( ! open && ! busy ) {
+					clearPending();
+				}
+			} }
+		>
+			<DialogContent showCloseButton={ ! busy }>
+				<DialogHeader>
+					<DialogTitle>Remove all sessions in this hour?</DialogTitle>
+					<DialogDescription>
+						This removes { slotCount === 1 ? '1 session' : `all ${ slotCount } sessions` } in{ ' ' }
+						{ pendingGroup ? hourRangeTitle( pendingGroup.hour ) : '' } on{ ' ' }
+						<span className="font-mono text-foreground">{ ymd }</span> for{ ' ' }
+						<span className="font-medium text-foreground">{ eventTitle }</span>. The server will
+						refuse removal for any session that already has bookings (you may see an error partway
+						through). This cannot be undone.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ clearPending }
+						disabled={ busy }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						variant="destructive"
+						onClick={ () => void confirmDeleteHourGroup() }
+						disabled={ busy || slotCount < 1 }
+					>
+						{ busy ? 'Removing…' : 'Remove all in this hour' }
 					</Button>
 				</DialogFooter>
 			</DialogContent>

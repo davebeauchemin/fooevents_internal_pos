@@ -189,6 +189,7 @@ class Bookings_Service {
 				'bookingMethod' => '',
 				'labels'        => array( 'date' => __( 'Date', 'fooevents-internal-pos' ), 'slot' => __( 'Slot', 'fooevents-internal-pos' ) ),
 				'dates'         => array(),
+				'siteTodayYmd'  => $this->today_ymd(),
 			);
 		}
 
@@ -314,6 +315,7 @@ class Bookings_Service {
 			'dates'         => $dates_out,
 			'price'         => $price_row['price'],
 			'priceHtml'     => $price_row['priceHtml'],
+			'siteTodayYmd'  => $this->today_ymd(),
 		);
 	}
 
