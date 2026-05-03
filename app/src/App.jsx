@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppSidebar } from '@/components/app-sidebar';
 import {
@@ -50,6 +51,17 @@ function App() {
 	const parentLabel = site?.name?.trim() || 'Internal POS';
 	const parentHref = ! canUsePos && canValidateTickets ? '/validate' : '/calendar';
 	const validatorOnly = canValidateTickets && ! canUsePos;
+
+	useEffect( () => {
+		const reduceMotion =
+			typeof window !== 'undefined'
+			&& window.matchMedia( '(prefers-reduced-motion: reduce)' ).matches;
+		window.scrollTo( {
+			top: 0,
+			left: 0,
+			behavior: reduceMotion ? 'auto' : 'smooth',
+		} );
+	}, [ pathname ] );
 
 	if ( validatorOnly && ( pathname === '/' || pathname === '/calendar' || pathname === '/checkout' ) ) {
 		return <Navigate to="/validate" replace />;

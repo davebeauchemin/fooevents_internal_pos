@@ -1445,9 +1445,18 @@ class Bookings_Checkout_Service {
 	 */
 	private static function get_valid_payment_method_keys() {
 		if ( function_exists( 'fooeventspos_do_get_all_payment_methods' ) && \WC() && \WC()->payment_gateways ) {
-			$methods = fooeventspos_do_get_all_payment_methods( true );
+			// Use storefront-available gateways only (WooCommerce enabled + gateway is_available), not payment_gateways().
+			$methods = fooeventspos_do_get_all_payment_methods( false );
 			if ( is_array( $methods ) && ! empty( $methods ) ) {
-				return array_keys( $methods );
+				$keys = array();
+				foreach ( $methods as $row ) {
+					if ( is_array( $row ) && ! empty( $row['pmk'] ) ) {
+						$keys[] = (string) $row['pmk'];
+					}
+				}
+				if ( ! empty( $keys ) ) {
+					return $keys;
+				}
 			}
 		}
 		return array( 'fooeventspos_card' );
@@ -1465,12 +1474,16 @@ class Bookings_Checkout_Service {
 		self::load_fooeventspos_api_helpers();
 		$out = array();
 		if ( function_exists( 'fooeventspos_do_get_all_payment_methods' ) && \WC() && \WC()->payment_gateways ) {
-			$methods = fooeventspos_do_get_all_payment_methods( true );
+			// false => get_available_payment_gateways() so disabled WC methods are omitted.
+			$methods = fooeventspos_do_get_all_payment_methods( false );
 			if ( is_array( $methods ) ) {
-				foreach ( $methods as $key => $label ) {
+				foreach ( $methods as $row ) {
+					if ( ! is_array( $row ) || empty( $row['pmk'] ) ) {
+						continue;
+					}
 					$out[] = array(
-						'key'   => (string) $key,
-						'label' => (string) $label,
+						'key'   => (string) $row['pmk'],
+						'label' => (string) ( $row['pmt'] ?? '' ),
 					);
 				}
 			}

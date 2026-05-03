@@ -855,8 +855,11 @@ export default function Validate() {
 				( node ) =>
 					node.getAttribute( 'data-gate-slot' ) === selectedGateSessionKey,
 			);
+			const reduceMotion =
+				typeof window !== 'undefined'
+				&& window.matchMedia( '(prefers-reduced-motion: reduce)' ).matches;
 			el?.scrollIntoView( {
-				behavior: 'smooth',
+				behavior: reduceMotion ? 'auto' : 'smooth',
 				block: 'start',
 				inline: 'nearest',
 			} );

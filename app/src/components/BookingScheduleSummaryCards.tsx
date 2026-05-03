@@ -45,7 +45,7 @@ export default function BookingScheduleSummaryCards( {
 }: Props ) {
 	if ( isLoading ) {
 		return (
-			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+			<div className="grid grid-cols-2 gap-3 md:grid-cols-4">
 				{ [ 1, 2, 3, 4 ].map( ( i ) => (
 					<Skeleton key={ i } className="h-[88px] w-full rounded-xl" />
 				) ) }
@@ -68,12 +68,16 @@ export default function BookingScheduleSummaryCards( {
 		&& span.endLabel !== '—',
 	);
 
+	const summaryCardClass = 'min-h-[88px] justify-center py-4';
+	const summaryHeaderClass =
+		'flex w-full flex-col items-center justify-center gap-1 px-6 text-center pb-0 pt-0';
+
 	return (
-		<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-			<Card>
-				<CardHeader className="pb-2">
+		<div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+			<Card className={ summaryCardClass }>
+				<CardHeader className={ summaryHeaderClass }>
 					<CardDescription>
-						{ leadingIsDayRange ? 'Start · end (selected day)' : 'Upcoming days' }
+						{ leadingIsDayRange ? 'Start · end' : 'Upcoming days' }
 					</CardDescription>
 					{ leadingIsDayRange ? (
 						<CardTitle className="text-base font-medium leading-snug tabular-nums">
@@ -94,20 +98,20 @@ export default function BookingScheduleSummaryCards( {
 					) }
 				</CardHeader>
 			</Card>
-			<Card>
-				<CardHeader className="pb-2">
-					<CardDescription>Slots (selected day)</CardDescription>
+			<Card className={ summaryCardClass }>
+				<CardHeader className={ summaryHeaderClass }>
+					<CardDescription>Slots</CardDescription>
 					<CardTitle className="text-2xl tabular-nums">{ summary.slotsOnSelectedDay }</CardTitle>
 				</CardHeader>
 			</Card>
-			<Card>
-				<CardHeader className="pb-2">
-					<CardDescription>Capacity (selected day)</CardDescription>
+			<Card className={ summaryCardClass }>
+				<CardHeader className={ summaryHeaderClass }>
+					<CardDescription>Capacity</CardDescription>
 					<CardTitle className="text-2xl tabular-nums">{ summary.capacityOnSelectedDay }</CardTitle>
 				</CardHeader>
 			</Card>
-			<Card>
-				<CardHeader className="pb-2">
+			<Card className={ summaryCardClass }>
+				<CardHeader className={ summaryHeaderClass }>
 					<CardDescription>Next available</CardDescription>
 					<CardTitle className="text-base font-medium leading-snug">
 						{ na?.dateYmd && na.slot ? (

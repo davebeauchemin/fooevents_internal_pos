@@ -3,21 +3,18 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { useCheckoutPreview, useCreateBooking, usePaymentMethods } from '../api/queries.js';
-import Cart from '@/components/Cart';
-import { useCart } from '@/context/CartContext';
+import {
+	CartLineRow,
+	CartSubtotalRow,
+	cartSubtotalDisplay,
+} from '@/components/Cart';
+import { cartLineKey, useCart } from '@/context/CartContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { Checkbox } from '@/components/ui/checkbox';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { htmlToPlainText } from '@/lib/htmlPlain';
 
 const MAX_POS_COUPONS = 20;
@@ -88,7 +85,9 @@ type CheckoutPreviewResponse = {
 export default function Checkout() {
 	const navigate = useNavigate();
 	const formId = useId();
-	const { items, clearCart } = useCart();
+	const { items, clearCart, updateQty, removeLine } = useCart();
+
+	const cartSubDisplay = useMemo( () => cartSubtotalDisplay( items ), [ items ] );
 
 	const previewLines = useMemo(
 		() =>
@@ -214,7 +213,7 @@ export default function Checkout() {
 	const previewBusy = previewLoading || previewFetching;
 
 	return (
-		<div className="space-y-6">
+		<div className="mx-auto w-full max-w-xl space-y-6 pb-12">
 			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<h1 className="text-2xl font-bold tracking-tight">Checkout</h1>
@@ -238,118 +237,8 @@ export default function Checkout() {
 					</CardContent>
 				</Card>
 			) : (
-				<form id={ formId } onSubmit={ onSubmit } className="grid gap-6 lg:grid-cols-[1fr_minmax(280px,400px)] lg:items-start">
-					<div className="space-y-6">
-						<Cart variant="full" />
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-lg">Attendee</CardTitle>
-								<CardDescription>Applied to every ticket in this order.</CardDescription>
-							</CardHeader>
-							<CardContent className="grid gap-3 sm:grid-cols-2">
-								<div className="grid gap-2">
-									<Label htmlFor={ `${ formId }-first` }>First name</Label>
-									<Input
-										id={ `${ formId }-first` }
-										value={ first }
-										onChange={ ( e ) => setFirst( e.target.value ) }
-										required
-										maxLength={ 100 }
-										autoComplete="given-name"
-										disabled={ mutation.isPending }
-									/>
-								</div>
-								<div className="grid gap-2">
-									<Label htmlFor={ `${ formId }-last` }>Last name</Label>
-									<Input
-										id={ `${ formId }-last` }
-										value={ last }
-										onChange={ ( e ) => setLast( e.target.value ) }
-										required
-										maxLength={ 100 }
-										autoComplete="family-name"
-										disabled={ mutation.isPending }
-									/>
-								</div>
-								<div className="grid gap-2 sm:col-span-2">
-									<Label htmlFor={ `${ formId }-email` }>Email</Label>
-									<Input
-										id={ `${ formId }-email` }
-										type="email"
-										value={ email }
-										onChange={ ( e ) => setEmail( e.target.value ) }
-										required
-										autoComplete="email"
-										disabled={ mutation.isPending }
-									/>
-								</div>
-								<div className="grid gap-2 sm:col-span-2">
-									<Label htmlFor={ `${ formId }-postal` }>Postal code</Label>
-									<Input
-										id={ `${ formId }-postal` }
-										type="text"
-										value={ postalCode }
-										onChange={ ( e ) => setPostalCode( e.target.value ) }
-										required
-										maxLength={ 50 }
-										autoComplete="postal-code"
-										inputMode="text"
-										placeholder="Customer postal / ZIP code"
-										disabled={ mutation.isPending }
-									/>
-									<p className="text-muted-foreground text-xs leading-relaxed">
-										Required for regional reporting. Enter exactly as the customer states it.
-									</p>
-								</div>
-								<div className="grid gap-2 sm:col-span-2">
-									<Label htmlFor={ `${ formId }-pm` }>Payment method</Label>
-									<Select
-										value={ effectivePaymentKey }
-										onValueChange={ setPaymentMethodKey }
-										disabled={ mutation.isPending || paymentMethodsLoading || ! paymentMethods?.length }
-									>
-										<SelectTrigger id={ `${ formId }-pm` }>
-											<SelectValue placeholder={ paymentMethodsLoading ? 'Loading…' : 'Select method' } />
-										</SelectTrigger>
-										<SelectContent>
-											{ paymentMethods?.map( ( m ) => (
-												<SelectItem key={ m.key } value={ m.key }>
-													{ m.label }
-												</SelectItem>
-											) ) }
-										</SelectContent>
-									</Select>
-								</div>
-								<div className="flex flex-col gap-2 sm:col-span-2">
-									<label className="flex cursor-pointer items-start gap-3">
-										<Checkbox
-											id={ `${ formId }-checkin` }
-											checked={ checkInNow }
-											onCheckedChange={ ( v ) => setCheckInNow( v === true ) }
-											disabled={ mutation.isPending }
-											className="mt-0.5"
-										/>
-										<span className="leading-snug">
-											<span className="font-medium">Check-in right now</span>
-											<span className="text-muted-foreground block text-xs">
-												New tickets are emailed to the customer already marked checked in—they cannot validate again later.
-											</span>
-										</span>
-									</label>
-								</div>
-							</CardContent>
-						</Card>
-						<div className="flex flex-wrap gap-2">
-							<Button type="submit" size="lg" disabled={ disabledSubmit }>
-								{ mutation.isPending ? 'Processing…' : 'Complete order' }
-							</Button>
-							<Button type="button" variant="outline" disabled={ mutation.isPending } asChild>
-								<Link to="/calendar">Keep shopping</Link>
-							</Button>
-						</div>
-					</div>
-
-					<div className="space-y-4 lg:sticky lg:top-4">
+				<form id={ formId } onSubmit={ onSubmit } className="flex flex-col gap-6">
+					<div className="space-y-4">
 						{ previewError && (
 							<p className="text-destructive text-sm">{ String( previewError.message || previewError ) }</p>
 						) }
@@ -357,9 +246,46 @@ export default function Checkout() {
 						<Card className="border-primary/40 shadow-md">
 							<CardHeader className="pb-2">
 								<CardTitle className="text-base">Totals (WooCommerce)</CardTitle>
-								<CardDescription>Includes taxes per store settings.</CardDescription>
+								<CardDescription>
+									Lines you are booking, then store taxes and total to charge.
+								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-4">
+								<div className="space-y-3">
+									<p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+										Order lines
+									</p>
+									<ul className="max-h-[min(50vh,24rem)] space-y-3 overflow-y-auto pr-1">
+										{ items.map( ( line ) => (
+											<li key={ cartLineKey( line ) }>
+												<CartLineRow
+													line={ line }
+													onQty={ ( q ) => updateQty( cartLineKey( line ), q ) }
+													onRemove={ () => removeLine( cartLineKey( line ) ) }
+												/>
+											</li>
+										) ) }
+									</ul>
+									<CartSubtotalRow display={ cartSubDisplay } />
+									<div className="flex justify-end">
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={ clearCart }
+											disabled={ mutation.isPending }
+										>
+											Clear order
+										</Button>
+									</div>
+								</div>
+
+								<Separator />
+
+								<div className="space-y-4">
+									<p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+										Checkout totals
+									</p>
 								<div className="grid gap-2">
 									<Label htmlFor={ `${ formId }-coupons` }>Coupon codes (optional)</Label>
 									<Input
@@ -514,8 +440,137 @@ export default function Checkout() {
 										{ preview?.totalFormatted ? htmlToPlainText( preview.totalFormatted ) : '—' }
 									</p>
 								</div>
+								</div>
 							</CardContent>
 						</Card>
+					</div>
+
+					<div className="space-y-6">
+						<Card>
+							<CardHeader>
+								<CardTitle className="text-lg">Attendee</CardTitle>
+								<CardDescription>Applied to every ticket in this order.</CardDescription>
+							</CardHeader>
+							<CardContent className="grid gap-3 sm:grid-cols-2">
+								<div className="grid gap-2">
+									<Label htmlFor={ `${ formId }-first` }>First name</Label>
+									<Input
+										id={ `${ formId }-first` }
+										value={ first }
+										onChange={ ( e ) => setFirst( e.target.value ) }
+										required
+										maxLength={ 100 }
+										autoComplete="given-name"
+										disabled={ mutation.isPending }
+									/>
+								</div>
+								<div className="grid gap-2">
+									<Label htmlFor={ `${ formId }-last` }>Last name</Label>
+									<Input
+										id={ `${ formId }-last` }
+										value={ last }
+										onChange={ ( e ) => setLast( e.target.value ) }
+										required
+										maxLength={ 100 }
+										autoComplete="family-name"
+										disabled={ mutation.isPending }
+									/>
+								</div>
+								<div className="grid gap-2">
+									<Label htmlFor={ `${ formId }-email` }>Email</Label>
+									<Input
+										id={ `${ formId }-email` }
+										type="email"
+										value={ email }
+										onChange={ ( e ) => setEmail( e.target.value ) }
+										required
+										autoComplete="email"
+										disabled={ mutation.isPending }
+									/>
+								</div>
+								<div className="grid gap-2">
+									<Label htmlFor={ `${ formId }-postal` }>Postal code</Label>
+									<Input
+										id={ `${ formId }-postal` }
+										type="text"
+										value={ postalCode }
+										onChange={ ( e ) => setPostalCode( e.target.value ) }
+										required
+										maxLength={ 50 }
+										autoComplete="postal-code"
+										inputMode="text"
+										placeholder="Customer postal / ZIP code"
+										disabled={ mutation.isPending }
+									/>
+								</div>
+								<div className="grid gap-2 sm:col-span-2">
+									<Label id={ `${ formId }-pm-label` }>Payment method</Label>
+									{ paymentMethodsLoading && ! paymentMethods?.length ? (
+										<p className="text-muted-foreground text-sm">Loading payment methods…</p>
+									) : ! paymentMethods?.length ? (
+										<p className="text-muted-foreground text-sm">No payment methods available.</p>
+									) : (
+										<ToggleGroup
+											type="single"
+											value={ effectivePaymentKey }
+											onValueChange={ ( v ) => {
+												if ( v ) {
+													setPaymentMethodKey( v );
+												}
+											} }
+											disabled={ mutation.isPending || paymentMethodsLoading }
+											aria-labelledby={ `${ formId }-pm-label` }
+											className="flex w-full min-w-0 flex-wrap gap-2"
+										>
+											{ paymentMethods.map( ( m ) => (
+												<ToggleGroupItem
+													key={ m.key }
+													value={ m.key }
+													className="h-9 min-h-9 min-w-0 flex-none shrink-0 rounded-full border border-transparent px-4 font-medium shadow-none data-[state=on]:border-primary data-[state=on]:shadow-xs data-[state=off]:border-input data-[state=off]:bg-muted/25 data-[state=off]:hover:bg-muted/45"
+												>
+													{ m.label }
+												</ToggleGroupItem>
+											) ) }
+										</ToggleGroup>
+									) }
+								</div>
+								<div className="grid gap-2 sm:col-span-2">
+									<Label id={ `${ formId }-checkin-label` }>Check-in right now</Label>
+									<p className="text-muted-foreground text-xs leading-snug">
+										New tickets are emailed to the customer already marked checked in—they cannot validate again later.
+									</p>
+									<ToggleGroup
+										type="single"
+										value={ checkInNow ? 'yes' : 'no' }
+										onValueChange={ ( v ) => {
+											if ( v === 'yes' ) {
+												setCheckInNow( true );
+											} else {
+												setCheckInNow( false );
+											}
+										} }
+										disabled={ mutation.isPending }
+										aria-labelledby={ `${ formId }-checkin-label` }
+										className="grid w-full grid-cols-2 rounded-md border border-input bg-muted/40 p-0.5 shadow-xs"
+									>
+										<ToggleGroupItem value="no" className="rounded-sm">
+											No
+										</ToggleGroupItem>
+										<ToggleGroupItem value="yes" className="rounded-sm">
+											Yes
+										</ToggleGroupItem>
+									</ToggleGroup>
+								</div>
+							</CardContent>
+						</Card>
+						<Button
+							type="submit"
+							size="lg"
+							className="h-12 w-full justify-center text-base font-semibold"
+							disabled={ disabledSubmit }
+						>
+							{ mutation.isPending ? 'Processing…' : 'Complete order' }
+						</Button>
 					</div>
 				</form>
 			) }

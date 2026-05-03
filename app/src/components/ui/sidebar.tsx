@@ -51,7 +51,7 @@ function useSidebar() {
 }
 
 function SidebarProvider({
-  defaultOpen = true,
+  defaultOpen,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -68,7 +68,16 @@ function SidebarProvider({
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
+  const [_open, _setOpen] = React.useState(() => {
+    if (typeof defaultOpen === "boolean") {
+      return defaultOpen
+    }
+    if (typeof window === "undefined") {
+      return true
+    }
+    // Tablet: start collapsed so the icon rail stays visible; lg+ starts expanded.
+    return window.innerWidth >= 1024
+  })
   const open = openProp ?? _open
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -485,24 +494,33 @@ const sidebarMenuButtonVariants = cva(
   }
 )
 
-function SidebarMenuButton({
-  asChild = false,
-  isActive = false,
-  variant = "default",
-  size = "default",
-  tooltip,
-  className,
-  ...props
-}: React.ComponentProps<"button"> & {
+type SidebarMenuButtonProps = React.ComponentProps<"button"> & {
   asChild?: boolean
   isActive?: boolean
   tooltip?: string | React.ComponentProps<typeof TooltipContent>
-} & VariantProps<typeof sidebarMenuButtonVariants>) {
+} & VariantProps<typeof sidebarMenuButtonVariants>
+
+const SidebarMenuButton = React.forwardRef<
+  HTMLButtonElement,
+  SidebarMenuButtonProps
+>(function SidebarMenuButton(
+  {
+    asChild = false,
+    isActive = false,
+    variant = "default",
+    size = "default",
+    tooltip,
+    className,
+    ...props
+  },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "button"
   const { isMobile, state } = useSidebar()
 
   const button = (
     <Comp
+      ref={ref}
       data-slot="sidebar-menu-button"
       data-sidebar="menu-button"
       data-size={size}
@@ -516,10 +534,13 @@ function SidebarMenuButton({
     return button
   }
 
+  let tooltipConfig: React.ComponentProps<typeof TooltipContent>
   if (typeof tooltip === "string") {
-    tooltip = {
+    tooltipConfig = {
       children: tooltip,
     }
+  } else {
+    tooltipConfig = tooltip
   }
 
   return (
@@ -529,25 +550,30 @@ function SidebarMenuButton({
         side="right"
         align="center"
         hidden={state !== "collapsed" || isMobile}
-        {...tooltip}
+        {...tooltipConfig}
       />
     </Tooltip>
   )
-}
+})
+SidebarMenuButton.displayName = "SidebarMenuButton"
 
-function SidebarMenuAction({
-  className,
-  asChild = false,
-  showOnHover = false,
-  ...props
-}: React.ComponentProps<"button"> & {
+type SidebarMenuActionProps = React.ComponentProps<"button"> & {
   asChild?: boolean
   showOnHover?: boolean
-}) {
+}
+
+const SidebarMenuAction = React.forwardRef<
+  HTMLButtonElement,
+  SidebarMenuActionProps
+>(function SidebarMenuAction(
+  { className, asChild = false, showOnHover = false, ...props },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "button"
 
   return (
     <Comp
+      ref={ref}
       data-slot="sidebar-menu-action"
       data-sidebar="menu-action"
       className={cn(
@@ -559,7 +585,8 @@ function SidebarMenuAction({
       {...props}
     />
   )
-}
+})
+SidebarMenuAction.displayName = "SidebarMenuAction"
 
 function SidebarMenuBadge({
   className,
@@ -644,21 +671,24 @@ function SidebarMenuSubItem({
   )
 }
 
-function SidebarMenuSubButton({
-  asChild = false,
-  size = "md",
-  isActive = false,
-  className,
-  ...props
-}: React.ComponentProps<"a"> & {
+type SidebarMenuSubButtonProps = React.ComponentProps<"a"> & {
   asChild?: boolean
   size?: "sm" | "md"
   isActive?: boolean
-}) {
+}
+
+const SidebarMenuSubButton = React.forwardRef<
+  HTMLAnchorElement,
+  SidebarMenuSubButtonProps
+>(function SidebarMenuSubButton(
+  { asChild = false, size = "md", isActive = false, className, ...props },
+  ref
+) {
   const Comp = asChild ? Slot.Root : "a"
 
   return (
     <Comp
+      ref={ref}
       data-slot="sidebar-menu-sub-button"
       data-sidebar="menu-sub-button"
       data-size={size}
@@ -670,7 +700,8 @@ function SidebarMenuSubButton({
       {...props}
     />
   )
-}
+})
+SidebarMenuSubButton.displayName = "SidebarMenuSubButton"
 
 export {
   Sidebar,

@@ -1,5 +1,6 @@
 import * as React from "react"
 
+/** Viewports below this width use the overlay (sheet) nav. Tablet/desktop use the fixed icon rail. */
 const MOBILE_BREAKPOINT = 768
 
 export function useIsMobile() {

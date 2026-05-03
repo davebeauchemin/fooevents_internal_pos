@@ -64,11 +64,11 @@ export default function Cart( { variant = 'panel', className }: Props ) {
 							</Button>
 						) }
 						{ lineCount === 0 ? (
-							<Button type="button" size="sm" className="sm:ml-auto" disabled>
+							<Button type="button" className="sm:ml-auto" disabled>
 								Checkout
 							</Button>
 						) : (
-							<Button type="button" size="sm" className="sm:ml-auto" asChild>
+							<Button type="button" className="sm:ml-auto" asChild>
 								<Link to="/checkout">Checkout</Link>
 							</Button>
 						) }
@@ -132,7 +132,7 @@ type SubtotalDisplay = {
 	note?: string;
 };
 
-function cartSubtotalDisplay( items: CartLine[] ): SubtotalDisplay {
+export function cartSubtotalDisplay( items: CartLine[] ): SubtotalDisplay {
 	if ( items.length === 0 ) {
 		return { text: '' };
 	}
@@ -173,7 +173,7 @@ function currencyPrefixGuess( sample: string ): string {
 	return '$';
 }
 
-function CartSubtotalRow( {
+export function CartSubtotalRow( {
 	display,
 	className,
 }: {
@@ -196,7 +196,7 @@ function CartSubtotalRow( {
 	);
 }
 
-function CartLineRow( {
+export function CartLineRow( {
 	line,
 	onQty,
 	onRemove,
