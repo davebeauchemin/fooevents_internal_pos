@@ -455,6 +455,11 @@ export default function Schedule() {
 		return /^\d{4}-\d{2}-\d{2}$/.test( raw ) ? raw : todayYmdLocal();
 	}, [ eventData ] );
 
+	const siteTodayWeekday = useMemo( () => {
+		const d = parseLocalYmd( siteTodayYmd );
+		return d ? format( d, 'EEEE' ) : '';
+	}, [ siteTodayYmd ] );
+
 	const [ manualDate, setManualDate ] = useState( todayYmdLocal );
 	const [ manualTime, setManualTime ] = useState( '09:00' );
 	const [ manualCapacity, setManualCapacity ] = useState( 10 );
@@ -472,7 +477,7 @@ export default function Schedule() {
 	const [ fillToYmd, setFillToYmd ] = useState( () => todayYmdLocal() );
 	const [ fillConfirmOpen, setFillConfirmOpen ] = useState( false );
 
-	/** Keep fill range aligned with site "today" (WordPress). fill from/to are initialized with the browser calendar; once siteTodayYmd loads, any fill date strictly before it is stale and the server will never enumerate those days. */
+	// Bump fill range to site today once WordPress date is known (browser init can be one calendar day behind).
 	useEffect( () => {
 		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
 			return;
@@ -1014,7 +1019,12 @@ export default function Schedule() {
 										/>
 									</div>
 									{ manualAddWouldDuplicate ? (
-										<p className="text-destructive w-full text-sm">{ manualDuplicateMessage }</p>
+										<div
+											role="status"
+											className="w-full rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2.5 text-sm leading-snug text-yellow-950 dark:border-yellow-800/50 dark:bg-yellow-950/40 dark:text-yellow-50"
+										>
+											{ manualDuplicateMessage }
+										</div>
 									) : null }
 									<Button
 										type="submit"
@@ -1210,14 +1220,20 @@ export default function Schedule() {
 								Add missing sessions
 							</h2>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								Pick a fill-from / fill-to range. Each schedule block is merged with that range
-								(earlier start / later end) so missing days inside the range are included even when
-								the block&apos;s saved dates start later. The server adds every session from your
-								blocks that falls in the fill range and <strong>is not already on the schedule</strong>{ ' ' }
-								— on brand-new days or on days that already have earlier hours (e.g. extend closing
-								from 16:50 to 19:50). Existing slot rows are never removed. True duplicates are
-								skipped with a warning. Days outside a block&apos;s weekdays still get no sessions
-								for that block.
+								<strong className="text-foreground font-medium">Weekdays per block:</strong> a block only
+								creates sessions on days you tick (Mon–Sun). If today is Sunday and Sunday
+								isn&apos;t selected, today will not appear in the preview — that is expected. Add a
+								block for weekends or include that day on an existing block. Fill-from / fill-to
+								merges each block&apos;s date span into the range so early days aren&apos;t skipped
+								when the block&apos;s saved start is later. Everything added must still be inside the
+								fill range and not already on the schedule (duplicates skipped with a warning).
+							</p>
+							<p className="text-muted-foreground text-xs leading-snug">
+								Site calendar today:{ ' ' }
+								<span className="font-mono text-foreground">{ siteTodayYmd }</span>
+								{ siteTodayWeekday ? ` · ${ siteTodayWeekday }` : '' }
+								{ ' ' }
+								— match this day in the weekday toggles above if you want sessions today.
 							</p>
 						</div>
 						<div className="flex flex-wrap gap-3">
@@ -1266,9 +1282,8 @@ export default function Schedule() {
 								&& fillPreview.fillRangeInclusiveDays > 0
 								&& fillPreview.dateCount < fillPreview.fillRangeInclusiveDays ? (
 									<p className="text-muted-foreground text-xs leading-snug">
-										The fill range can include days where no block runs (e.g. a Sunday when this
-										schedule is Mon–Thu only). Add another block for those weekdays if you need
-										sessions on every calendar day.
+										Fewer session days than calendar days in the range → some calendar days have no
+										matching weekday on any block (common: weekend vs Mon–Fri only).
 									</p>
 								) : null }
 								{ fillPreview.categories.length > 0 && (
@@ -1287,10 +1302,8 @@ export default function Schedule() {
 									</div>
 								) }
 								<p className="text-muted-foreground text-xs">
-									Cannot pick dates before the site&apos;s today ({ ' ' }
-									<span className="font-mono text-foreground">{ siteTodayYmd }</span>). Preview
-									matches the server on fill-span merge and range; the server may add fewer if some
-									cells already exist.
+									Past dates are disabled. Preview matches the server; fewer rows are added if cells
+									already exist.
 								</p>
 							</CardContent>
 						</Card>

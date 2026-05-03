@@ -951,7 +951,12 @@ function EventOverviewManualAddToolbar( {
 								/>
 							</div>
 							{ duplicateSession ? (
-								<p className="text-destructive md:col-span-2 text-sm">{ duplicateMessage }</p>
+								<div
+									role="status"
+									className="md:col-span-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2.5 text-sm leading-snug text-yellow-950 dark:border-yellow-800/50 dark:bg-yellow-950/40 dark:text-yellow-50"
+								>
+									{ duplicateMessage }
+								</div>
 							) : null }
 							<div className="md:col-span-2">
 								<Button
