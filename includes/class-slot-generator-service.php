@@ -74,6 +74,13 @@ class Slot_Generator_Service {
 			return $v;
 		}
 		$config = $v;
+		if ( 'fillEmpty' === (string) ( $config['mode'] ?? 'replace' ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'Full replace must not use mode fillEmpty. Omit mode or use replace.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
 
 		$tz        = $this->bookings->get_wp_timezone();
 		$today_ymd = $this->bookings->today_ymd();
@@ -283,6 +290,384 @@ class Slot_Generator_Service {
 			'sample'        => $sample,
 			'totalEntries'  => $total_lines,
 		);
+	}
+
+	/**
+	 * Merge generated block sessions onto calendar days that have no existing slot–date cells.
+	 *
+	 * Never removes or replaces existing rows. Skips a generated cell when the same label+time+date
+	 * already exists (warning only). Requires mode fillEmpty and fillFrom/fillTo on the validated config.
+	 *
+	 * @param int   $product_id Product ID.
+	 * @param array $config     Request body after {@see validate_config()}.
+	 * @return array|WP_Error
+	 */
+	public function generate_fill_empty_days( $product_id, $config ) {
+		$product_id = absint( $product_id );
+		$product    = wc_get_product( $product_id );
+		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
+			return new WP_Error( 'not_booking_event', __( 'Not a FooEvents booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$v = $this->validate_config( $config );
+		if ( is_wp_error( $v ) ) {
+			return $v;
+		}
+		$config = $v;
+		if ( 'fillEmpty' !== (string) ( $config['mode'] ?? 'replace' ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'fill-empty generation requires mode fillEmpty.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$fill_from = (string) $config['fillFrom'];
+		$fill_to   = (string) $config['fillTo'];
+
+		$tz          = $this->bookings->get_wp_timezone();
+		$today_ymd   = $this->bookings->today_ymd();
+		$warnings    = array();
+		$by_name_time = array();
+
+		foreach ( $config['blocks'] as $block_idx => $block ) {
+			$start_ymd = (string) $block['startDate'];
+			$end_ymd   = (string) $block['endDate'];
+			$orig_s    = $start_ymd;
+			if ( strcmp( $start_ymd, $today_ymd ) < 0 ) {
+				$warnings[] = sprintf(
+					/* translators: 1: block, 2: old start, 3: new start */
+					__( 'Block %1$d start was before today; using %3$s instead of %2$s.', 'fooevents-internal-pos' ),
+					$block_idx + 1,
+					$orig_s,
+					$today_ymd
+				);
+				$start_ymd = $today_ymd;
+			}
+			if ( strcmp( $start_ymd, $end_ymd ) > 0 ) {
+				return new WP_Error( 'rest_invalid_param', sprintf( /* translators: %d: block */ __( 'Block %d has no valid dates after today.', 'fooevents-internal-pos' ), $block_idx + 1 ), array( 'status' => 400 ) );
+			}
+
+			$dates_in_block = $this->list_dates_in_range( $start_ymd, $end_ymd, $block['weekdays'], $tz );
+			if ( count( $dates_in_block ) > self::MAX_DATES_PER_BLOCK ) {
+				return new WP_Error(
+					'rest_invalid_param',
+					sprintf(
+						/* translators: 1: block index, 2: max */
+						__( 'Block %1$d has more than %2$d days; narrow the range or weekdays.', 'fooevents-internal-pos' ),
+						$block_idx + 1,
+						self::MAX_DATES_PER_BLOCK
+					),
+					array( 'status' => 400 )
+				);
+			}
+
+			$open_m  = $this->to_minutes( $block['openTime'] );
+			$close_m = $this->to_minutes( $block['closeTime'] );
+			$sess    = (int) $config['sessionMinutes'];
+			if ( null === $open_m || null === $close_m || $open_m + $sess > $close_m ) {
+				return new WP_Error(
+					'rest_invalid_param',
+					sprintf(
+						/* translators: %d: block index */
+						__( 'Block %d: close time must be at least one session after open time.', 'fooevents-internal-pos' ),
+						$block_idx + 1
+					),
+					array( 'status' => 400 )
+				);
+			}
+
+			$starts = $this->iter_session_starts( $open_m, $close_m, $sess );
+			if ( empty( $starts ) ) {
+				return new WP_Error( 'rest_invalid_param', sprintf( __( 'Block %d: no session fits in open/close range.', 'fooevents-internal-pos' ), $block_idx + 1 ), array( 'status' => 400 ) );
+			}
+
+			$block_name = (string) ( $block['name'] ?? '' );
+
+			foreach ( $starts as $start_m ) {
+				$time_key = $this->minutes_to_hhmm( $start_m );
+				if ( ! isset( $by_name_time[ $block_name ] ) ) {
+					$by_name_time[ $block_name ] = array();
+				}
+				if ( ! isset( $by_name_time[ $block_name ][ $time_key ] ) ) {
+					$by_name_time[ $block_name ][ $time_key ] = array();
+				}
+				foreach ( $dates_in_block as $ymd ) {
+					$by_name_time[ $block_name ][ $time_key ][ $ymd ] = true;
+				}
+			}
+		}
+
+		$raw_slots  = $this->decode_booking_options_raw_array( $product_id );
+		$occupied   = $this->collect_occupied_calendar_ymds_from_raw( $raw_slots );
+		$cells      = $this->count_slot_date_cells_raw( $raw_slots );
+		$capacity   = $config['capacity'];
+		$stock      = ( 0 === (int) $capacity ) ? '' : (string) (int) $capacity;
+
+		$candidates = array();
+		foreach ( $by_name_time as $bname => $times ) {
+			foreach ( $times as $time_key => $ymd_set ) {
+				foreach ( array_keys( $ymd_set ) as $ymd ) {
+					if ( strcmp( $ymd, $today_ymd ) < 0 ) {
+						continue;
+					}
+					if ( strcmp( $ymd, $fill_from ) < 0 || strcmp( $ymd, $fill_to ) > 0 ) {
+						continue;
+					}
+					if ( isset( $occupied[ $ymd ] ) ) {
+						continue;
+					}
+					$candidates[] = array(
+						'name' => (string) $bname,
+						'time' => (string) $time_key,
+						'ymd'  => (string) $ymd,
+					);
+				}
+			}
+		}
+
+		usort(
+			$candidates,
+			function( $a, $b ) {
+				$c = strcmp( (string) $a['ymd'], (string) $b['ymd'] );
+				if ( 0 !== $c ) {
+					return $c;
+				}
+				$c = strcmp( (string) $a['time'], (string) $b['time'] );
+				if ( 0 !== $c ) {
+					return $c;
+				}
+				return strcmp( (string) $a['name'], (string) $b['name'] );
+			}
+		);
+
+		$added              = 0;
+		$skipped_duplicates = 0;
+
+		foreach ( $candidates as $c ) {
+			$ymd  = $c['ymd'];
+			$hm   = $this->parse_hhmm( $c['time'] );
+			if ( null === $hm ) {
+				continue;
+			}
+			$merge = $this->try_merge_one_slot_date_into_raw( $raw_slots, $cells, $ymd, $hm, $c['name'], $stock );
+			if ( is_wp_error( $merge ) ) {
+				return $merge;
+			}
+			if ( 'skipped_exists' === $merge ) {
+				++$skipped_duplicates;
+				$disp = '' !== trim( $c['name'] ) ? $c['name'] : $c['time'];
+				$warnings[] = sprintf(
+					/* translators: 1: label or time, 2: HH:MM, 3: Y-m-d */
+					__( 'Skipped %1$s at %2$s on %3$s — that session already exists. Other new sessions were still added.', 'fooevents-internal-pos' ),
+					$disp,
+					$c['time'],
+					$ymd
+				);
+				continue;
+			}
+			++$added;
+		}
+
+		if ( 0 === $added && 0 === $skipped_duplicates ) {
+			return new WP_Error(
+				'no_empty_days_in_range',
+				__( 'No empty calendar days in this fill range match your blocks (every day in range already has sessions, or weekdays do not overlap).', 'fooevents-internal-pos' ),
+				array( 'status' => 422 )
+			);
+		}
+
+		$maybe_err = $this->persist_raw_booking_slots_or_fail( $product_id, $raw_slots );
+		if ( is_wp_error( $maybe_err ) ) {
+			return $maybe_err;
+		}
+
+		$bookings_method = $this->bookings_method_for_product( $product );
+		if ( 'dateslot' !== $bookings_method ) {
+			update_post_meta( $product_id, 'WooCommerceEventsBookingsMethod', 'slotdate' );
+		}
+
+		return array(
+			'mode'               => 'fillEmpty',
+			'cellsAdded'         => $added,
+			'skippedDuplicates'  => $skipped_duplicates,
+			'warnings'           => $warnings,
+			'totalSlotDateCells' => $cells,
+		);
+	}
+
+	/**
+	 * Calendar days (Y-m-d) that already have at least one slot–date cell in raw booking meta.
+	 *
+	 * @param int $product_id Product.
+	 * @return string[] Sorted unique Y-m-d.
+	 */
+	public function list_occupied_calendar_ymds_for_product( $product_id ) {
+		$raw = $this->decode_booking_options_raw_array( absint( $product_id ) );
+		$set = $this->collect_occupied_calendar_ymds_from_raw( $raw );
+		$out = array_keys( $set );
+		sort( $out, SORT_STRING );
+		return $out;
+	}
+
+	/**
+	 * @param array<string, mixed> $raw_slots Raw slot map.
+	 * @return array<string, true> Y-m-d => true
+	 */
+	private function collect_occupied_calendar_ymds_from_raw( array $raw_slots ) {
+		$out = array();
+		foreach ( $raw_slots as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			foreach ( $row as $key => $val ) {
+				if ( ! preg_match( '/^(.+)_add_date$/', (string) $key, $m ) ) {
+					continue;
+				}
+				if ( '' === $this->normalize_booking_raw_date_suffix( $m[1] ) ) {
+					continue;
+				}
+				$display = is_string( $val ) ? trim( $val ) : '';
+				if ( '' === $display ) {
+					continue;
+				}
+				$ymd = $this->parse_booking_display_date_to_ymd( $display );
+				if ( null !== $ymd && '' !== $ymd ) {
+					$out[ $ymd ] = true;
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Parse a FooEvents `{suffix}_add_date` display string to Y-m-d (site timezone / date_format aware).
+	 *
+	 * @param string $display Stored date string.
+	 * @return string|null
+	 */
+	private function parse_booking_display_date_to_ymd( $display ) {
+		$display = trim( (string) $display );
+		if ( '' === $display ) {
+			return null;
+		}
+		$tz     = $this->bookings->get_wp_timezone();
+		$wp_fmt = trim( (string) get_option( 'date_format' ) );
+		if ( '' !== $wp_fmt ) {
+			$dtcf = DateTime::createFromFormat( $wp_fmt, $display, $tz );
+			if ( $dtcf instanceof DateTime ) {
+				$errs = DateTime::getLastErrors();
+				if ( is_array( $errs ) && empty( $errs['warning_count'] ) && empty( $errs['error_count'] ) ) {
+					return $dtcf->format( 'Y-m-d' );
+				}
+			}
+		}
+		$fallback = $this->bookings->date_string_to_ymd( $display );
+		return ( null !== $fallback && '' !== (string) $fallback ) ? (string) $fallback : null;
+	}
+
+	/**
+	 * Append one slot–date cell in-memory (same merge rules as manual add).
+	 *
+	 * @param array<string, mixed> $raw_slots Slot map (by ref).
+	 * @param int                  $cells     Running cell count (by ref).
+	 * @param string               $ymd_raw   Y-m-d.
+	 * @param array{h:int,m:int}   $hm_in     From {@see parse_hhmm()} digits.
+	 * @param string               $name      Block label; empty = time as label.
+	 * @param string               $stock     Capacity string (empty = unlimited).
+	 * @return 'added'|'skipped_exists'|WP_Error
+	 */
+	private function try_merge_one_slot_date_into_raw( array &$raw_slots, &$cells, $ymd_raw, array $hm_in, $name, $stock ) {
+		$name = trim( (string) $name );
+		$name = '' === $name ? '' : sanitize_text_field( $name );
+		if ( '' !== $name && strlen( $name ) > self::BLOCK_NAME_MAX ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: %d max length */
+					__( 'Label must be at most %d characters.', 'fooevents-internal-pos' ),
+					self::BLOCK_NAME_MAX
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		if ( $cells >= self::MAX_TOTAL_ENTRIES ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				sprintf(
+					/* translators: 1 limit */
+					__( 'Total slot–date entries would exceed maximum %d.', 'fooevents-internal-pos' ),
+					self::MAX_TOTAL_ENTRIES
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		$h      = str_pad( (string) $hm_in['h'], 2, '0', STR_PAD_LEFT );
+		$min    = str_pad( (string) $hm_in['m'], 2, '0', STR_PAD_LEFT );
+		$h24    = (int) $hm_in['h'];
+		$period = ( $h24 < 12 ) ? 'a.m.' : 'p.m.';
+		$hhmm   = sprintf( '%02d:%02d', (int) $hm_in['h'], (int) $hm_in['m'] );
+
+		$effective_label_for_match = '' !== $name ? $name : $hhmm;
+		$display_label_for_store   = '' !== $name ? $name : $hhmm;
+
+		foreach ( $raw_slots as $slot_row ) {
+			if ( ! is_array( $slot_row ) ) {
+				continue;
+			}
+			if ( ! $this->raw_slot_matches_time_and_label(
+				$slot_row,
+				$h,
+				$min,
+				$period,
+				$effective_label_for_match
+			) ) {
+				continue;
+			}
+			if ( null !== $this->find_date_id_with_ymd_in_slot_raw( $slot_row, $ymd_raw ) ) {
+				return 'skipped_exists';
+			}
+		}
+
+		$slot_id_existing = '';
+		foreach ( $raw_slots as $sid => $slot_row ) {
+			if ( ! is_array( $slot_row ) ) {
+				continue;
+			}
+			if ( ! $this->raw_slot_matches_time_and_label(
+				$slot_row,
+				$h,
+				$min,
+				$period,
+				$effective_label_for_match
+			) ) {
+				continue;
+			}
+			$slot_id_existing = (string) $sid;
+			break;
+		}
+
+		$new_date_inner_id = '';
+		if ( '' !== $slot_id_existing ) {
+			$new_date_inner_id                                                  = $this->next_unique_internal_prefix( $raw_slots );
+			$display                                                            = $this->display_date_from_ymd( $ymd_raw );
+			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_add_date' ] = $display;
+			$raw_slots[ $slot_id_existing ][ $new_date_inner_id . '_stock' ]  = $stock;
+		} else {
+			$new_slot_key                       = $this->next_unique_slot_key( $raw_slots );
+			$new_date_inner_id                  = $this->next_unique_internal_prefix( $raw_slots );
+			$display                            = $this->display_date_from_ymd( $ymd_raw );
+			$raw_slots[ $new_slot_key ]         = array(
+				'label'    => $display_label_for_store,
+				'hour'     => $h,
+				'minute'   => $min,
+				'period'   => $period,
+				'add_time' => 'enabled',
+			);
+			$raw_slots[ $new_slot_key ][ $new_date_inner_id . '_add_date' ] = $display;
+			$raw_slots[ $new_slot_key ][ $new_date_inner_id . '_stock' ]  = $stock;
+		}
+
+		++$cells;
+		return 'added';
 	}
 
 	/**
@@ -1302,6 +1687,30 @@ class Slot_Generator_Service {
 		if ( empty( $blocks ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'At least one schedule block is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
+
+		$mode      = 'replace';
+		$fill_from = '';
+		$fill_to   = '';
+		if ( isset( $config['mode'] ) ) {
+			$mr = strtolower( trim( (string) $config['mode'] ) );
+			$mr = str_replace( '_', '', $mr );
+			if ( 'fillempty' === $mr ) {
+				$mode = 'fillEmpty';
+			} elseif ( 'replace' !== $mr && '' !== $mr ) {
+				return new WP_Error( 'rest_invalid_param', __( 'mode must be replace or fillEmpty.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+		}
+		if ( 'fillEmpty' === $mode ) {
+			$fill_from = isset( $config['fillFrom'] ) ? trim( (string) $config['fillFrom'] ) : '';
+			$fill_to   = isset( $config['fillTo'] ) ? trim( (string) $config['fillTo'] ) : '';
+			if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $fill_from ) || ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $fill_to ) ) {
+				return new WP_Error( 'rest_invalid_param', __( 'fillEmpty mode requires fillFrom and fillTo as Y-m-d.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+			if ( strcmp( $fill_from, $fill_to ) > 0 ) {
+				return new WP_Error( 'rest_invalid_param', __( 'fillFrom must be on or before fillTo.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
+		}
+
 		$norm = array();
 		foreach ( $blocks as $i => $b ) {
 			if ( ! is_array( $b ) ) {
@@ -1352,6 +1761,9 @@ class Slot_Generator_Service {
 			'sessionMinutes'  => $session,
 			'capacity'        => $cap,
 			'labelFormat'     => $label_format,
+			'mode'            => $mode,
+			'fillFrom'        => $fill_from,
+			'fillTo'          => $fill_to,
 		);
 	}
 

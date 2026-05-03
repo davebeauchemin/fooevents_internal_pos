@@ -365,23 +365,25 @@ export default function Dashboard() {
 
 				<Dialog open={otherDateDialogOpen} onOpenChange={setOtherDateDialogOpen}>
 					<DialogContent
-						className="sm:max-w-fit"
+						className="w-[19rem] max-w-[min(19rem,calc(100vw-2rem))]"
 						onOpenAutoFocus={(e) => e.preventDefault()}
 					>
-						<DialogHeader>
+						<DialogHeader className="text-center sm:text-center">
 							<DialogTitle>Select a date</DialogTitle>
 						</DialogHeader>
-						<Calendar
-							mode="single"
-							selected={calendarDate}
-							onSelect={(d) => {
-								if (d) {
-									setYmd(format(d, 'yyyy-MM-dd'));
-									setOtherDateDialogOpen(false);
-								}
-							}}
-							initialFocus
-						/>
+						<div className="flex w-full justify-center">
+							<Calendar
+								mode="single"
+								selected={calendarDate}
+								onSelect={(d) => {
+									if (d) {
+										setYmd(format(d, 'yyyy-MM-dd'));
+										setOtherDateDialogOpen(false);
+									}
+								}}
+								initialFocus
+							/>
+						</div>
 					</DialogContent>
 				</Dialog>
 

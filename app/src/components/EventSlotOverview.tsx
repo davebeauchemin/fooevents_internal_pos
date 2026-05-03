@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
-import { CalendarIcon, Clock3, Minus, Trash2 } from 'lucide-react';
+import { CalendarIcon, Clock3, Minus, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAddManualSlot, useAddSlotStock, useDeleteManualSlot, useRemoveSlotStock } from '../api/queries.js';
 import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
@@ -136,6 +136,13 @@ export default function EventSlotOverview( {
 		title: string;
 	} | null >( null );
 	const [ pendingReduce, setPendingReduce ] = useState< {
+		slotId: string;
+		dateId: string;
+		ymd: string;
+		title: string;
+		currentStock: number;
+	} | null >( null );
+	const [ pendingAdd, setPendingAdd ] = useState< {
 		slotId: string;
 		dateId: string;
 		ymd: string;
@@ -290,30 +297,32 @@ export default function EventSlotOverview( {
 
 				<Dialog open={ otherDateDialogOpen } onOpenChange={ setOtherDateDialogOpen }>
 					<DialogContent
-						className="sm:max-w-fit"
+						className="w-[19rem] max-w-[min(19rem,calc(100vw-2rem))]"
 						onOpenAutoFocus={ ( e ) => e.preventDefault() }
 					>
-						<DialogHeader>
+						<DialogHeader className="text-center sm:text-center">
 							<DialogTitle>Select a date</DialogTitle>
-							<DialogDescription>
+							<DialogDescription className="text-pretty">
 								Only dates with sessions for this product are enabled.
 							</DialogDescription>
 						</DialogHeader>
-						<Calendar
-							mode="single"
-							selected={ calendarSelected }
-							disabled={ ( d ) => ! allowedDateSet.has( format( d, 'yyyy-MM-dd' ) ) }
-							onSelect={ ( d ) => {
-								if ( d ) {
-									const ymd = format( d, 'yyyy-MM-dd' );
-									if ( allowedDateSet.has( ymd ) ) {
-										setSelectedYmd( ymd );
-										setOtherDateDialogOpen( false );
+						<div className="flex w-full justify-center">
+							<Calendar
+								mode="single"
+								selected={ calendarSelected }
+								disabled={ ( d ) => ! allowedDateSet.has( format( d, 'yyyy-MM-dd' ) ) }
+								onSelect={ ( d ) => {
+									if ( d ) {
+										const ymd = format( d, 'yyyy-MM-dd' );
+										if ( allowedDateSet.has( ymd ) ) {
+											setSelectedYmd( ymd );
+											setOtherDateDialogOpen( false );
+										}
 									}
-								}
-							} }
-							initialFocus
-						/>
+								} }
+								initialFocus
+							/>
+						</div>
 					</DialogContent>
 				</Dialog>
 			</div>
@@ -345,6 +354,14 @@ export default function EventSlotOverview( {
 								eventId={ detail.id as number }
 								selectedYmd={ selectedDay.date }
 								existingSlots={ selectedDay.slots ?? [] }
+							/>
+						) : null }
+
+						{ manageSlotsUi ? (
+							<EventOverviewAddStockDialog
+								eventId={ detail.id as number }
+								pendingAdd={ pendingAdd }
+								clearPending={ () => setPendingAdd( null ) }
 							/>
 						) : null }
 
@@ -417,8 +434,12 @@ export default function EventSlotOverview( {
 														canRemove
 														&& typeof s.stock === 'number'
 														&& s.stock > 0;
+													const canAddStock =
+														canRemove && typeof s.stock === 'number';
 													const slotBusy =
-														pendingDelete !== null || pendingReduce !== null;
+														pendingDelete !== null
+														|| pendingReduce !== null
+														|| pendingAdd !== null;
 													return (
 														<SlotOverviewCard
 															key={ `${ s.id }-${ s.dateId ?? '' }` }
@@ -444,6 +465,19 @@ export default function EventSlotOverview( {
 																canReduceStock
 																	? () =>
 																		setPendingReduce( {
+																			slotId: sid,
+																			dateId: did,
+																			ymd: selectedDay.date,
+																			title: slotTitleForRemoveConfirm( s ),
+																			currentStock: s.stock as number,
+																		} )
+																	: undefined
+															}
+															canAddStock={ canAddStock }
+															onRequestAdd={
+																canAddStock
+																	? () =>
+																		setPendingAdd( {
 																			slotId: sid,
 																			dateId: did,
 																			ymd: selectedDay.date,
@@ -478,6 +512,8 @@ function SlotOverviewCard( {
 	onRequestRemove,
 	canReduceStock,
 	onRequestReduce,
+	canAddStock,
+	onRequestAdd,
 }: {
 	timeText: string;
 	stock: number | null;
@@ -488,6 +524,8 @@ function SlotOverviewCard( {
 	onRequestRemove?: () => void;
 	canReduceStock?: boolean;
 	onRequestReduce?: () => void;
+	canAddStock?: boolean;
+	onRequestAdd?: () => void;
 } ) {
 	const availability = slotAvailabilityText( stock );
 	const full =
@@ -499,6 +537,8 @@ function SlotOverviewCard( {
 		manageSlots
 		&& canReduceStock
 		&& typeof onRequestReduce === 'function';
+	const showAdd =
+		manageSlots && canAddStock && typeof onRequestAdd === 'function';
 	return (
 		<div
 			aria-label={ `${ timeText }. ${ availability }.` }
@@ -524,6 +564,19 @@ function SlotOverviewCard( {
 				>
 					{ availability }
 				</span>
+				{ showAdd ? (
+					<Button
+						type="button"
+						size="icon"
+						variant="ghost"
+						className="text-muted-foreground hover:text-foreground size-8 shrink-0"
+						disabled={ slotActionsDisabled }
+						aria-label={ `Add ticket spots for ${ timeText }` }
+						onClick={ onRequestAdd }
+					>
+						<Plus className="size-4" />
+					</Button>
+				) : null }
 				{ showReduce ? (
 					<Button
 						type="button"
@@ -983,6 +1036,123 @@ function EventOverviewManualAddToolbar( {
 				</DialogContent>
 			</Dialog>
 		</>
+	);
+}
+
+function EventOverviewAddStockDialog( {
+	eventId,
+	pendingAdd,
+	clearPending,
+}: {
+	eventId: number;
+	pendingAdd: {
+		slotId: string;
+		dateId: string;
+		ymd: string;
+		title: string;
+		currentStock: number;
+	} | null;
+	clearPending: () => void;
+} ) {
+	const addStock = useAddSlotStock( eventId );
+	const [ addDelta, setAddDelta ] = useState( 1 );
+
+	useEffect( () => {
+		if ( pendingAdd ) {
+			setAddDelta( 1 );
+		}
+	}, [ pendingAdd ] );
+
+	const clampedAdd =
+		Number.isFinite( addDelta ) && addDelta >= 1 ? Math.floor( addDelta ) : 1;
+
+	async function confirmAdd() {
+		if ( ! pendingAdd ) {
+			return;
+		}
+		const n = Math.max( 1, clampedAdd );
+		try {
+			await addStock.mutateAsync( {
+				slotId: pendingAdd.slotId,
+				dateId: pendingAdd.dateId,
+				date: pendingAdd.ymd,
+				addSpots: n,
+			} );
+			clearPending();
+			toast.success(
+				n === 1 ? 'Added 1 ticket spot.' : `Added ${ n } ticket spots.`,
+			);
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
+	return (
+		<Dialog
+			open={ pendingAdd !== null }
+			onOpenChange={ ( open ) => {
+				if ( ! open && ! addStock.isPending ) {
+					clearPending();
+				}
+			} }
+		>
+			<DialogContent showCloseButton={ ! addStock.isPending }>
+				<DialogHeader>
+					<DialogTitle>Add ticket spots?</DialogTitle>
+					<DialogDescription>
+						Increases remaining capacity for{ ' ' }
+						<span className="text-foreground font-medium">{ pendingAdd?.title }</span>
+						{ ' ' }
+						on{ ' ' }
+						<span className="font-mono text-foreground">{ pendingAdd?.ymd }</span>. Numeric limits
+						only (not unlimited).
+					</DialogDescription>
+				</DialogHeader>
+				<div className="space-y-2">
+					<Label htmlFor="overview-add-delta">Spots to add</Label>
+					<Input
+						id="overview-add-delta"
+						type="number"
+						min={ 1 }
+						step={ 1 }
+						value={ addDelta }
+						onChange={ ( e ) => {
+							const v = parseInt( e.target.value, 10 );
+							setAddDelta( Number.isFinite( v ) ? v : 1 );
+						} }
+						disabled={ addStock.isPending }
+					/>
+					<p className="text-muted-foreground text-xs">
+						Current remaining slots:{ ' ' }
+						<span className="text-foreground font-medium tabular-nums">
+							{ pendingAdd?.currentStock ?? '—' }
+						</span>
+						{ ' ' }
+						· after add:{ ' ' }
+						<span className="text-foreground font-medium tabular-nums">
+							{ pendingAdd != null ? pendingAdd.currentStock + Math.max( 1, clampedAdd ) : '—' }
+						</span>
+					</p>
+				</div>
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						onClick={ clearPending }
+						disabled={ addStock.isPending }
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						onClick={ confirmAdd }
+						disabled={ addStock.isPending || clampedAdd < 1 }
+					>
+						{ addStock.isPending ? 'Saving…' : 'Add spots' }
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
-import { Plus, TriangleAlert } from 'lucide-react';
+import { CalendarIcon, Plus, TriangleAlert } from 'lucide-react';
 import { useAddManualSlot, useAddSlotStock, useEvent, useGenerateSlots } from '../api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -24,6 +26,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -35,6 +38,7 @@ import {
 	normalizeTimeInputToHhmm,
 	type SlotLike,
 } from '@/lib/slotHourGrouping';
+import { cn } from '@/lib/utils';
 
 type ScheduleBlock = {
 	id: string;
@@ -101,6 +105,82 @@ function bumperPresetBlocks(): ScheduleBlock[] {
 			closeTime: '20:00',
 		},
 	];
+}
+
+function ScheduleBlockDatePicker( {
+	label,
+	ymd,
+	onSelectYmd,
+	triggerId,
+	disabled = false,
+	className,
+	isDateDisabled,
+}: {
+	label: string;
+	ymd: string;
+	onSelectYmd: ( next: string ) => void;
+	triggerId: string;
+	disabled?: boolean;
+	className?: string;
+	/** When provided, grey out days in the popover calendar (e.g. already booked). */
+	isDateDisabled?: ( date: Date ) => boolean;
+} ) {
+	const [ open, setOpen ] = useState( false );
+	const selectedDate =
+		ymd && /^\d{4}-\d{2}-\d{2}$/.test( ymd.trim() )
+			? parseISO( `${ ymd.trim() }T12:00:00` )
+			: undefined;
+	return (
+		<div className={ cn( 'space-y-2', className ) }>
+			<Label htmlFor={ triggerId }>{ label }</Label>
+			<Popover
+				open={ disabled ? false : open }
+				onOpenChange={ ( next ) => {
+					if ( ! disabled ) {
+						setOpen( next );
+					}
+				} }
+			>
+				<PopoverTrigger asChild>
+					<Button
+						id={ triggerId }
+						type="button"
+						variant="outline"
+						disabled={ disabled }
+						className={ cn(
+							'w-full min-w-[11rem] justify-start text-left font-normal',
+						) }
+					>
+						<CalendarIcon className="mr-2 size-4 shrink-0" aria-hidden />
+						{ selectedDate ? format( selectedDate, 'PP' ) : 'Pick date…' }
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent
+					className="w-auto p-0"
+					align="start"
+					onOpenAutoFocus={ ( e ) => e.preventDefault() }
+				>
+					<Calendar
+						mode="single"
+						selected={ selectedDate }
+						defaultMonth={ selectedDate }
+						disabled={ isDateDisabled }
+						onSelect={ ( d ) => {
+							if ( ! d || disabled ) {
+								return;
+							}
+							if ( isDateDisabled?.( d ) ) {
+								return;
+							}
+							onSelectYmd( format( d, 'yyyy-MM-dd' ) );
+							setOpen( false );
+						} }
+						initialFocus
+					/>
+				</PopoverContent>
+			</Popover>
+		</div>
+	);
 }
 
 function parseHHMM( s: string ) {
@@ -210,6 +290,78 @@ function previewStats( blocks: ScheduleBlock[], sessionM: number ) {
 	};
 }
 
+/** Preview for fill-empty mode: only days in [fillFrom, fillTo] with no existing sessions. */
+function previewStatsFillEmpty(
+	blocks: ScheduleBlock[],
+	sessionM: number,
+	fillFrom: string,
+	fillTo: string,
+	occupied: Set<string>,
+	todayYmd: string,
+) {
+	const byNameTime = new Map<string, { name: string; time: string; dates: Set<string> }>();
+	for ( const b of blocks ) {
+		const openM = parseHHMM( b.openTime );
+		const closeM = parseHHMM( b.closeTime );
+		if ( null === openM || null === closeM || openM + sessionM > closeM ) {
+			continue;
+		}
+		const name = ( b.name || '' ).trim();
+		const dates = listDates( b.startDate, b.endDate, b.weekdays );
+		const starts = sessionStarts( openM, closeM, sessionM );
+		for ( const st of starts ) {
+			const timeKey = toHHMM( st );
+			const key = `${ name }\t${ timeKey }`;
+			if ( ! byNameTime.has( key ) ) {
+				byNameTime.set( key, { name, time: timeKey, dates: new Set() } );
+			}
+			const row = byNameTime.get( key )!;
+			for ( const ymd of dates ) {
+				if ( ymd < todayYmd ) {
+					continue;
+				}
+				if ( ymd < fillFrom || ymd > fillTo ) {
+					continue;
+				}
+				if ( occupied.has( ymd ) ) {
+					continue;
+				}
+				row.dates.add( ymd );
+			}
+		}
+	}
+	let totalEntries = 0;
+	const allDates = new Set<string>();
+	for ( const row of byNameTime.values() ) {
+		totalEntries += row.dates.size;
+		row.dates.forEach( ( d ) => allDates.add( d ) );
+	}
+	const byCategory = new Map<string, { times: Set<string>; allDates: Set<string>; cells: number }>();
+	for ( const row of byNameTime.values() ) {
+		const displayName = row.name === '' ? 'Time as label' : row.name;
+		if ( ! byCategory.has( displayName ) ) {
+			byCategory.set( displayName, { times: new Set(), allDates: new Set(), cells: 0 } );
+		}
+		const cat = byCategory.get( displayName )!;
+		cat.times.add( row.time );
+		cat.cells += row.dates.size;
+		row.dates.forEach( ( d ) => cat.allDates.add( d ) );
+	}
+	const categories: CategoryPreview[] = Array.from( byCategory.entries() ).map( ( [ displayName, v ] ) => ( {
+		displayName,
+		sessionTimeCount: v.times.size,
+		uniqueDates: v.allDates.size,
+		slotDateCells: v.cells,
+	} ) );
+	categories.sort( ( a, c ) => a.displayName.localeCompare( c.displayName ) );
+	return {
+		slotCount: byNameTime.size,
+		dateCount: allDates.size,
+		totalEntries,
+		categories,
+	};
+}
+
 function todayYmdLocal(): string {
 	const t = new Date();
 	return (
@@ -232,6 +384,7 @@ export default function Schedule() {
 					dates?: unknown[];
 					id?: number;
 					bookingMethod?: string;
+					calendarDaysWithSlots?: string[];
 			  }
 			| undefined;
 		isLoading: boolean;
@@ -255,6 +408,9 @@ export default function Schedule() {
 	const [ capacity, setCapacity ] = useState( 10 );
 	const [ formInitialized, setFormInitialized ] = useState( false );
 	const [ confirmOpen, setConfirmOpen ] = useState( false );
+	const [ fillFromYmd, setFillFromYmd ] = useState( () => todayYmdLocal() );
+	const [ fillToYmd, setFillToYmd ] = useState( () => todayYmdLocal() );
+	const [ fillConfirmOpen, setFillConfirmOpen ] = useState( false );
 
 	useEffect( () => {
 		if ( ! eventData || formInitialized ) {
@@ -275,6 +431,54 @@ export default function Schedule() {
 		() => previewStats( blocks, sessionMinutes ),
 		[ blocks, sessionMinutes ],
 	);
+
+	const occupiedCalendarDays = useMemo( (): Set<string> => {
+		const raw = eventData?.calendarDaysWithSlots;
+		if ( Array.isArray( raw ) ) {
+			return new Set(
+				raw.map( ( s ) => String( s ).trim() ).filter( ( s ) => /^\d{4}-\d{2}-\d{2}$/.test( s ) ),
+			);
+		}
+		const dates = eventData?.dates as Array<{ date?: string }> | undefined;
+		if ( Array.isArray( dates ) ) {
+			return new Set(
+				dates
+					.map( ( d ) => String( d?.date ?? '' ).trim() )
+					.filter( ( s ) => /^\d{4}-\d{2}-\d{2}$/.test( s ) ),
+			);
+		}
+		return new Set<string>();
+	}, [ eventData?.calendarDaysWithSlots, eventData?.dates ] );
+
+	const fillPreview = useMemo(
+		() =>
+			previewStatsFillEmpty(
+				blocks,
+				sessionMinutes,
+				fillFromYmd.trim(),
+				fillToYmd.trim(),
+				occupiedCalendarDays,
+				todayYmdLocal(),
+			),
+		[
+			blocks,
+			sessionMinutes,
+			fillFromYmd,
+			fillToYmd,
+			occupiedCalendarDays,
+		],
+	);
+
+	const fillRangeInvalid =
+		! /^\d{4}-\d{2}-\d{2}$/.test( fillFromYmd.trim() )
+		|| ! /^\d{4}-\d{2}-\d{2}$/.test( fillToYmd.trim() )
+		|| fillFromYmd.trim() > fillToYmd.trim();
+
+	function calendarOnlyEmptySelectable( date: Date ) {
+		const y = format( date, 'yyyy-MM-dd' );
+		const t = todayYmdLocal();
+		return y < t || occupiedCalendarDays.has( y );
+	}
 
 	const slotsOnManualDate = useMemo( (): SlotLike[] => {
 		const raw = eventData?.dates as
@@ -467,6 +671,47 @@ export default function Schedule() {
 		}
 	}
 
+	async function runFillEmpty() {
+		setFillConfirmOpen( false );
+		try {
+			const res = await gen.mutateAsync( {
+				mode: 'fillEmpty',
+				fillFrom: fillFromYmd.trim(),
+				fillTo: fillToYmd.trim(),
+				blocks: blocks.map( ( b ) => ( {
+					name: ( b.name || '' ).trim(),
+					startDate: b.startDate,
+					endDate: b.endDate,
+					weekdays: b.weekdays,
+					openTime: b.openTime,
+					closeTime: b.closeTime,
+				} ) ),
+				sessionMinutes,
+				capacity,
+				labelFormat: 'time',
+				confirm: true,
+			} ) as {
+				warnings?: string[];
+				cellsAdded?: number;
+				skippedDuplicates?: number;
+			};
+			if ( res.warnings && res.warnings.length ) {
+				for ( const w of res.warnings ) {
+					toast.message( w );
+				}
+			}
+			const skipped = res.skippedDuplicates ?? 0;
+			toast.success(
+				skipped > 0
+					? `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s). ${ skipped } conflict(s) were skipped because those sessions already existed.`
+					: `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s) on previously empty days.`,
+			);
+			navigate( `/event/${ eventId }` );
+		} catch ( e ) {
+			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
+		}
+	}
+
 	if ( isLoading ) {
 		return (
 			<div className="space-y-3">
@@ -498,13 +743,14 @@ export default function Schedule() {
 				<h1 className="text-2xl font-bold tracking-tight">Manage schedule</h1>
 				<p className="text-muted-foreground text-sm">
 					{ eventData?.title } — use <strong>Manual sessions</strong> to add a single time on one
-					day without changing anything else (slot-first and date-first). See dates and slot
-					availability on the{' '}
+					day without changing anything else (slot-first and date-first). Use{' '}
+					<strong>Fill empty calendar days</strong> to generate block sessions only on days that
+					have no schedule yet (below). The <strong>danger zone</strong> still replaces the entire
+					grid when you generate there. See the{ ' ' }
 					<Link to={ `/event/${ eventId }` } className="text-primary underline">
 						event page
-					</Link>
-					. The bulk form below still <strong>replaces</strong> every slot on this product when
-					saved (FooEvents slot-first generation).
+					</Link>{ ' ' }
+					for current dates and availability.
 				</p>
 			</div>
 
@@ -567,18 +813,14 @@ export default function Schedule() {
 							</p>
 						</CardHeader>
 						<CardContent className="space-y-4">
-							<div className="space-y-2">
-								<Label htmlFor="manual-date">Date</Label>
-								<Input
-									id="manual-date"
-									type="date"
-									value={ manualDate }
-									onChange={ ( e ) => setManualDate( e.target.value ) }
-									disabled={ scheduleManualBusy }
-									required
-									className="max-w-xs"
-								/>
-							</div>
+							<ScheduleBlockDatePicker
+								label="Date"
+								ymd={ manualDate }
+								onSelectYmd={ setManualDate }
+								triggerId="manual-date"
+								disabled={ scheduleManualBusy }
+								className="max-w-xs"
+							/>
 							<div className="space-y-2">
 								<p className="text-muted-foreground text-xs font-medium">What do you want to do?</p>
 								<ToggleGroup
@@ -778,7 +1020,7 @@ export default function Schedule() {
 									</span>
 								</div>
 							</div>
-							<DialogFooter className="gap-2 sm:gap-0">
+							<DialogFooter>
 								<Button
 									type="button"
 									variant="outline"
@@ -793,6 +1035,233 @@ export default function Schedule() {
 									disabled={ scheduleManualBusy }
 								>
 									{ addStock.isPending ? 'Saving…' : 'Confirm add spots' }
+								</Button>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
+
+					<section aria-labelledby="schedule-blocks-heading" className="space-y-4">
+						<h2 id="schedule-blocks-heading" className="text-lg font-semibold tracking-tight">
+							Schedule blocks
+						</h2>
+						<p className="text-muted-foreground text-sm">
+							These blocks drive both <strong>fill empty days</strong> and{' '}
+							<strong>replace all</strong> in the danger zone. Block start/end define where sessions
+							might exist; the fill tool only writes on empty days inside your fill-from / fill-to
+							window.
+						</p>
+						<div className="space-y-4">
+							{ blocks.map( ( b, idx ) => (
+								<Card key={ b.id }>
+									<CardHeader className="flex flex-row items-center justify-between space-y-0">
+										<CardTitle>Block { idx + 1 }</CardTitle>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={ () => setBlocks( ( prev ) => prev.filter( ( x ) => x.id !== b.id ) ) }
+											disabled={ blocks.length <= 1 }
+										>
+											Remove block
+										</Button>
+									</CardHeader>
+									<CardContent className="space-y-4">
+										<div className="space-y-2">
+											<Label htmlFor={ `${ b.id }-name` }>Schedule name</Label>
+											<Input
+												id={ `${ b.id }-name` }
+												placeholder={ idx === 0 ? 'Regular' : 'Late' }
+												value={ b.name }
+												onChange={ ( e ) => updateBlock( b.id, { name: e.target.value } ) }
+												className="max-w-md"
+												autoComplete="off"
+											/>
+											<p className="text-muted-foreground text-xs">
+												FooEvents slot label prefix. Empty = use session time (HH:MM) as the label.
+											</p>
+										</div>
+										<div className="flex flex-wrap gap-3">
+											<ScheduleBlockDatePicker
+												label="Start"
+												ymd={ b.startDate }
+												onSelectYmd={ ( next ) => updateBlock( b.id, { startDate: next } ) }
+												triggerId={ `${ b.id }-start-date` }
+											/>
+											<ScheduleBlockDatePicker
+												label="End"
+												ymd={ b.endDate }
+												onSelectYmd={ ( next ) => updateBlock( b.id, { endDate: next } ) }
+												triggerId={ `${ b.id }-end-date` }
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label>Weekdays</Label>
+											<div className="flex flex-wrap gap-3">
+												{ WD_LABELS.map( ( { n, short } ) => (
+													<div key={ n } className="flex items-center space-x-2">
+														<Checkbox
+															id={ `${ b.id }-wd-${ n }` }
+															checked={ b.weekdays.includes( n ) }
+															onCheckedChange={ ( c ) => toggleWeekday( b.id, n, c === true ) }
+														/>
+														<Label
+															htmlFor={ `${ b.id }-wd-${ n }` }
+															className="text-sm font-normal"
+														>
+															{ short }
+														</Label>
+													</div>
+												) ) }
+											</div>
+										</div>
+										<div className="flex flex-wrap gap-3">
+											<div className="space-y-2">
+												<Label>Open</Label>
+												<Input
+													type="time"
+													value={ b.openTime }
+													onChange={ ( e ) => updateBlock( b.id, { openTime: e.target.value } ) }
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label>Close</Label>
+												<Input
+													type="time"
+													value={ b.closeTime }
+													onChange={ ( e ) => updateBlock( b.id, { closeTime: e.target.value } ) }
+												/>
+											</div>
+										</div>
+									</CardContent>
+								</Card>
+							) ) }
+							<Button
+								type="button"
+								variant="secondary"
+								onClick={ () => setBlocks( ( prev ) => [ ...prev, emptyBlock( prev.length ) ] ) }
+							>
+								+ Add schedule block
+							</Button>
+						</div>
+					</section>
+
+					<section
+						aria-labelledby="fill-empty-heading"
+						className="border-border bg-muted/25 space-y-4 rounded-lg border p-4 sm:p-5"
+					>
+						<div className="space-y-2">
+							<h2 id="fill-empty-heading" className="text-lg font-semibold tracking-tight">
+								Fill empty calendar days
+							</h2>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Choose a date range where <strong>no day yet has any session</strong>. The server
+								adds your block schedule on those days only and leaves existing slot rows
+								untouched. If a generated time would duplicate an existing session, it is skipped
+								and you get a warning; other cells in the run are still created.
+							</p>
+						</div>
+						<div className="flex flex-wrap gap-3">
+							<ScheduleBlockDatePicker
+								label="Fill from"
+								ymd={ fillFromYmd }
+								onSelectYmd={ setFillFromYmd }
+								triggerId="fill-from-ymd"
+								disabled={ gen.isPending }
+								isDateDisabled={ calendarOnlyEmptySelectable }
+							/>
+							<ScheduleBlockDatePicker
+								label="Fill to"
+								ymd={ fillToYmd }
+								onSelectYmd={ setFillToYmd }
+								triggerId="fill-to-ymd"
+								disabled={ gen.isPending }
+								isDateDisabled={ calendarOnlyEmptySelectable }
+							/>
+						</div>
+						{ fillRangeInvalid ? (
+							<p className="text-destructive text-sm">
+								Choose valid Y-m-d dates with &quot;from&quot; on or before &quot;to&quot;.
+							</p>
+						) : null }
+						<Card className="border-border/80 bg-background/80">
+							<CardHeader className="pb-2">
+								<CardTitle className="text-base">Preview (empty days in range only)</CardTitle>
+							</CardHeader>
+							<CardContent className="space-y-2 text-sm">
+								<p>
+									<span className="text-muted-foreground">New slot–date cells to add:</span>{ ' ' }
+									<Badge>{ fillPreview.totalEntries }</Badge>
+								</p>
+								<p>
+									<span className="text-muted-foreground">Distinct empty calendar days used:</span>{ ' ' }
+									<strong>{ fillPreview.dateCount }</strong>
+								</p>
+								{ fillPreview.categories.length > 0 && (
+									<div className="text-muted-foreground space-y-1 border-t border-border/60 pt-2 text-xs">
+										<p className="font-medium text-foreground">By schedule name</p>
+										<ul className="list-inside list-disc space-y-1">
+											{ fillPreview.categories.map( ( c ) => (
+												<li key={ c.displayName }>
+													<span className="text-foreground font-medium">{ c.displayName }</span>
+													{ ': ' }
+													{ c.slotDateCells } cells, { c.sessionTimeCount } session start
+													{ c.sessionTimeCount === 1 ? '' : 's' }
+												</li>
+											) ) }
+										</ul>
+									</div>
+								) }
+								<p className="text-muted-foreground text-xs">
+									Calendars only let you pick days that are still empty (and not before today).
+									Preview uses your browser timezone; the server uses the WordPress timezone when
+									saving.
+								</p>
+							</CardContent>
+						</Card>
+						<Button
+							type="button"
+							size="lg"
+							variant="default"
+							disabled={
+								gen.isPending
+								|| scheduleManualBusy
+								|| fillPreview.totalEntries === 0
+								|| fillRangeInvalid
+							}
+							onClick={ () => setFillConfirmOpen( true ) }
+						>
+							{ gen.isPending ? 'Saving…' : 'Add to empty days…' }
+						</Button>
+					</section>
+
+					<Dialog open={ fillConfirmOpen } onOpenChange={ setFillConfirmOpen }>
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>Add sessions on empty days?</DialogTitle>
+								<DialogDescription>
+									This will <strong>keep</strong> all existing FooEvents slots and append about{ ' ' }
+									<strong>{ fillPreview.totalEntries }</strong> new slot–date cell(s) between{ ' ' }
+									<span className="font-mono text-foreground">{ fillFromYmd.trim() }</span> and{ ' ' }
+									<span className="font-mono text-foreground">{ fillToYmd.trim() }</span>, using the
+									schedule blocks on this page together with session length and capacity in Defaults.
+									Days that already have any session are skipped. If something still conflicts, those
+									cells are skipped with a warning.
+								</DialogDescription>
+							</DialogHeader>
+							<DialogFooter>
+								<Button
+									type="button"
+									variant="outline"
+									onClick={ () => setFillConfirmOpen( false ) }
+								>
+									Cancel
+								</Button>
+								<Button
+									type="button"
+									onClick={ runFillEmpty }
+									disabled={ gen.isPending || fillPreview.totalEntries === 0 || fillRangeInvalid }
+								>
+									{ gen.isPending ? 'Saving…' : 'Add sessions' }
 								</Button>
 							</DialogFooter>
 						</DialogContent>
@@ -824,108 +1293,9 @@ export default function Schedule() {
 					</div>
 				</div>
 
-			{ blocks.map( ( b, idx ) => (
-				<Card key={ b.id }>
-					<CardHeader className="flex flex-row items-center justify-between space-y-0">
-						<CardTitle>Block { idx + 1 }</CardTitle>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							onClick={ () => setBlocks( ( prev ) => prev.filter( ( x ) => x.id !== b.id ) ) }
-							disabled={ blocks.length <= 1 }
-						>
-							Remove block
-						</Button>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						<div className="space-y-2">
-							<Label htmlFor={ `${ b.id }-name` }>Schedule name</Label>
-							<Input
-								id={ `${ b.id }-name` }
-								placeholder={ idx === 0 ? 'Regular' : 'Late' }
-								value={ b.name }
-								onChange={ ( e ) => updateBlock( b.id, { name: e.target.value } ) }
-								className="max-w-md"
-								autoComplete="off"
-							/>
-							<p className="text-muted-foreground text-xs">
-								FooEvents slot label prefix. Empty = use session time (HH:MM) as the label.
-							</p>
-						</div>
-						<div className="flex flex-wrap gap-3">
-							<div className="space-y-2">
-								<Label>Start</Label>
-								<Input
-									type="date"
-									value={ b.startDate }
-									onChange={ ( e ) => updateBlock( b.id, { startDate: e.target.value } ) }
-								/>
-							</div>
-							<div className="space-y-2">
-								<Label>End</Label>
-								<Input
-									type="date"
-									value={ b.endDate }
-									onChange={ ( e ) => updateBlock( b.id, { endDate: e.target.value } ) }
-								/>
-							</div>
-						</div>
-						<div className="space-y-2">
-							<Label>Weekdays</Label>
-							<div className="flex flex-wrap gap-3">
-								{ WD_LABELS.map( ( { n, short } ) => (
-									<div key={ n } className="flex items-center space-x-2">
-										<Checkbox
-											id={ `${ b.id }-wd-${ n }` }
-											checked={ b.weekdays.includes( n ) }
-											onCheckedChange={ ( c ) => toggleWeekday( b.id, n, c === true ) }
-										/>
-										<Label
-											htmlFor={ `${ b.id }-wd-${ n }` }
-											className="text-sm font-normal"
-										>
-											{ short }
-										</Label>
-									</div>
-								) ) }
-							</div>
-						</div>
-						<div className="flex flex-wrap gap-3">
-							<div className="space-y-2">
-								<Label>Open</Label>
-								<Input
-									type="time"
-									value={ b.openTime }
-									onChange={ ( e ) => updateBlock( b.id, { openTime: e.target.value } ) }
-								/>
-							</div>
-							<div className="space-y-2">
-								<Label>Close</Label>
-								<Input
-									type="time"
-									value={ b.closeTime }
-									onChange={ ( e ) => updateBlock( b.id, { closeTime: e.target.value } ) }
-								/>
-							</div>
-						</div>
-					</CardContent>
-				</Card>
-			) ) }
-
-			<Button
-				type="button"
-				variant="secondary"
-				onClick={ () => setBlocks( ( prev ) => [ ...prev, emptyBlock( prev.length ) ] ) }
-			>
-				+ Add schedule block
-			</Button>
-
-			<Separator />
-
 			<Card>
 				<CardHeader>
-					<CardTitle>Preview</CardTitle>
+					<CardTitle>Preview (full replace)</CardTitle>
 				</CardHeader>
 				<CardContent className="space-y-2 text-sm">
 					<p>
@@ -982,7 +1352,7 @@ export default function Schedule() {
 							undone.
 						</DialogDescription>
 					</DialogHeader>
-					<DialogFooter className="gap-2 sm:gap-0">
+					<DialogFooter>
 						<Button
 							type="button"
 							variant="outline"

@@ -369,11 +369,22 @@ class Rest_API {
 		}
 		$confirm = $params['confirm'] ?? null;
 		$ok      = ( true === $confirm || 1 === (int) $confirm || 'true' === (string) $confirm || '1' === (string) $confirm );
+		$mode_raw = isset( $params['mode'] ) ? strtolower( trim( (string) $params['mode'] ) ) : 'replace';
+		$mode_raw = str_replace( '_', '', $mode_raw );
+		$is_fill  = ( 'fillempty' === $mode_raw );
 		if ( ! $ok ) {
+			if ( $is_fill ) {
+				return new WP_Error( 'rest_invalid_param', __( 'Set confirm: true to add sessions on empty calendar days only.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+			}
 			return new WP_Error( 'rest_invalid_param', __( 'Set confirm: true to replace all existing slots.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 		unset( $params['confirm'] );
-		$result = $this->slot_generator->generate( $id, $params );
+		if ( $is_fill ) {
+			$params['mode'] = 'fillEmpty';
+			$result         = $this->slot_generator->generate_fill_empty_days( $id, $params );
+		} else {
+			$result = $this->slot_generator->generate( $id, $params );
+		}
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
@@ -473,6 +484,7 @@ class Rest_API {
 			return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}
 		unset( $out['error'] );
+		$out['calendarDaysWithSlots'] = $this->slot_generator->list_occupied_calendar_ymds_for_product( $id );
 		return rest_ensure_response( $out );
 	}
 
