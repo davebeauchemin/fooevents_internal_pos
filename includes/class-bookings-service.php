@@ -22,7 +22,7 @@ class Bookings_Service {
 	 */
 	public function get_wp_timezone() {
 		$tz = wp_timezone();
-		return $tz instanceof \DateTimeZone ? $tz : new DateTimeZone( 'UTC' );
+		return $tz instanceof \DateTimeZone ? $tz : new \DateTimeZone( 'UTC' );
 	}
 
 	/**
@@ -128,7 +128,7 @@ class Bookings_Service {
 			return $fallback;
 		}
 		try {
-			return new DateTimeZone( $evt );
+			return new \DateTimeZone( $evt );
 		} catch ( \Exception $e ) {
 			return $fallback;
 		}
