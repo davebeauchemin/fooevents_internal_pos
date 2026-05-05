@@ -69,7 +69,7 @@ class Coupon_Admin_Fields {
 		}
 
 		echo '<div class="options_group fipos-coupon-rules">';
-		echo '<h3>' . esc_html__( 'FooEvents POS / storefront', 'fooevents-internal-pos' ) . '</h3>';
+		echo '<h3>' . esc_html__( 'Module Rouge POS/Storefront', 'fooevents-internal-pos' ) . '</h3>';
 		echo '<p class="fipos-coupon-rules-intro description">';
 		echo esc_html__( 'Control whether this coupon is applied automatically during Internal POS checkout, the WP storefront checkout, or both; restrict where it may be redeemed; and optionally treat it as a stackable bundle tier (applied as multiple discount lines via fees when qty allows). Bundle tiers must use \"Fixed cart discount\" and amounts are read from the coupon.', 'fooevents-internal-pos' );
 		echo '</p>';

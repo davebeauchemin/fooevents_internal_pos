@@ -508,7 +508,7 @@ export default function Checkout() {
 														id={ `${ formId }-coupons-hint` }
 														className="text-muted-foreground text-xs leading-relaxed"
 													>
-														Tick &quot;Show on POS&quot; on a WooCommerce coupon to surface it above. Codes are validated like on your storefront checkout. Auto-apply and bundle tiers are set on each coupon in the admin (&quot;FooEvents POS / storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
+														Tick &quot;Show on POS&quot; on a WooCommerce coupon to surface it above. Codes are validated like on your storefront checkout. Auto-apply and bundle tiers are set on each coupon in the admin (&quot;Module Rouge POS/Storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
 													</p>
 												</div>
 											</AccordionContent>

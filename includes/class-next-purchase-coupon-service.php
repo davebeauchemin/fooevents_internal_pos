@@ -15,7 +15,7 @@ use WC_Product;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Generates a unique 50% coupon per qualifying order with email restriction
+ * Generates a unique configurable next-purchase coupon per qualifying order with email restriction
  * and FooEvents booking product/qty entitlement validation.
  */
 class Next_Purchase_Coupon_Service {
@@ -30,6 +30,11 @@ class Next_Purchase_Coupon_Service {
 
 	public const META_COUPON_REQUIRED_QTY_JSON = '_fipos_required_product_qty';
 
+	/**
+	 * Legacy default percent when settings were unset; amounts now come from {@see Pos_Settings}.
+	 *
+	 * @var float
+	 */
 	public const DISCOUNT_PERCENT = 50.0;
 
 	public const CODE_PREFIX = 'NEXT-';
@@ -86,9 +91,21 @@ class Next_Purchase_Coupon_Service {
 			return;
 		}
 
-		/* translators: 1: coupon code, 2: discount amount formatted */
-		$msg = __( 'Thank you for your order! Use coupon code %1$s for %2$s off your next eligible purchase.', 'fooevents-internal-pos' );
-		$sprintf_txt = sprintf( $msg, sanitize_text_field( (string) $data['code'] ), self::discount_label() );
+		$coupon_for_label = isset( $data['coupon_id'] ) && (int) $data['coupon_id'] > 0
+			? new WC_Coupon( (int) $data['coupon_id'] )
+			: null;
+
+		$discount_phrase = '';
+		if ( $coupon_for_label instanceof WC_Coupon && self::is_next_purchase_coupon( $coupon_for_label ) && $coupon_for_label->get_id() > 0 ) {
+			$discount_phrase = self::discount_label_from_coupon( $coupon_for_label );
+		}
+		if ( '' === $discount_phrase ) {
+			$discount_phrase = self::discount_label_from_settings();
+		}
+
+		/* translators: 1: coupon code, 2: discount phrase (percent or formatted money) */
+		$msg         = __( 'Thank you for your order! Use coupon code %1$s for %2$s off your next eligible purchase.', 'fooevents-internal-pos' );
+		$sprintf_txt = sprintf( $msg, sanitize_text_field( (string) $data['code'] ), $discount_phrase );
 
 		if ( ! empty( $plain_text ) ) {
 			echo "\n\n=====================================================\n";
@@ -131,7 +148,7 @@ class Next_Purchase_Coupon_Service {
 		}
 
 		self::$shape_validation_fail_coupon_id = $coupon->get_id();
-		self::$shape_validation_fail_message   = __( 'This coupon is valid only when your cart uses the same tickets, up to the quantities from the order where you earned it.', 'fooevents-internal-pos' );
+		self::$shape_validation_fail_message   = __( 'This coupon is valid only when your cart contains the tickets you earned it on—not more tickets per product than from that purchase (you may checkout with fewer tickets or the exact same ticket mix).', 'fooevents-internal-pos' );
 
 		return false;
 	}
@@ -373,18 +390,79 @@ class Next_Purchase_Coupon_Service {
 		return true;
 	}
 
+	/**
+	 * Human-readable discount for emails / UI built from WooCommerce POS settings defaults.
+	 *
+	 * @return string
+	 */
+	public static function discount_label_from_settings() {
+		return self::format_discount_public_label_from_type_and_decimal(
+			Pos_Settings::next_purchase_discount_type(),
+			Pos_Settings::next_purchase_discount_amount_decimal()
+		);
+	}
+
+	/**
+	 * Human-readable discount for a persisted next-purchase coupon.
+	 *
+	 * @param WC_Coupon $coupon Coupon.
+	 * @return string
+	 */
+	public static function discount_label_from_coupon( WC_Coupon $coupon ) {
+		if ( $coupon->get_id() <= 0 || ! self::is_next_purchase_coupon( $coupon ) ) {
+			return self::discount_label_from_settings();
+		}
+
+		return self::format_discount_public_label_from_type_and_decimal(
+			(string) $coupon->get_discount_type(),
+			(string) wc_format_decimal( (string) $coupon->get_amount(), 8 )
+		);
+	}
+
+	/**
+	 * Default marketing label when no coupon exists yet (uses POS settings preview).
+	 *
+	 * @return string
+	 */
+	public static function discount_label() {
+		return self::discount_label_from_settings();
+	}
+
+	/**
+	 * @param string $type WC discount_type (percent | fixed_cart | …).
+	 * @param string $decimal_amount Stored coupon amount column.
+	 * @return string
+	 */
+	private static function format_discount_public_label_from_type_and_decimal( $type, $decimal_amount ) {
+		$type = (string) $type;
+
+		if ( 'percent' === $type ) {
+			$n = wc_format_decimal( $decimal_amount, 2 );
+			$n = rtrim( rtrim( (string) $n, '0' ), '.' );
+
+			return '' !== $n ? $n . '%' : wc_format_decimal( (string) self::DISCOUNT_PERCENT, 2 ) . '%';
+		}
+
+		if ( 'fixed_cart' === $type ) {
+			$price_decimals = wc_get_price_decimals();
+			$f              = (float) wc_format_decimal( $decimal_amount, max( $price_decimals, 6 ) );
+
+			return $f > 0 ? wp_strip_all_tags( wc_price( $f ) ) : wp_strip_all_tags( wc_price( 10 ) );
+		}
+
+		$labels = function_exists( 'wc_get_coupon_types' ) ? wc_get_coupon_types() : array();
+		if ( isset( $labels[ $type ] ) ) {
+			return wp_strip_all_tags( (string) $labels[ $type ] );
+		}
+
+		return '';
+	}
+
 	private static function generate_code_for_order_id( $order_id ) {
 		$id          = absint( $order_id );
 		$rand_suffix = strtolower( wp_generate_password( 4, false, false ) );
 
 		return self::CODE_PREFIX . $id . '-' . $rand_suffix;
-	}
-
-	/**
-	 * @return string
-	 */
-	public static function discount_label() {
-		return rtrim( rtrim( wc_format_decimal( self::DISCOUNT_PERCENT, 2 ), '0' ), '.' ) . '%';
 	}
 
 	/**
@@ -474,8 +552,17 @@ class Next_Purchase_Coupon_Service {
 			$coupon = new WC_Coupon();
 			$coupon->set_status( 'publish' );
 			$coupon->set_code( $code );
-			$coupon->set_discount_type( 'percent' );
-			$coupon->set_amount( (string) self::DISCOUNT_PERCENT );
+			$disc_type         = Pos_Settings::next_purchase_discount_type();
+			$amount_for_coupon = Pos_Settings::next_purchase_discount_amount_decimal();
+			$coupon->set_discount_type( 'fixed_cart' === $disc_type ? 'fixed_cart' : 'percent' );
+
+			if ( method_exists( $coupon, 'set_amount' ) ) {
+				if ( 'fixed_cart' === $disc_type ) {
+					$coupon->set_amount( wc_format_decimal( $amount_for_coupon, wc_get_price_decimals() ) );
+				} else {
+					$coupon->set_amount( wc_format_decimal( $amount_for_coupon, 4 ) );
+				}
+			}
 			if ( method_exists( $coupon, 'set_usage_limit' ) ) {
 				$coupon->set_usage_limit( 1 );
 			}

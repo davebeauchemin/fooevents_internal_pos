@@ -1042,14 +1042,33 @@ class Bookings_Checkout_Service {
 			}
 
 			$next_purchase_code    = '';
-			$next_purchase_amount  = 0.0;
-			$next_purchase_label   = '';
+			$next_purchase_amount = '';
+			$next_purchase_label  = '';
+			$next_purchase_dt     = '';
+
 			if ( $completed_order instanceof WC_Order && Pos_Settings::generated_next_purchase_coupons_enabled() ) {
 				$next_purchase = Next_Purchase_Coupon_Service::ensure_next_purchase_coupon_for_order( $completed_order );
 				if ( is_array( $next_purchase ) && '' !== (string) ( $next_purchase['code'] ?? '' ) ) {
-					$next_purchase_code   = (string) $next_purchase['code'];
-					$next_purchase_amount = Next_Purchase_Coupon_Service::DISCOUNT_PERCENT;
-					$next_purchase_label  = Next_Purchase_Coupon_Service::discount_label();
+					$next_purchase_code = (string) $next_purchase['code'];
+
+					$np_id = isset( $next_purchase['coupon_id'] ) ? (int) $next_purchase['coupon_id'] : 0;
+					$npc   = $np_id > 0 ? new \WC_Coupon( $np_id ) : null;
+					if ( $npc instanceof \WC_Coupon && $npc->get_id() > 0 && Next_Purchase_Coupon_Service::is_next_purchase_coupon( $npc ) ) {
+						$ctype               = (string) $npc->get_discount_type();
+						$next_purchase_amount = ( 'percent' === $ctype )
+							? wc_format_decimal( (string) $npc->get_amount(), 6 )
+							: wc_format_decimal( (string) $npc->get_amount(), wc_get_price_decimals() );
+						$next_purchase_label  = Next_Purchase_Coupon_Service::discount_label_from_coupon( $npc );
+						$next_purchase_dt     = $ctype;
+					} else {
+						$ctype               = Pos_Settings::next_purchase_discount_type();
+						$ddec                = Pos_Settings::next_purchase_discount_amount_decimal();
+						$next_purchase_amount = ( 'percent' === $ctype )
+							? wc_format_decimal( $ddec, 6 )
+							: wc_format_decimal( $ddec, wc_get_price_decimals() );
+						$next_purchase_label  = Next_Purchase_Coupon_Service::discount_label_from_settings();
+						$next_purchase_dt     = $ctype;
+					}
 				}
 			}
 
@@ -1071,10 +1090,10 @@ class Bookings_Checkout_Service {
 				'discountTotal'        => wc_format_decimal( $discount_order, wc_get_price_decimals() ),
 				'discountTotalFormatted' => self::format_price_plain_for_rest( $discount_order ),
 				'nextPurchaseCoupon'    => '' === $next_purchase_code ? null : array(
-					'code'              => $next_purchase_code,
-					'amount'            => wc_format_decimal( $next_purchase_amount, wc_get_price_decimals() ),
-					'amountFormatted'   => $next_purchase_label,
-					'discountType'      => 'percent',
+					'code'            => $next_purchase_code,
+					'amount'          => $next_purchase_amount,
+					'amountFormatted' => $next_purchase_label,
+					'discountType'    => '' !== $next_purchase_dt ? $next_purchase_dt : 'percent',
 				),
 			);
 		} catch ( Throwable $e ) {
