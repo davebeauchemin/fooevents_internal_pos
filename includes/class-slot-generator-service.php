@@ -19,7 +19,7 @@ defined( 'ABSPATH' ) || exit;
 class Slot_Generator_Service {
 
 	const MAX_DATES_PER_BLOCK   = 1000;
-	const MAX_TOTAL_ENTRIES     = 7000;
+	const MAX_TOTAL_ENTRIES     = 10000;
 	const SESSION_MIN_MINUTES  = 5;
 	const SESSION_MAX_MINUTES  = 240;
 	/** Max length for a schedule block "name" (slot label prefix). */

@@ -33,9 +33,6 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
   const manageEventsActive =
     pathname === "/events" || pathname.startsWith( "/event/" )
 
-  const eventIdMatch = pathname.match( /^\/event\/([^/]+)/ )
-  const activeEventId = eventIdMatch?.[ 1 ]
-
   const user = {
     name: currentUser?.name ?? "Guest",
     email: currentUser?.email ?? "",
@@ -54,31 +51,6 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
     ],
     [ siteName ]
   )
-
-  const manageSubItems = React.useMemo( () => {
-    const base = [
-      {
-        title: "All events",
-        url: "/events",
-        isActive: pathname === "/events",
-      },
-    ]
-    if ( ! activeEventId ) {
-      return base
-    }
-    const detailPath = `/event/${ activeEventId }`
-    const manageAliasPath = `/event/${ activeEventId }/manage`
-    return [
-      ...base,
-      {
-        title: "Event workspace",
-        url: detailPath,
-        isActive:
-          pathname === detailPath
-          || pathname === manageAliasPath,
-      },
-    ]
-  }, [ pathname, activeEventId ] )
 
   const navMain = React.useMemo( () => {
     const items = []
@@ -108,11 +80,10 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
     }
     if ( canManageEvents ) {
       items.push( {
-        title: "Manage Event",
+        title: "Manage Events",
         url: "/events",
         icon: <CalendarDaysIcon className="size-4 shrink-0" />,
         isActive: manageEventsActive,
-        items: manageSubItems,
       } )
     }
     return items
@@ -124,7 +95,6 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
     canManageEvents,
     canValidateTickets,
     manageEventsActive,
-    manageSubItems,
   ] )
 
   return (

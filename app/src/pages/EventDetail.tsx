@@ -4,23 +4,26 @@ import {
 	useParams,
 	useSearchParams,
 } from 'react-router-dom';
-import { AdminReplaceScheduleSection } from '@/components/managed-schedule/AdminReplaceScheduleSection';
 import { ManagedEventScheduleDialogs } from '@/components/managed-schedule/ManagedEventScheduleDialogs';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/context/AuthContext';
 import EventSlotOverview from '@/components/EventSlotOverview';
+import { WorkspaceScheduleBlockingOverlay } from '@/components/WorkspaceScheduleBlockingOverlay';
 import { useManageSchedule } from '@/hooks/useManageSchedule';
+import { useEventScheduleMutationsBusy } from '@/hooks/useEventScheduleMutationsBusy';
 
-type ManageTab = 'session' | 'spots' | 'schedule';
+type ManageTab = 'session' | 'spots' | 'schedule' | 'replace';
 
-function parseManageParam( raw: string | null ): ManageTab | null {
-	if (
-		raw === 'session'
-		|| raw === 'spots'
-		|| raw === 'schedule'
-	) {
+function parseManageParam(
+	raw: string | null,
+	canReplace: boolean,
+): ManageTab | null {
+	if ( raw === 'session' || raw === 'spots' || raw === 'schedule' ) {
 		return raw;
+	}
+	if ( raw === 'replace' && canReplace ) {
+		return 'replace';
 	}
 	return null;
 }
@@ -30,9 +33,13 @@ export default function EventDetail() {
 	const eventId = id ?? '';
 	const { canReplaceEventSchedules } = useAuth();
 	const [ searchParams, setSearchParams ] = useSearchParams();
-	const manageTab = parseManageParam( searchParams.get( 'manage' ) );
+	const manageTab = parseManageParam(
+		searchParams.get( 'manage' ),
+		canReplaceEventSchedules,
+	);
 
 	const mgr = useManageSchedule( eventId );
+	const scheduleMutationsBusy = useEventScheduleMutationsBusy( eventId );
 
 	const openTab = useCallback(
 		( tab: ManageTab ) => {
@@ -108,7 +115,7 @@ export default function EventDetail() {
 				Use Calendar and checkout when selling.
 			</p>
 
-			<div className="flex flex-wrap gap-2">
+			<div className="flex flex-wrap items-center gap-2">
 				<Button type="button" onClick={ () => openTab( 'session' ) }>
 					Add new session
 				</Button>
@@ -118,22 +125,28 @@ export default function EventDetail() {
 				<Button type="button" variant="outline" onClick={ () => openTab( 'schedule' ) }>
 					Manage schedule
 				</Button>
+				{ canReplaceEventSchedules ? (
+					<Button
+						type="button"
+						variant="outline"
+						className="border-destructive/50 text-destructive hover:bg-destructive/10"
+						onClick={ () => openTab( 'replace' ) }
+					>
+						Replace entire schedule
+					</Button>
+				) : null }
 			</div>
 
-			<EventSlotOverview
-				detail={ data }
-				hideManualAddToolbar
-			/>
-
-			{ canReplaceEventSchedules ? (
-				<AdminReplaceScheduleSection mgr={ mgr } />
-			) : null }
+			<EventSlotOverview detail={ data } />
 
 			<ManagedEventScheduleDialogs
 				mgr={ mgr }
 				sessionOpen={ manageTab === 'session' }
 				spotsOpen={ manageTab === 'spots' }
 				scheduleOpen={ manageTab === 'schedule' }
+				replaceOpen={
+					canReplaceEventSchedules && manageTab === 'replace'
+				}
 				onSessionOpenChange={ ( open ) => {
 					if ( ! open ) {
 						closeManagedDialogs();
@@ -149,7 +162,13 @@ export default function EventDetail() {
 						closeManagedDialogs();
 					}
 				} }
+				onReplaceOpenChange={ ( open ) => {
+					if ( ! open ) {
+						closeManagedDialogs();
+					}
+				} }
 			/>
+			<WorkspaceScheduleBlockingOverlay open={ scheduleMutationsBusy } />
 		</div>
 	);
 }

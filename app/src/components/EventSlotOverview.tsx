@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
 import { CalendarIcon, Clock3, Minus, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAddManualSlot, useAddSlotStock, useDeleteManualSlot, useRemoveSlotStock } from '../api/queries.js';
+import { useDeleteManualSlot, useRemoveSlotStock, useAddSlotStock } from '../api/queries.js';
 import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
 import BookingScheduleSummaryCards, {
 	type BookingScheduleSummaryPayload,
@@ -21,14 +21,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -37,10 +29,6 @@ import {
 	groupSlotsByHour,
 	hourRangeTitle,
 	hourRemainingSpotsLabel,
-	decodeManualSlotDateRef,
-	encodeManualSlotDateRef,
-	manualSlotWouldDuplicateExisting,
-	normalizeTimeInputToHhmm,
 	slotSelectable,
 	type HourSlotGroup,
 } from '@/lib/slotHourGrouping';
@@ -108,13 +96,6 @@ function slotTitleForRemoveConfirm( slot: SlotApi ): string {
 	return `${ label } · ${ timePart }`;
 }
 
-function slotSpotsSelectLabel( s: SlotApi ): string {
-	const t = formatSlotTime( s );
-	const head = slotTitleForRemoveConfirm( s );
-	const cap =
-		s.stock === null || s.stock === undefined ? 'Unlimited' : `${ s.stock } cap`;
-	return `${ head } · ${ t } · ${ cap }`;
-}
 
 type Props = {
 	detail: EventDetailForSchedule;
@@ -361,22 +342,15 @@ export default function EventSlotOverview( {
 							</span>
 							{ manageSlotsUi && (
 								<span className="text-muted-foreground mt-2 block font-normal leading-relaxed">
-									You can add or remove ticket spots, delete a session for{' '}
-									<span className="font-mono text-xs">{ selectedDay?.date }</span>, or use Manage
-									schedule for bulk changes.
+									Use <strong>Add new session</strong>, <strong>Add ticket spots</strong>, or{' '}
+									<strong>Manage schedule</strong> above for new rows and bulk changes; use the +/- and
+									trash actions on each slot for { ' ' }
+									<span className="font-mono text-xs">{ selectedDay?.date }</span>.
 								</span>
 							) }
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4 pt-0">
-						{ manageSlotsUi && selectedDay?.date ? (
-							<EventOverviewManualAddToolbar
-								eventId={ detail.id as number }
-								selectedYmd={ selectedDay.date }
-								existingSlots={ selectedDay.slots ?? [] }
-							/>
-						) : null }
-
 						{ manageSlotsUi ? (
 							<EventOverviewAddStockDialog
 								eventId={ detail.id as number }
@@ -665,441 +639,6 @@ function SlotOverviewCard( {
 	);
 }
 
-function EventOverviewManualAddToolbar( {
-	eventId,
-	selectedYmd,
-	existingSlots,
-}: {
-	eventId: number;
-	selectedYmd: string;
-	existingSlots: SlotApi[];
-} ) {
-	const [ addMode, setAddMode ] = useState< 'newSession' | 'extraSpots' >( 'newSession' );
-	const [ manualTime, setManualTime ] = useState( '09:00' );
-	const [ manualCapacity, setManualCapacity ] = useState( 10 );
-	const [ manualLabel, setManualLabel ] = useState( '' );
-	const [ spotSelectValue, setSpotSelectValue ] = useState( '' );
-	const [ addSpotsDelta, setAddSpotsDelta ] = useState( 1 );
-	const [ confirmOpen, setConfirmOpen ] = useState( false );
-	const addManual = useAddManualSlot( eventId );
-	const addStock = useAddSlotStock( eventId );
-
-	const spotsEligible = useMemo(
-		() =>
-			existingSlots.filter( ( s ) => {
-				const sid = String( s.id ?? '' ).trim();
-				const did = String( s.dateId ?? '' ).trim();
-				return Boolean( sid && did && s.stock !== null && s.stock !== undefined );
-			} ),
-		[ existingSlots ],
-	);
-
-	useEffect( () => {
-		if ( addMode !== 'extraSpots' ) {
-			return;
-		}
-		if ( spotsEligible.length === 0 ) {
-			setSpotSelectValue( '' );
-			return;
-		}
-		setSpotSelectValue( ( prev ) => {
-			if ( prev && spotsEligible.some( ( s ) => encodeManualSlotDateRef( s ) === prev ) ) {
-				return prev;
-			}
-			return encodeManualSlotDateRef( spotsEligible[ 0 ] );
-		} );
-	}, [ addMode, spotsEligible ] );
-
-	const selectedSpotForSpots = useMemo( () => {
-		if ( ! spotSelectValue ) {
-			return undefined;
-		}
-		return spotsEligible.find( ( s ) => encodeManualSlotDateRef( s ) === spotSelectValue );
-	}, [ spotsEligible, spotSelectValue ] );
-
-	const duplicateSession = useMemo(
-		() =>
-			addMode === 'newSession'
-			&& manualSlotWouldDuplicateExisting(
-				existingSlots,
-				manualTime,
-				manualLabel,
-			),
-		[ addMode, existingSlots, manualTime, manualLabel ],
-	);
-
-	const duplicateMessage =
-		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
-
-	const isBusy = addManual.isPending || addStock.isPending;
-
-	function onSubmit( ev: FormEvent ) {
-		ev.preventDefault();
-		if ( addMode === 'extraSpots' ) {
-			if ( spotsEligible.length === 0 ) {
-				toast.error(
-					'No sessions with a set capacity on this day. Use New session or set a numeric limit first.',
-				);
-				return;
-			}
-			const parsed = decodeManualSlotDateRef( spotSelectValue );
-			if ( ! parsed ) {
-				toast.error( 'Select a session to add spots to.' );
-				return;
-			}
-			if ( addSpotsDelta < 1 ) {
-				toast.error( 'Add at least 1 spot.' );
-				return;
-			}
-			setConfirmOpen( true );
-			return;
-		}
-		if ( duplicateSession ) {
-			toast.error( duplicateMessage );
-			return;
-		}
-		setConfirmOpen( true );
-	}
-
-	async function commitConfirm() {
-		if ( addMode === 'extraSpots' ) {
-			const parsed = decodeManualSlotDateRef( spotSelectValue );
-			if ( ! parsed || addSpotsDelta < 1 ) {
-				return;
-			}
-			try {
-				await addStock.mutateAsync( {
-					slotId: parsed.slotId,
-					dateId: parsed.dateId,
-					date: selectedYmd.trim(),
-					addSpots: addSpotsDelta,
-				} );
-				toast.success( `Added ${ addSpotsDelta } ticket spot(s).` );
-				setConfirmOpen( false );
-			} catch ( e ) {
-				toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
-			}
-			return;
-		}
-		if ( duplicateSession ) {
-			toast.error( duplicateMessage );
-			return;
-		}
-		const timeNorm = normalizeTimeInputToHhmm( manualTime.trim() );
-		if ( ! timeNorm ) {
-			toast.error( 'Enter a valid time (HH:MM).' );
-			return;
-		}
-		try {
-			const payload: Record<string, unknown> = {
-				date: selectedYmd.trim(),
-				time: timeNorm,
-				capacity: manualCapacity < 0 ? 0 : manualCapacity,
-			};
-			const lab = manualLabel.trim();
-			if ( lab ) {
-				payload.label = lab;
-			}
-			await addManual.mutateAsync( payload );
-			toast.success( 'Session added to this date.' );
-			setConfirmOpen( false );
-		} catch ( e ) {
-			toast.error( String( ( e as Error )?.message || e || 'Request failed' ) );
-		}
-	}
-
-	const summaryLabel = manualLabel.trim();
-	const capacitySummary =
-		manualCapacity < 0 ? '0' : manualCapacity === 0 ? '0 (unlimited)' : String( manualCapacity );
-
-	const newCapPreview =
-		selectedSpotForSpots != null
-		&& typeof selectedSpotForSpots.stock === 'number'
-			? selectedSpotForSpots.stock + addSpotsDelta
-			: null;
-
-	return (
-		<>
-			<Card className="w-full overflow-hidden border-border/80 shadow-none">
-				<CardHeader className="bg-muted/25 border-border space-y-1 border-b py-4">
-					<CardTitle className="text-base leading-snug">
-						{ addMode === 'extraSpots' ? 'Add ticket spots ·' : 'Add session ·' }{ ' ' }
-						<span className="font-mono text-base font-semibold tabular-nums tracking-normal">
-							{ selectedYmd }
-						</span>
-					</CardTitle>
-				</CardHeader>
-				<CardContent className="space-y-4 pt-4 pb-4">
-					<div className="space-y-2">
-						<p className="text-muted-foreground text-xs font-medium">What do you want to do?</p>
-						<ToggleGroup
-							type="single"
-							value={ addMode }
-							onValueChange={ ( v ) => {
-								if ( v === 'newSession' || v === 'extraSpots' ) {
-									setAddMode( v );
-								}
-							} }
-							disabled={ isBusy }
-							className="grid w-full grid-cols-2 gap-2"
-						>
-							<ToggleGroupItem value="newSession" className="px-2 text-sm">
-								New session
-							</ToggleGroupItem>
-							<ToggleGroupItem value="extraSpots" className="px-2 text-sm">
-								Add ticket spots
-							</ToggleGroupItem>
-						</ToggleGroup>
-						<p className="text-muted-foreground text-xs leading-snug">
-							{ addMode === 'extraSpots'
-								? 'Increase capacity on a session that already exists for this day (numeric limit only—not unlimited).'
-								: 'Create a new session row when the time or schedule label is not already on this date.' }
-						</p>
-					</div>
-
-					{ addMode === 'extraSpots' ? (
-						<form onSubmit={ onSubmit } className="grid w-full grid-cols-1 gap-4">
-							<div className="space-y-1.5">
-								<Label className="text-xs">Session</Label>
-								{ spotsEligible.length === 0 ? (
-									<p className="text-muted-foreground text-sm">
-										No sessions with a fixed capacity on this day. Add a session with a numeric
-										capacity first, or switch to New session.
-									</p>
-								) : (
-									<Select
-										value={ spotSelectValue }
-										onValueChange={ setSpotSelectValue }
-										disabled={ isBusy }
-									>
-										<SelectTrigger className="w-full">
-											<SelectValue placeholder="Choose session" />
-										</SelectTrigger>
-										<SelectContent>
-											{ spotsEligible.map( ( s ) => (
-												<SelectItem key={ encodeManualSlotDateRef( s ) } value={ encodeManualSlotDateRef( s ) }>
-													{ slotSpotsSelectLabel( s ) }
-												</SelectItem>
-											) ) }
-										</SelectContent>
-									</Select>
-								) }
-							</div>
-							<div className="space-y-1.5">
-								<Label htmlFor="overview-add-spots-delta" className="text-xs">
-									Additional spots
-								</Label>
-								<Input
-									id="overview-add-spots-delta"
-									type="number"
-									min={ 1 }
-									className="w-full"
-									value={ addSpotsDelta }
-									onChange={ ( e ) => {
-										const n = parseInt( e.target.value, 10 );
-										setAddSpotsDelta(
-											Number.isFinite( n ) && n >= 1 ? n : 1,
-										);
-									} }
-									disabled={ isBusy || spotsEligible.length === 0 }
-									required
-								/>
-							</div>
-							<Button
-								type="submit"
-								disabled={ isBusy || spotsEligible.length === 0 || addSpotsDelta < 1 }
-								className="h-11 w-full"
-							>
-								Continue
-							</Button>
-						</form>
-					) : (
-						<form
-							onSubmit={ onSubmit }
-							className="grid w-full grid-cols-1 gap-4 md:grid-cols-2 md:items-end"
-						>
-							<div className="space-y-1.5">
-								<Label htmlFor="overview-manual-time" className="text-xs">
-									Time
-								</Label>
-								<Input
-									id="overview-manual-time"
-									type="time"
-									value={ manualTime }
-									onChange={ ( e ) => setManualTime( e.target.value ) }
-									disabled={ isBusy }
-									required
-									className="w-full"
-								/>
-							</div>
-							<div className="space-y-1.5">
-								<Label htmlFor="overview-manual-cap" className="text-xs">
-									Capacity
-								</Label>
-								<Input
-									id="overview-manual-cap"
-									type="number"
-									min={ 0 }
-									className="w-full"
-									value={ manualCapacity }
-									onChange={ ( e ) =>
-										setManualCapacity( parseInt( e.target.value, 10 ) || 0 )
-									}
-									disabled={ isBusy }
-									required
-								/>
-							</div>
-							<div className="space-y-1.5 md:col-span-2">
-								<Label htmlFor="overview-manual-label" className="text-xs">
-									Label{ ' ' }
-									<span className="text-muted-foreground font-normal">(optional)</span>
-								</Label>
-								<Input
-									id="overview-manual-label"
-									placeholder="e.g. Regular"
-									value={ manualLabel }
-									onChange={ ( e ) => setManualLabel( e.target.value ) }
-									disabled={ isBusy }
-									maxLength={ 60 }
-									autoComplete="off"
-									className="w-full"
-								/>
-							</div>
-							{ duplicateSession ? (
-								<div
-									role="status"
-									className="md:col-span-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2.5 text-sm leading-snug text-yellow-950 dark:border-yellow-800/50 dark:bg-yellow-950/40 dark:text-yellow-50"
-								>
-									{ duplicateMessage }
-								</div>
-							) : null }
-							<div className="md:col-span-2">
-								<Button
-									type="submit"
-									disabled={ isBusy || duplicateSession }
-									className="h-11 w-full"
-								>
-									Continue
-								</Button>
-							</div>
-						</form>
-					) }
-				</CardContent>
-			</Card>
-
-			<Dialog
-				open={ confirmOpen }
-				onOpenChange={ ( open ) => {
-					if ( ! isBusy ) {
-						setConfirmOpen( open );
-					}
-				} }
-			>
-				<DialogContent showCloseButton={ ! isBusy }>
-					<DialogHeader>
-						<DialogTitle>
-							{ addMode === 'extraSpots' ? 'Add ticket spots?' : 'Add this session?' }
-						</DialogTitle>
-						<DialogDescription>
-							{ addMode === 'extraSpots'
-								? 'Confirm extra capacity for the selected session on this date.'
-								: 'Confirm the session you are about to add for this product and date.' }
-						</DialogDescription>
-					</DialogHeader>
-					{ addMode === 'extraSpots' ? (
-						<div className="bg-muted/40 border-border space-y-2.5 rounded-lg border px-3 py-3 text-sm">
-							<div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Session</span>
-								<span className="min-w-0 text-right font-medium break-words">
-									{ selectedSpotForSpots
-										? slotSpotsSelectLabel( selectedSpotForSpots )
-										: '—' }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Date</span>
-								<span className="font-mono text-foreground font-medium tabular-nums">
-									{ selectedYmd }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Current capacity</span>
-								<span className="text-foreground font-medium tabular-nums">
-									{ selectedSpotForSpots != null
-									&& typeof selectedSpotForSpots.stock === 'number'
-										? selectedSpotForSpots.stock
-										: '—' }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Adding</span>
-								<span className="text-foreground font-medium tabular-nums">
-									+{ addSpotsDelta }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">New capacity</span>
-								<span className="text-foreground font-medium tabular-nums">
-									{ newCapPreview != null ? newCapPreview : '—' }
-								</span>
-							</div>
-						</div>
-					) : (
-						<div className="bg-muted/40 border-border space-y-2.5 rounded-lg border px-3 py-3 text-sm">
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Date</span>
-								<span className="font-mono text-foreground font-medium tabular-nums">
-									{ selectedYmd }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Time</span>
-								<span className="font-mono text-foreground font-medium tabular-nums">
-									{ manualTime.trim() }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Capacity</span>
-								<span className="text-foreground font-medium tabular-nums">
-									{ capacitySummary }
-								</span>
-							</div>
-							<div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-								<span className="text-muted-foreground shrink-0">Label</span>
-								<span className="min-w-0 text-right font-medium break-words">
-									{ summaryLabel ? summaryLabel : '—' }
-								</span>
-							</div>
-						</div>
-					) }
-					<DialogFooter className="gap-2 sm:gap-0">
-						<Button
-							type="button"
-							variant="outline"
-							className="w-full sm:w-auto"
-							onClick={ () => setConfirmOpen( false ) }
-							disabled={ isBusy }
-						>
-							Cancel
-						</Button>
-						<Button
-							type="button"
-							className="w-full sm:w-auto"
-							onClick={ commitConfirm }
-							disabled={ isBusy || ( addMode === 'newSession' && duplicateSession ) }
-						>
-							{ isBusy
-								? 'Saving…'
-								: addMode === 'extraSpots'
-									? 'Confirm add spots'
-									: 'Confirm and add' }
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-		</>
-	);
-}
 
 function EventOverviewAddStockDialog( {
 	eventId,

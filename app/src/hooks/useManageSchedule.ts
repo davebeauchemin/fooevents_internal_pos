@@ -238,6 +238,48 @@ function ymdMax( a: string, b: string ): string {
 	return x >= y ? x : y;
 }
 
+function isCanonicalYmd( raw: string ): boolean {
+	const s = raw.trim();
+	return /^\d{4}-\d{2}-\d{2}$/.test( s );
+}
+
+/**
+ * Merge window for fillEmpty: spans all blocks' calendar ranges, clipped so nothing precedes site today.
+ * Matches server behaviour when omitting manual fill-from / fill-to in the UI.
+ */
+function computedFillEnvelopeForBlocks(
+	blocks: ScheduleBlock[],
+	siteTodayYmd: string,
+): { fillFrom: string; fillTo: string; invalid: boolean } {
+	if ( ! isCanonicalYmd( siteTodayYmd ) ) {
+		return { fillFrom: '', fillTo: '', invalid: true };
+	}
+	if ( blocks.length === 0 ) {
+		return { fillFrom: siteTodayYmd, fillTo: siteTodayYmd, invalid: true };
+	}
+	let minStart = '';
+	let maxEnd = '';
+	for ( const b of blocks ) {
+		const sd = b.startDate.trim();
+		const ed = b.endDate.trim();
+		if ( ! isCanonicalYmd( sd ) || ! isCanonicalYmd( ed ) || sd > ed ) {
+			return { fillFrom: siteTodayYmd, fillTo: siteTodayYmd, invalid: true };
+		}
+		if ( minStart === '' || sd < minStart ) {
+			minStart = sd;
+		}
+		if ( maxEnd === '' || ed > maxEnd ) {
+			maxEnd = ed;
+		}
+	}
+	let fillFrom = minStart < siteTodayYmd ? siteTodayYmd : minStart;
+	let fillTo = maxEnd;
+	if ( fillFrom > fillTo ) {
+		fillTo = fillFrom;
+	}
+	return { fillFrom, fillTo, invalid: false };
+}
+
 function previewStatsFillEmpty(
 	blocks: ScheduleBlock[],
 	sessionM: number,
@@ -379,10 +421,6 @@ export function useManageSchedule( eventId: string ) {
 	const [ capacity, setCapacity ] = useState( 12 );
 	const [ formInitialized, setFormInitialized ] = useState( false );
 	const [ confirmOpen, setConfirmOpen ] = useState( false );
-	const [ fillFromYmd, setFillFromYmd ] = useState( () => todayYmdLocal() );
-	const [ fillToYmd, setFillToYmd ] = useState( () => todayYmdLocal() );
-	const [ fillConfirmOpen, setFillConfirmOpen ] = useState( false );
-
 	const afterMutationSuccess = useCallback( () => {
 		navigate( `/event/${ eventId }` );
 	}, [ navigate, eventId ] );
@@ -409,30 +447,6 @@ export function useManageSchedule( eventId: string ) {
 		);
 	}, [ apiWpSiteYmd, formInitialized ] );
 
-	useEffect( () => {
-		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
-			return;
-		}
-		const f = fillFromYmd.trim();
-		const t = fillToYmd.trim();
-		if (
-			! /^\d{4}-\d{2}-\d{2}$/.test( f )
-			|| ! /^\d{4}-\d{2}-\d{2}$/.test( t )
-		) {
-			return;
-		}
-		let nf = f < siteTodayYmd ? siteTodayYmd : f;
-		let nt = t < siteTodayYmd ? siteTodayYmd : t;
-		if ( nf > nt ) {
-			nt = nf;
-		}
-		if ( nf !== f ) {
-			setFillFromYmd( nf );
-		}
-		if ( nt !== t ) {
-			setFillToYmd( nt );
-		}
-	}, [ siteTodayYmd, fillFromYmd, fillToYmd ] );
 
 	useEffect( () => {
 		if ( ! eventData || formInitialized ) {
@@ -454,30 +468,32 @@ export function useManageSchedule( eventId: string ) {
 		[ blocks, sessionMinutes ],
 	);
 
+	const fillEmptyEnvelope = useMemo(
+		() => computedFillEnvelopeForBlocks( blocks, siteTodayYmd ),
+		[ blocks, siteTodayYmd ],
+	);
+
 	const fillPreview = useMemo(
-		() =>
-			previewStatsFillEmpty(
+		() => {
+			if ( fillEmptyEnvelope.invalid ) {
+				return {
+					slotCount: 0,
+					dateCount: 0,
+					fillRangeInclusiveDays: 0,
+					totalEntries: 0,
+					categories: [] as CategoryPreview[],
+				};
+			}
+			return previewStatsFillEmpty(
 				blocks,
 				sessionMinutes,
-				fillFromYmd.trim(),
-				fillToYmd.trim(),
+				fillEmptyEnvelope.fillFrom,
+				fillEmptyEnvelope.fillTo,
 				siteTodayYmd,
-			),
-		[ blocks, sessionMinutes, fillFromYmd, fillToYmd, siteTodayYmd ],
-	);
-
-	const fillRangeInvalid =
-		! /^\d{4}-\d{2}-\d{2}$/.test( fillFromYmd.trim() )
-		|| ! /^\d{4}-\d{2}-\d{2}$/.test( fillToYmd.trim() )
-		|| fillFromYmd.trim() > fillToYmd.trim();
-
-	const fillRangeCalendarDisablePast = useCallback(
-		( date: Date ) => {
-			return dateToLocalYmd( date ) < siteTodayYmd;
+			);
 		},
-		[ siteTodayYmd ],
+		[ blocks, sessionMinutes, fillEmptyEnvelope, siteTodayYmd ],
 	);
-
 	const slotsOnManualDate = useMemo( (): SlotLike[] => {
 		const raw = eventData?.dates as
 		| Array<{ date?: string; slots?: SlotLike[] }>
@@ -729,12 +745,17 @@ export function useManageSchedule( eventId: string ) {
 	] );
 
 	const runFillEmpty = useCallback( async () => {
-		setFillConfirmOpen( false );
+		if ( fillEmptyEnvelope.invalid ) {
+			toast.error(
+				'Fix every block’s start and end dates (Y-m-d), with start on or before end, before adding sessions.',
+			);
+			return;
+		}
 		try {
 			const res = ( await gen.mutateAsync( {
 				mode: 'fillEmpty',
-				fillFrom: fillFromYmd.trim(),
-				fillTo: fillToYmd.trim(),
+				fillFrom: fillEmptyEnvelope.fillFrom,
+				fillTo: fillEmptyEnvelope.fillTo,
 				blocks: blocks.map( ( b ) => ( {
 					name: ( b.name || '' ).trim(),
 					startDate: b.startDate,
@@ -771,9 +792,8 @@ export function useManageSchedule( eventId: string ) {
 		}
 	}, [
 		gen,
-		fillFromYmd,
-		fillToYmd,
 		blocks,
+		fillEmptyEnvelope,
 		sessionMinutes,
 		capacity,
 		afterMutationSuccess,
@@ -809,18 +829,11 @@ export function useManageSchedule( eventId: string ) {
 		setCapacity,
 		confirmOpen,
 		setConfirmOpen,
-		fillFromYmd,
-		setFillFromYmd,
-		fillToYmd,
-		setFillToYmd,
-		fillConfirmOpen,
-		setFillConfirmOpen,
+		fillEmptyEnvelope,
 		siteTodayYmd,
 		siteTodayWeekday,
 		preview,
 		fillPreview,
-		fillRangeInvalid,
-		fillRangeCalendarDisablePast,
 		slotsOnManualDate,
 		manualAddWouldDuplicate,
 		spotsEligibleSchedule,

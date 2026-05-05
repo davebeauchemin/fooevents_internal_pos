@@ -1,19 +1,12 @@
-import { useEffect, useState } from 'react';
-import { format } from 'date-fns';
-import { CalendarIcon, Plus } from 'lucide-react';
+import { useEffect } from 'react';
+import { Plus, TriangleAlert } from 'lucide-react';
 import { encodeManualSlotDateRef } from '@/lib/slotHourGrouping';
-import { cn } from '@/lib/utils';
-import {
-	createScheduleBlockDraft,
-	SESSION_OPTIONS,
-	type ManageScheduleController,
-	WD_LABELS,
-} from '@/hooks/useManageSchedule';
+import type { ManageScheduleController } from '@/hooks/useManageSchedule';
+import { ScheduleBlockDatePicker } from '@/components/managed-schedule/schedule-block-datepicker';
+import { ScheduleDefaultsAndBlocksForm } from '@/components/managed-schedule/schedule-defaults-and-blocks';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
 	Dialog,
 	DialogContent,
@@ -25,11 +18,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from '@/components/ui/popover';
-import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -38,116 +26,16 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 
-function dateToLocalYmd( d: Date ): string {
-	return (
-		d.getFullYear()
-		+ '-'
-		+ String( d.getMonth() + 1 ).padStart( 2, '0' )
-		+ '-'
-		+ String( d.getDate() ).padStart( 2, '0' )
-	);
-}
-
-/** Parse Y-m-d as local noon (stable for range iteration and DST). */
-function parseLocalYmd( ymd: string ): Date | undefined {
-	const m = ymd.trim().match( /^(\d{4})-(\d{2})-(\d{2})$/ );
-	if ( ! m ) {
-		return undefined;
-	}
-	return new Date(
-		Number( m[ 1 ] ),
-		Number( m[ 2 ] ) - 1,
-		Number( m[ 3 ] ),
-		12,
-		0,
-		0,
-		0,
-	);
-}
-
-function ScheduleBlockDatePicker( {
-	label,
-	ymd,
-	onSelectYmd,
-	triggerId,
-	disabled = false,
-	className,
-	isDateDisabled,
-}: {
-	label: string;
-	ymd: string;
-	onSelectYmd: ( next: string ) => void;
-	triggerId: string;
-	disabled?: boolean;
-	className?: string;
-	isDateDisabled?: ( date: Date ) => boolean;
-} ) {
-	const [ open, setOpen ] = useState( false );
-	const selectedDate =
-		ymd && /^\d{4}-\d{2}-\d{2}$/.test( ymd.trim() )
-			? parseLocalYmd( ymd.trim() )
-			: undefined;
-	return (
-		<div className={ cn( 'space-y-2', className ) }>
-			<Label htmlFor={ triggerId }>{ label }</Label>
-			<Popover
-				open={ disabled ? false : open }
-				onOpenChange={ ( next ) => {
-					if ( ! disabled ) {
-						setOpen( next );
-					}
-				} }
-			>
-				<PopoverTrigger asChild>
-					<Button
-						id={ triggerId }
-						type="button"
-						variant="outline"
-						disabled={ disabled }
-						className={ cn(
-							'w-full min-w-[11rem] justify-start text-left font-normal',
-						) }
-					>
-						<CalendarIcon className="mr-2 size-4 shrink-0" aria-hidden />
-						{ selectedDate ? format( selectedDate, 'PP' ) : 'Pick date…' }
-					</Button>
-				</PopoverTrigger>
-				<PopoverContent
-					className="w-auto p-0"
-					align="start"
-					onOpenAutoFocus={ ( e ) => e.preventDefault() }
-				>
-					<Calendar
-						mode="single"
-						selected={ selectedDate }
-						defaultMonth={ selectedDate }
-						disabled={ isDateDisabled }
-						onSelect={ ( d ) => {
-							if ( ! d || disabled ) {
-								return;
-							}
-							if ( isDateDisabled?.( d ) ) {
-								return;
-							}
-							onSelectYmd( dateToLocalYmd( d ) );
-							setOpen( false );
-						} }
-						initialFocus
-					/>
-				</PopoverContent>
-			</Popover>
-		</div>
-	);
-}
-
 type Props = {
 	mgr: ManageScheduleController;
 	sessionOpen: boolean;
 	spotsOpen: boolean;
 	scheduleOpen: boolean;
+	replaceOpen: boolean;
 	onSessionOpenChange: ( open: boolean ) => void;
 	onSpotsOpenChange: ( open: boolean ) => void;
 	onScheduleOpenChange: ( open: boolean ) => void;
+	onReplaceOpenChange: ( open: boolean ) => void;
 };
 
 export function ManagedEventScheduleDialogs( {
@@ -155,9 +43,11 @@ export function ManagedEventScheduleDialogs( {
 	sessionOpen,
 	spotsOpen,
 	scheduleOpen,
+	replaceOpen,
 	onSessionOpenChange,
 	onSpotsOpenChange,
 	onScheduleOpenChange,
+	onReplaceOpenChange,
 }: Props ) {
 	const {
 		manualDate,
@@ -176,37 +66,26 @@ export function ManagedEventScheduleDialogs( {
 		setManualAddSpotsDelta,
 		manualStockConfirmOpen,
 		setManualStockConfirmOpen,
-		blocks,
-		setBlocks,
-		sessionMinutes,
-		setSessionMinutes,
-		capacity,
-		setCapacity,
-		fillFromYmd,
-		setFillFromYmd,
-		fillToYmd,
-		setFillToYmd,
-		fillConfirmOpen,
-		setFillConfirmOpen,
+		fillEmptyEnvelope,
 		siteTodayYmd,
 		siteTodayWeekday,
 		fillPreview,
-		fillRangeInvalid,
-		fillRangeCalendarDisablePast,
 		spotsEligibleSchedule,
 		selectedSpotSchedule,
 		scheduleManualBusy,
 		manualDuplicateMessage,
 		scheduleSlotPickerLabel,
-		updateBlock,
-		toggleWeekday,
 		submitManualSlot,
 		commitManualStockAdd,
 		runFillEmpty,
+		runGenerate,
 		gen,
+		preview,
 		manualAddWouldDuplicate,
 		addManual,
 		addStock,
+		confirmOpen,
+		setConfirmOpen,
 	} = mgr;
 
 	useEffect( () => {
@@ -478,184 +357,22 @@ export function ManagedEventScheduleDialogs( {
 			</Dialog>
 
 			<Dialog open={ scheduleOpen } onOpenChange={ onScheduleOpenChange }>
-				<DialogContent className="flex max-h-[90vh] max-w-lg flex-col sm:max-w-4xl">
-					<DialogHeader className="shrink-0">
-						<DialogTitle className="flex items-center gap-2">
-							<Plus className="size-5 shrink-0" aria-hidden />
-							Manage schedule
-						</DialogTitle>
-						<DialogDescription className="text-left leading-relaxed">
-							Set defaults and schedule blocks, preview changes, then add missing sessions inside a date
-							range (<strong className="text-foreground font-medium">fill empty</strong> — existing
-							slots are kept). Admin destructive replace stays on this event page only for users with
-							permission.
-						</DialogDescription>
-					</DialogHeader>
-					<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 pb-4">
-						<Card className="shrink-0">
-							<CardHeader className="pb-2">
-								<CardTitle className="text-base">Defaults</CardTitle>
-							</CardHeader>
-							<CardContent className="space-y-4">
-								<div className="flex flex-wrap items-end gap-4">
-									<div className="space-y-2">
-										<Label>Session length</Label>
-										<Select
-											value={ String( sessionMinutes ) }
-											onValueChange={ ( v ) => setSessionMinutes( parseInt( v, 10 ) ) }
-										>
-											<SelectTrigger className="w-[180px]">
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												{ SESSION_OPTIONS.map( ( n ) => (
-													<SelectItem key={ n } value={ String( n ) }>
-														{ n } min
-													</SelectItem>
-												) ) }
-											</SelectContent>
-										</Select>
-									</div>
-									<div className="space-y-2">
-										<Label htmlFor="dlg-capacity">Capacity</Label>
-										<p className="text-muted-foreground text-xs">0 = unlimited</p>
-										<Input
-											id="dlg-capacity"
-											type="number"
-											min={ 0 }
-											className="w-32"
-											value={ capacity }
-											onChange={ ( e ) =>
-												setCapacity( parseInt( e.target.value, 10 ) || 0 )
-											}
-										/>
-									</div>
-								</div>
-								<p className="text-muted-foreground text-xs">
-									Block <strong>schedule name</strong> is the FooEvents label prefix (e.g. Regular,
-									Late). Leave empty to use time only.
-								</p>
-							</CardContent>
-						</Card>
-
-						<section aria-labelledby="dlg-sched-blocks" className="shrink-0 space-y-3">
-							<h2 id="dlg-sched-blocks" className="text-base font-semibold tracking-tight">
-								Schedule blocks
-							</h2>
-							<p className="text-muted-foreground text-sm">
-								Start/end narrow which calendar days apply; weekdays filter which days in that span get
-								sessions; open/close set generated times for those days.
-							</p>
-							<div className="space-y-4">
-								{ blocks.map( ( b, idx ) => (
-									<Card key={ b.id }>
-										<CardHeader className="flex flex-row items-center justify-between space-y-0">
-											<CardTitle className="text-base">Block { idx + 1 }</CardTitle>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												onClick={ () =>
-													setBlocks( ( prev ) => prev.filter( ( x ) => x.id !== b.id ) )
-												}
-												disabled={ blocks.length <= 1 }
-											>
-												Remove block
-											</Button>
-										</CardHeader>
-										<CardContent className="space-y-4">
-											<div className="space-y-2">
-												<Label htmlFor={ `${ b.id }-dlg-name` }>Schedule name</Label>
-												<Input
-													id={ `${ b.id }-dlg-name` }
-													placeholder={ idx === 0 ? 'Regular' : 'Late' }
-													value={ b.name }
-													onChange={ ( e ) =>
-														updateBlock( b.id, { name: e.target.value } )
-													}
-													className="max-w-md"
-													autoComplete="off"
-												/>
-											</div>
-											<div className="flex flex-wrap gap-3">
-												<ScheduleBlockDatePicker
-													label="Start"
-													ymd={ b.startDate }
-													onSelectYmd={ ( next ) =>
-														updateBlock( b.id, { startDate: next } )
-													}
-													triggerId={ `${ b.id }-dlg-start` }
-												/>
-												<ScheduleBlockDatePicker
-													label="End"
-													ymd={ b.endDate }
-													onSelectYmd={ ( next ) =>
-														updateBlock( b.id, { endDate: next } )
-													}
-													triggerId={ `${ b.id }-dlg-end` }
-												/>
-											</div>
-											<div className="space-y-2">
-												<Label>Weekdays</Label>
-												<div className="flex flex-wrap gap-3">
-													{ WD_LABELS.map( ( { n, short } ) => (
-														<div key={ n } className="flex items-center space-x-2">
-															<Checkbox
-																id={ `${ b.id }-dlg-wd-${ n }` }
-																checked={ b.weekdays.includes( n ) }
-																onCheckedChange={ ( c ) =>
-																	toggleWeekday( b.id, n, c === true )
-																}
-															/>
-															<Label
-																htmlFor={ `${ b.id }-dlg-wd-${ n }` }
-																className="text-sm font-normal"
-															>
-																{ short }
-															</Label>
-														</div>
-													) ) }
-												</div>
-											</div>
-											<div className="flex flex-wrap gap-3">
-												<div className="space-y-2">
-													<Label>Open</Label>
-													<Input
-														type="time"
-														value={ b.openTime }
-														onChange={ ( e ) =>
-															updateBlock( b.id, { openTime: e.target.value } )
-														}
-													/>
-												</div>
-												<div className="space-y-2">
-													<Label>Close</Label>
-													<Input
-														type="time"
-														value={ b.closeTime }
-														onChange={ ( e ) =>
-															updateBlock( b.id, { closeTime: e.target.value } )
-														}
-													/>
-												</div>
-											</div>
-										</CardContent>
-									</Card>
-								) ) }
-								<Button
-									type="button"
-									variant="secondary"
-									onClick={ () =>
-										setBlocks( ( prev ) => [
-											...prev,
-											createScheduleBlockDraft( prev.length ),
-										] )
-									}
-								>
-									+ Add schedule block
-								</Button>
-							</div>
-						</section>
+				<DialogContent className="flex max-h-[90vh] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+					<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-10 pt-6">
+						<DialogHeader className="shrink-0">
+							<DialogTitle className="flex items-center gap-2">
+								<Plus className="size-5 shrink-0" aria-hidden />
+								Manage schedule
+							</DialogTitle>
+							<DialogDescription className="text-left leading-relaxed">
+								Set defaults and schedule blocks below, preview candidates, then add missing sessions ({ ' ' }
+								<strong className="text-foreground font-medium">fill empty</strong> — existing slots are kept).
+								The merge window follows each block&apos;s start and end dates, clipped so nothing lands before{' ' }
+								<strong className="text-foreground font-medium">today</strong> in the site calendar. Admins overwrite
+								the whole grid via Replace entire schedule.
+							</DialogDescription>
+						</DialogHeader>
+						<ScheduleDefaultsAndBlocksForm mgr={ mgr } formIdPrefix="mgmt" />
 
 						<section
 							aria-labelledby="dlg-fill-empty"
@@ -666,37 +383,28 @@ export function ManagedEventScheduleDialogs( {
 									Add missing sessions
 								</h2>
 								<p className="text-muted-foreground text-sm leading-relaxed">
-									Fill-from / fill-to merges each block into the range without removing existing slots.
+									Merge each configured block into the calendar without removing slots that already exist.
+									Dates before today in the site calendar are skipped automatically.
 								</p>
 								<p className="text-muted-foreground text-xs leading-snug">
 									Site calendar today:{ ' ' }
 									<span className="font-mono text-foreground">{ siteTodayYmd }</span>
 									{ siteTodayWeekday ? ` · ${ siteTodayWeekday }` : '' }
 								</p>
+								{ ! fillEmptyEnvelope.invalid ? (
+									<p className="text-muted-foreground border-border/80 bg-muted/40 rounded-md border px-3 py-2 text-xs leading-snug">
+										Effective merge window (from block spans):{ ' ' }
+										<span className="font-mono text-foreground">{ fillEmptyEnvelope.fillFrom }</span>
+										{ ' → ' }
+										<span className="font-mono text-foreground">{ fillEmptyEnvelope.fillTo }</span>
+									</p>
+								) : (
+									<p className="text-destructive text-sm">
+										Add at least one block and set valid Y-m-d start and end dates on every block before
+										filling.
+									</p>
+								) }
 							</div>
-							<div className="flex flex-wrap gap-3">
-								<ScheduleBlockDatePicker
-									label="Fill from"
-									ymd={ fillFromYmd }
-									onSelectYmd={ setFillFromYmd }
-									triggerId="dlg-fill-from"
-									disabled={ gen.isPending }
-									isDateDisabled={ fillRangeCalendarDisablePast }
-								/>
-								<ScheduleBlockDatePicker
-									label="Fill to"
-									ymd={ fillToYmd }
-									onSelectYmd={ setFillToYmd }
-									triggerId="dlg-fill-to"
-									disabled={ gen.isPending }
-									isDateDisabled={ fillRangeCalendarDisablePast }
-								/>
-							</div>
-							{ fillRangeInvalid ? (
-								<p className="text-destructive text-sm">
-									Choose valid Y-m-d dates with &quot;from&quot; on or before &quot;to&quot;.
-								</p>
-							) : null }
 							<Card className="border-border/80 bg-background/80">
 								<CardHeader className="pb-2">
 									<CardTitle className="text-base">
@@ -746,11 +454,11 @@ export function ManagedEventScheduleDialogs( {
 									gen.isPending
 									|| scheduleManualBusy
 									|| fillPreview.totalEntries === 0
-									|| fillRangeInvalid
+									|| fillEmptyEnvelope.invalid
 								}
-								onClick={ () => setFillConfirmOpen( true ) }
+								onClick={ () => void runFillEmpty() }
 							>
-								{ gen.isPending ? 'Saving…' : 'Add missing sessions…' }
+								{ gen.isPending ? 'Saving…' : 'Add missing sessions' }
 							</Button>
 						</section>
 
@@ -759,38 +467,109 @@ export function ManagedEventScheduleDialogs( {
 				</DialogContent>
 			</Dialog>
 
-			<Dialog open={ fillConfirmOpen } onOpenChange={ setFillConfirmOpen }>
+			<Dialog
+				open={ replaceOpen }
+				onOpenChange={ ( open ) => {
+					if ( ! open ) {
+						setConfirmOpen( false );
+					}
+					onReplaceOpenChange( open );
+				} }
+			>
+				<DialogContent className="flex max-h-[92vh] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+					<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-10 pt-6">
+						<DialogHeader className="shrink-0">
+							<DialogTitle>Replace entire schedule</DialogTitle>
+							<DialogDescription className="text-left leading-relaxed">
+								Configuring blocks below is required before overwriting. Saving{' '}
+								<strong className="text-foreground">
+									replaces every existing FooEvents booking slot and date
+								</strong>{ ' ' }
+								with a newly generated grid from defaults and blocks.
+							</DialogDescription>
+						</DialogHeader>
+						<div className="bg-destructive/[0.06] flex shrink-0 gap-3 rounded-lg border border-destructive/35 p-4 dark:bg-destructive/10">
+							<TriangleAlert
+								className="text-destructive mt-0.5 size-5 shrink-0"
+								aria-hidden
+							/>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Existing ticket counts may no longer line up — only use when you intend a full reset.
+							</p>
+						</div>
+						<ScheduleDefaultsAndBlocksForm mgr={ mgr } formIdPrefix="repl" />
+						<Card className="shrink-0">
+							<CardHeader className="pb-2">
+								<CardTitle className="text-base">Preview (full replace)</CardTitle>
+							</CardHeader>
+							<CardContent className="space-y-2 text-sm">
+								<p>
+									<span className="text-muted-foreground">Unique (name + time) slots:</span>{ ' ' }
+									<strong>{ preview.slotCount }</strong>
+								</p>
+								<p>
+									<span className="text-muted-foreground">Unique dates (all blocks):</span>{ ' ' }
+									<strong>{ preview.dateCount }</strong>
+								</p>
+								<p>
+									<span className="text-muted-foreground">
+										Total slot–date cells to write:
+									</span>{ ' ' }
+									<Badge>{ preview.totalEntries }</Badge>
+								</p>
+							</CardContent>
+						</Card>
+						<Button
+							type="button"
+							className="shrink-0"
+							size="lg"
+							variant="destructive"
+							disabled={
+								gen.isPending
+								|| scheduleManualBusy
+								|| preview.totalEntries === 0
+							}
+							onClick={ () => setConfirmOpen( true ) }
+						>
+							{ gen.isPending
+								? 'Saving…'
+								: 'Generate and replace entire schedule…'
+							}
+						</Button>
+					</div>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog open={ confirmOpen } onOpenChange={ setConfirmOpen }>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>Add missing sessions?</DialogTitle>
+						<DialogTitle>Replace all slots?</DialogTitle>
 						<DialogDescription>
-							This <strong>keeps</strong> all existing slots and adds up to about{ ' ' }
-							<strong>{ fillPreview.totalEntries }</strong> new slot–date cell(s) between{ ' ' }
-							<span className="font-mono text-foreground">{ fillFromYmd.trim() }</span> and{ ' ' }
-							<span className="font-mono text-foreground">{ fillToYmd.trim() }</span>. Duplicate times on
-							a day are skipped.
+							This will <strong>delete</strong> every existing FooEvents booking slot and date for this
+							product, then write a new schedule from the defaults and blocks you configured in Replace
+							entire schedule. This cannot be undone from the POS.
 						</DialogDescription>
 					</DialogHeader>
 					<DialogFooter>
 						<Button
 							type="button"
 							variant="outline"
-							onClick={ () => setFillConfirmOpen( false ) }
+							onClick={ () => setConfirmOpen( false ) }
 						>
 							Cancel
 						</Button>
 						<Button
 							type="button"
-							onClick={ runFillEmpty }
-							disabled={
-								gen.isPending || fillPreview.totalEntries === 0 || fillRangeInvalid
-							}
+							variant="destructive"
+							onClick={ () => void runGenerate() }
+							disabled={ gen.isPending }
 						>
-							{ gen.isPending ? 'Saving…' : 'Add sessions' }
+							Replace and save
 						</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+
 		</>
 	);
 }
