@@ -165,6 +165,60 @@
 }
 
 /* Slot slide — pills in a 3-col grid */
+.kbm-slot-hour-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.kbm-slot-hour-nav__current,
+.kbm-slot-hour-nav__hint {
+  min-height: 38px;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  font-family: inherit !important;
+  line-height: 1 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+}
+
+.kbm-slot-hour-nav__current {
+  padding: 10px 22px;
+  border: 2px solid #cc0000;
+  background: #fff5f5;
+  color: #111;
+  font-size: 16px;
+  font-weight: 800;
+  box-shadow: 0 0 0 4px rgba(204, 0, 0, 0.08);
+}
+
+.kbm-slot-hour-nav__hint {
+  min-width: unset !important;
+  width: 100% !important;
+  padding: 10px 12px !important;
+  border: 1px solid #e4e4e4 !important;
+  background: #fff !important;
+  color: #777 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+}
+
+.kbm-slot-hour-nav__hint:hover:not(:disabled) {
+  border-color: #cc0000 !important;
+  color: #cc0000 !important;
+}
+
+.kbm-slot-hour-nav__hint.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .kbm-slot-hour-label {
   font-size: 12px;
   font-weight: 600;

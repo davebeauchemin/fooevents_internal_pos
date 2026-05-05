@@ -101,7 +101,7 @@ jQuery(document).ready(function ($) {
   // Wires up slide navigation and drag/swipe on any viewport+track pair.
   // Returns goToSlide(index) for external use.
 
-  function makePager($viewport, $track, total, $prev, $next) {
+  function makePager($viewport, $track, total, $prev, $next, onChange) {
     var current = 0;
     var dragStartX = 0, dragDeltaX = 0, dragging = false, wasDragged = false;
     var THRESHOLD = 50, DRAG_MIN = 5;
@@ -112,6 +112,7 @@ jQuery(document).ready(function ($) {
         .css('transform', 'translateX(-' + (current * 100) + '%)');
       $prev.toggleClass('kbm-slider__arrow--hidden', current === 0);
       $next.toggleClass('kbm-slider__arrow--hidden', current === total - 1);
+      if (typeof onChange === 'function') onChange(current);
     }
 
     function dragStart(x) { dragStartX = x; dragDeltaX = 0; dragging = true; wasDragged = false; $track.css('transition', 'none'); }
@@ -297,7 +298,7 @@ jQuery(document).ready(function ($) {
         if (multi && parsed.category) {
           slideTitle = parsed.category + ' \u00b7 ' + parsed.slideTitle;
         }
-        hourGroups[gk] = { title: slideTitle, slots: [] };
+        hourGroups[gk] = { title: slideTitle, hourTitle: parsed.slideTitle, slots: [] };
         hourOrder.push(gk);
       }
       // Pill text = raw FooEvents option label (no displayLabel / time reformatting).
@@ -315,8 +316,14 @@ jQuery(document).ready(function ($) {
     var $label = $('<div class="kbm-slider__label">Select a time</div>');
     var $prev = makeArrow('prev');
     var $next = makeArrow('next');
+    var $hourNav = $('<div class="kbm-slot-hour-nav" aria-live="polite"></div>');
+    var $prevHour = $('<button type="button" class="kbm-slot-hour-nav__hint kbm-slot-hour-nav__hint--prev"></button>');
+    var $currentHour = $('<div class="kbm-slot-hour-nav__current"></div>');
+    var $nextHour = $('<button type="button" class="kbm-slot-hour-nav__hint kbm-slot-hour-nav__hint--next"></button>');
     var $viewport = $('<div class="kbm-slot-viewport"></div>');
     var $track = $('<div class="kbm-slot-track"></div>');
+
+    $hourNav.append($prevHour, $currentHour, $nextHour);
 
     hourOrder.forEach(function (groupKey) {
       var group = hourGroups[groupKey];
@@ -339,11 +346,39 @@ jQuery(document).ready(function ($) {
     });
 
     $viewport.append($track);
-    $wrapper.append($label, $prev, $viewport, $next);
+    $wrapper.append($label, $hourNav, $prev, $viewport, $next);
     $('#kbm-slot-area').html('').append($wrapper);
     $(SLOT_FIELD_ID).hide();
 
-    var goToSlide = makePager($viewport, $track, hourOrder.length, $prev, $next);
+    function hourTitleAt(index) {
+      var key = hourOrder[index];
+      return key && hourGroups[key] ? hourGroups[key].hourTitle : '';
+    }
+
+    var currentHourIndex = 0;
+
+    function updateHourNav(index) {
+      currentHourIndex = index;
+      var prevTitle = hourTitleAt(index - 1);
+      var currentTitle = hourTitleAt(index);
+      var nextTitle = hourTitleAt(index + 1);
+
+      $prevHour
+        .text(prevTitle ? '\u2039 ' + prevTitle : '')
+        .prop('disabled', !prevTitle)
+        .attr('aria-label', prevTitle ? 'Show ' + prevTitle + ' times' : 'No earlier hour')
+        .toggleClass('is-hidden', !prevTitle);
+      $currentHour.text(currentTitle || '');
+      $nextHour
+        .text(nextTitle ? nextTitle + ' \u203a' : '')
+        .prop('disabled', !nextTitle)
+        .attr('aria-label', nextTitle ? 'Show ' + nextTitle + ' times' : 'No later hour')
+        .toggleClass('is-hidden', !nextTitle);
+    }
+
+    var goToSlide = makePager($viewport, $track, hourOrder.length, $prev, $next, updateHourNav);
+    $prevHour.on('click', function () { goToSlide(currentHourIndex - 1); });
+    $nextHour.on('click', function () { goToSlide(currentHourIndex + 1); });
     goToSlide(0);
 
   }
