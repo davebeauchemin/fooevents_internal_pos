@@ -1,6 +1,7 @@
 jQuery(document).ready(function ($) {
   // Set fipos_enable_custom_time_slot_picker to true in PHP (filter) to use pill grid; default is native <select>.
-  var useCustomTimeSlots = !!(window.fiposDateSlotPicker && window.fiposDateSlotPicker.customTimeSlots);
+  var pickerCfg = window.fiposDateSlotPicker || {};
+  var useCustomTimeSlots = !!(pickerCfg && pickerCfg.customTimeSlots);
 
   var DATE_SELECT_ID = '#fooevents_bookings_date_val__trans';
   var SLOT_SELECT_ID = '#fooevents_bookings_slot_val__trans';
@@ -153,79 +154,39 @@ jQuery(document).ready(function ($) {
     return goToSlide;
   }
 
-  // ─── Date slider ─────────────────────────────────────────────────────────────
+  // ─── Date / slot normalization (PHP slotMaps preferred) ─────────────────────────
 
-  function buildDateSlider() {
-    var pills = [];
-    $dateSelect.find('option').each(function () {
-      var val = $(this).val(), label = $(this).text().trim();
-      if (val) pills.push({ value: val, label: label });
-    });
-
-    if (!pills.length) {
-      $(DATE_FIELD_ID).after('<p class="kbm-no-dates">No upcoming dates available.</p>');
-      return;
-    }
-
-    var initialDateValue = String($dateSelect.val() || '').trim();
-    var initialDateLabel = $dateSelect.find('option:selected').text().trim();
-    var defaultPill = pills[0];
-    currentSelectedDateYmd = dateLikeToYmd(initialDateValue) || dateLikeToYmd(initialDateLabel) || dateLikeToYmd(defaultPill.value) || dateLikeToYmd(defaultPill.label);
-    currentSelectedDateLabel = initialDateLabel || defaultPill.label;
-
-    // Group into pages of 4
-    var pages = [], PAGE_SIZE = 4;
-    for (var i = 0; i < pills.length; i += PAGE_SIZE) {
-      pages.push(pills.slice(i, i + PAGE_SIZE));
-    }
-
-    var $wrapper = $('<div class="kbm-slider"></div>');
-    var $label = $('<div class="kbm-slider__label">Select a date</div>');
-    var $prev = makeArrow('prev');
-    var $next = makeArrow('next');
-    var $viewport = $('<div class="kbm-slot-viewport"></div>');
-    var $track = $('<div class="kbm-slot-track"></div>');
-
-    pages.forEach(function (page) {
-      var $slide = $('<div class="kbm-slot-slide kbm-date-slide"></div>');
-      page.forEach(function (pill) {
-        var dayName = new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
-        var $pill = $('<button type="button" class="kbm-pill"><span class="kbm-pill__date">' + pill.label + '</span><span class="kbm-pill__day">' + dayName + '</span></button>');
-        if (pill.value === initialDateValue || (!initialDateValue && pill === defaultPill)) {
-          $pill.addClass('active');
-        }
-        $pill.on('click', function () {
-          $track.find('.kbm-pill').removeClass('active');
-          $pill.addClass('active');
-          currentSelectedDateYmd = dateLikeToYmd(pill.value) || dateLikeToYmd(pill.label);
-          currentSelectedDateLabel = pill.label;
-          $dateSelect.val(pill.value).trigger('change');
-          if (useCustomTimeSlots) {
-            $('#kbm-slot-area').show();
-            showLoading($('#kbm-slot-area'));
-          }
-        });
-        $slide.append($pill);
-      });
-      $track.append($slide);
-    });
-
-    $viewport.append($track);
-    $wrapper.append($label, $prev, $viewport, $next);
-    $(DATE_FIELD_ID).after($wrapper).hide();
-    if (useCustomTimeSlots) {
-      $wrapper.after('<div id="kbm-slot-area" style="display:none"></div>');
-      $(SLOT_FIELD_ID).hide();
-    } else {
-      $(SLOT_FIELD_ID).insertAfter($wrapper).show();
-      $('<div id="kbm-slot-area" style="display:none"></div>').insertAfter($(SLOT_FIELD_ID));
-    }
-
-    var goToSlide = makePager($viewport, $track, pages.length, $prev, $next);
-    goToSlide(0);
+  function dateLikeToYmd(raw) {
+    raw = String(raw || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    var d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
   }
 
-  // ─── Slot slider (paginated by hour) ─────────────────────────────────────────
+  /**
+   * Resolve Y-m-d for the FooEvents/Woo date <option value> using PHP-normalized maps when present.
+   */
+  function resolveDateYmd(value, label) {
+    var maps = pickerCfg.slotMaps;
+    value = String(value || '').trim();
+    if (maps && maps.dateKeyToYmd && maps.dateKeyToYmd[value]) {
+      return maps.dateKeyToYmd[value];
+    }
+    var dm = value.match(/^(\d{4}-\d{2}-\d{2})_\d+$/);
+    if (dm) return dm[1];
+    return dateLikeToYmd(value) || dateLikeToYmd(label || '');
+  }
+
+  function ymdLocalNoonWeekday(ymd) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
+    var d = new Date(ymd + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-US', { weekday: 'long' });
+  }
 
   function parseSlotLabel(label) {
     var m = label.match(/\((\d{1,2}):(\d{2})(?:\s*(a\.m\.|p\.m\.))?\)/i);
@@ -280,48 +241,131 @@ jQuery(document).ready(function ($) {
     };
   }
 
-  function dateLikeToYmd(raw) {
-    raw = String(raw || '').trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-    var d = new Date(raw);
-    if (Number.isNaN(d.getTime())) return '';
-    var y = d.getFullYear();
-    var m = String(d.getMonth() + 1).padStart(2, '0');
-    var day = String(d.getDate()).padStart(2, '0');
-    return y + '-' + m + '-' + day;
-  }
+  /**
+   * Prefer authoritative slot time/minuteOfDay from slotMaps.slotValueMeta; keep label parsing as fallback.
+   */
+  function parseSlotRow(optionValue, label) {
+    var parsed = parseSlotLabel(label);
+    var maps = pickerCfg.slotMaps;
+    var meta = maps && maps.slotValueMeta ? maps.slotValueMeta[optionValue] : null;
+    if (!meta || typeof meta.minuteOfDay !== 'number') {
+      return parsed;
+    }
+    var minuteOfDay = meta.minuteOfDay;
+    var h24 = Math.floor(minuteOfDay / 60);
+    var mmNum = minuteOfDay % 60;
+    var mm = String(mmNum).padStart(2, '0');
+    var isPmSlot = h24 >= 12 && h24 < 24;
+    var apLbl = isPmSlot ? 'PM' : 'AM';
+    var h12 = h24 % 12;
+    if (h12 === 0) h12 = 12;
+    parsed.minuteOfDay = minuteOfDay;
+    parsed.hourKey = String(h24);
+    parsed.slideTitle = h12 + ' ' + apLbl;
+    parsed.timeLabel = h24 + ':' + mm;
 
-  function selectedDateYmd() {
-    var $selected = $dateSelect.find('option:selected');
-    return dateLikeToYmd($selected.val()) || dateLikeToYmd($selected.text());
-  }
+    var category = parsed.category;
+    var timeNice = h12 + ':' + mm + ' ' + apLbl;
+    if (category && category.trim()) {
+      parsed.displayLabel = category + ' \u00b7 ' + timeNice;
+    } else {
+      parsed.displayLabel = timeNice;
+    }
 
-  function normalizedText(raw) {
-    return String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    return parsed;
   }
 
   function selectedDateIsSiteToday() {
-    var cfg = window.fiposDateSlotPicker || {};
-    var todayYmd = String(cfg.siteTodayYmd || '').trim();
-    var todayLabel = normalizedText(cfg.siteTodayLabel);
+    var todayYmd = String(pickerCfg.siteTodayYmd || '').trim();
+    if (!todayYmd) return false;
     var $selected = $dateSelect.find('option:selected');
-    var selectedValue = String($selected.val() || '').trim();
-    var selectedText = normalizedText($selected.text());
-    var trackedLabel = normalizedText(currentSelectedDateLabel);
-
-    if (todayYmd && (currentSelectedDateYmd === todayYmd || selectedValue === todayYmd || selectedDateYmd() === todayYmd)) {
-      return true;
-    }
-    return !!todayLabel && (trackedLabel === todayLabel || normalizedText(selectedValue) === todayLabel || selectedText === todayLabel);
+    var ymd = (currentSelectedDateYmd || '').trim() ||
+      resolveDateYmd(String($selected.val() || '').trim(), $selected.text());
+    return ymd === todayYmd;
   }
 
   function isPastSlotForSelectedDate(parsed) {
-    var cfg = window.fiposDateSlotPicker || {};
-    if (!cfg.siteTodayYmd || typeof cfg.siteNowMinutes !== 'number' || parsed.minuteOfDay === null) {
+    if (!pickerCfg.siteTodayYmd || typeof pickerCfg.siteNowMinutes !== 'number' || parsed.minuteOfDay === null) {
       return false;
     }
-    return selectedDateIsSiteToday() && parsed.minuteOfDay < cfg.siteNowMinutes;
+    return selectedDateIsSiteToday() && parsed.minuteOfDay < pickerCfg.siteNowMinutes;
   }
+
+  // ─── Date slider ─────────────────────────────────────────────────────────────
+
+  function buildDateSlider() {
+    var pills = [];
+    $dateSelect.find('option').each(function () {
+      var val = $(this).val(), label = $(this).text().trim();
+      if (val) pills.push({ value: val, label: label });
+    });
+
+    if (!pills.length) {
+      $(DATE_FIELD_ID).after('<p class="kbm-no-dates">No upcoming dates available.</p>');
+      return;
+    }
+
+    var initialDateValue = String($dateSelect.val() || '').trim();
+    var initialDateLabel = $dateSelect.find('option:selected').text().trim();
+    var defaultPill = pills[0];
+    currentSelectedDateYmd = resolveDateYmd(initialDateValue, initialDateLabel) ||
+      resolveDateYmd(defaultPill.value, defaultPill.label);
+    currentSelectedDateLabel = initialDateLabel || defaultPill.label;
+
+    // Group into pages of 4
+    var pages = [], PAGE_SIZE = 4;
+    for (var i = 0; i < pills.length; i += PAGE_SIZE) {
+      pages.push(pills.slice(i, i + PAGE_SIZE));
+    }
+
+    var $wrapper = $('<div class="kbm-slider"></div>');
+    var $label = $('<div class="kbm-slider__label">Select a date</div>');
+    var $prev = makeArrow('prev');
+    var $next = makeArrow('next');
+    var $viewport = $('<div class="kbm-slot-viewport"></div>');
+    var $track = $('<div class="kbm-slot-track"></div>');
+
+    pages.forEach(function (page) {
+      var $slide = $('<div class="kbm-slot-slide kbm-date-slide"></div>');
+      page.forEach(function (pill) {
+        var ymdForDay = resolveDateYmd(pill.value, pill.label);
+        var dayName = ymdLocalNoonWeekday(ymdForDay) || new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
+        var $pill = $('<button type="button" class="kbm-pill"><span class="kbm-pill__date">' + pill.label + '</span><span class="kbm-pill__day">' + dayName + '</span></button>');
+        if (pill.value === initialDateValue || (!initialDateValue && pill === defaultPill)) {
+          $pill.addClass('active');
+        }
+        $pill.on('click', function () {
+          $track.find('.kbm-pill').removeClass('active');
+          $pill.addClass('active');
+          currentSelectedDateYmd = resolveDateYmd(pill.value, pill.label);
+          currentSelectedDateLabel = pill.label;
+          $dateSelect.val(pill.value).trigger('change');
+          if (useCustomTimeSlots) {
+            $('#kbm-slot-area').show();
+            showLoading($('#kbm-slot-area'));
+          }
+        });
+        $slide.append($pill);
+      });
+      $track.append($slide);
+    });
+
+    $viewport.append($track);
+    $wrapper.append($label, $prev, $viewport, $next);
+    $(DATE_FIELD_ID).after($wrapper).hide();
+    if (useCustomTimeSlots) {
+      $wrapper.after('<div id="kbm-slot-area" style="display:none"></div>');
+      $(SLOT_FIELD_ID).hide();
+    } else {
+      $(SLOT_FIELD_ID).insertAfter($wrapper).show();
+      $('<div id="kbm-slot-area" style="display:none"></div>').insertAfter($(SLOT_FIELD_ID));
+    }
+
+    var goToSlide = makePager($viewport, $track, pages.length, $prev, $next);
+    goToSlide(0);
+  }
+
+  // ─── Slot slider (paginated by hour) ─────────────────────────────────────────
 
   function buildSlotSlider() {
     if (!useCustomTimeSlots) {
@@ -334,7 +378,7 @@ jQuery(document).ready(function ($) {
       rows.push({
         val: val,
         label: label,
-        parsed: parseSlotLabel(label),
+        parsed: parseSlotRow(val, label),
         soldOut: label.toLowerCase().indexOf('sold out') !== -1
       });
     });
