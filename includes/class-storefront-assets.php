@@ -75,6 +75,10 @@ class Storefront_Assets {
 				if ( '' !== $key ) {
 					$out['dateKeyToYmd'][ $key ] = $ymd;
 				}
+				$disp = isset( $bucket['label'] ) ? trim( (string) $bucket['label'] ) : '';
+				if ( '' !== $disp ) {
+					$out['dateKeyToYmd'][ $disp . '_' . $product_id ] = $ymd;
+				}
 			}
 
 			$slots = isset( $bucket['slots'] ) && is_array( $bucket['slots'] ) ? $bucket['slots'] : array();

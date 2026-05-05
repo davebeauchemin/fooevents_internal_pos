@@ -3,13 +3,22 @@ jQuery(document).ready(function ($) {
   var pickerCfg = window.fiposDateSlotPicker || {};
   var useCustomTimeSlots = !!(pickerCfg && pickerCfg.customTimeSlots);
 
-  var DATE_SELECT_ID = '#fooevents_bookings_date_val__trans';
-  var SLOT_SELECT_ID = '#fooevents_bookings_slot_val__trans';
-  var DATE_FIELD_ID = '#fooevents_bookings_date_val__trans_field';
-  var SLOT_FIELD_ID = '#fooevents_bookings_slot_val__trans_field';
+  var DATE_SELECT_SEL = 'select[name="fooevents_bookings_date_val__trans"]';
+  var SLOT_SELECT_SEL = 'select[name="fooevents_bookings_slot_val__trans"]';
+  /** Product add-to-cart form that actually contains FooEvents booking selects (sticky bars may register a second unrelated form.cart first). */
+  var $cartForm = $('form.cart').filter(function () {
+    return $(this).find(DATE_SELECT_SEL).length > 0;
+  }).first();
+  if (!$cartForm.length) {
+    $cartForm = $('form.cart').first();
+  }
 
-  var $dateSelect = $(DATE_SELECT_ID);
-  var $slotSelect = $(SLOT_SELECT_ID);
+  var $dateSelect = $cartForm.find(DATE_SELECT_SEL).first();
+  var $slotSelect = $cartForm.find(SLOT_SELECT_SEL).first();
+
+  /** Wrappers (<p.form-row>) for the selects we sync; used for kiosk placement instead of brittle #field ids when IDs repeat. */
+  var $dateFieldRow;
+  var $slotFieldRow;
   var currentSelectedDateYmd = '';
   var currentSelectedDateLabel = '';
 
@@ -89,6 +98,21 @@ jQuery(document).ready(function ($) {
   syncBundleChipState();
 
   if (!$dateSelect.length) return;
+
+  // FooEvents/themes sometimes duplicate booking fields in one form (duplicate illegal ids). Hide every echoed row so only the kiosk UI stays visible.
+  $dateFieldRow = $dateSelect.closest('p.form-row');
+  $slotFieldRow = $slotSelect.closest('p.form-row');
+  $cartForm.find(DATE_SELECT_SEL).each(function () {
+    $(this).closest('p.form-row').hide();
+  });
+  $cartForm.find(SLOT_SELECT_SEL).each(function () {
+    $(this).closest('p.form-row').hide();
+  });
+  $cartForm.find('#fooevents-checkout-attendee-info-val-trans').slice(1).remove();
+
+  function kbmSlotAreaEl() {
+    return $cartForm.find('#kbm-slot-area').first();
+  }
 
   // ─── SVG icons ───────────────────────────────────────────────────────────────
 
@@ -306,7 +330,7 @@ jQuery(document).ready(function ($) {
     });
 
     if (!pills.length) {
-      $(DATE_FIELD_ID).after('<p class="kbm-no-dates">No upcoming dates available.</p>');
+      $dateFieldRow.after('<p class="kbm-no-dates">No upcoming dates available.</p>');
       return;
     }
 
@@ -346,8 +370,9 @@ jQuery(document).ready(function ($) {
           currentSelectedDateLabel = pill.label;
           $dateSelect.val(pill.value).trigger('change');
           if (useCustomTimeSlots) {
-            $('#kbm-slot-area').show();
-            showLoading($('#kbm-slot-area'));
+            var $area = kbmSlotAreaEl();
+            $area.show();
+            showLoading($area);
           }
         });
         $slide.append($pill);
@@ -357,13 +382,16 @@ jQuery(document).ready(function ($) {
 
     $viewport.append($track);
     $wrapper.append($label, $prev, $viewport, $next);
-    $(DATE_FIELD_ID).after($wrapper).hide();
+    $dateFieldRow.after($wrapper);
     if (useCustomTimeSlots) {
       $wrapper.after('<div id="kbm-slot-area" style="display:none"></div>');
-      $(SLOT_FIELD_ID).hide();
     } else {
-      $(SLOT_FIELD_ID).insertAfter($wrapper).show();
-      $('<div id="kbm-slot-area" style="display:none"></div>').insertAfter($(SLOT_FIELD_ID));
+      if ($slotFieldRow.length) {
+        $slotFieldRow.insertAfter($wrapper).show();
+      }
+      $('<div id="kbm-slot-area" style="display:none"></div>').insertAfter(
+        $slotFieldRow.length ? $slotFieldRow : $wrapper
+      );
     }
 
     var goToSlide = makePager($viewport, $track, pages.length, $prev, $next);
@@ -420,10 +448,11 @@ jQuery(document).ready(function ($) {
       });
     });
 
-    removeLoading($('#kbm-slot-area'));
+    var $slotAreaMount = kbmSlotAreaEl();
+    removeLoading($slotAreaMount);
 
     if (!hourOrder.length) {
-      $('#kbm-slot-area').html('<p class="kbm-no-slots">No upcoming time slots remain for this date.</p>');
+      $slotAreaMount.html('<p class="kbm-no-slots">No upcoming time slots remain for this date.</p>');
       return;
     }
 
@@ -463,8 +492,7 @@ jQuery(document).ready(function ($) {
 
     $viewport.append($track);
     $wrapper.append($label, $hourNav, $prev, $viewport, $next);
-    $('#kbm-slot-area').html('').append($wrapper);
-    $(SLOT_FIELD_ID).hide();
+    $slotAreaMount.html('').append($wrapper);
 
     function hourTitleAt(index) {
       var key = hourOrder[index];
@@ -527,7 +555,7 @@ jQuery(document).ready(function ($) {
 
   $dateSelect.on('change', function () {
     if (useCustomTimeSlots) {
-      $('#kbm-slot-area').html('');
+      kbmSlotAreaEl().html('');
     }
   });
 
@@ -538,9 +566,12 @@ jQuery(document).ready(function ($) {
   buildDateSlider();
 
   // Move availability below the slot area and reformat text when FooEvents updates it
-  var $availability = $('#fooevents-checkout-attendee-info-val-trans');
+  var $availability = $cartForm.find('#fooevents-checkout-attendee-info-val-trans').first();
   if ($availability.length) {
-    $availability.insertAfter('#kbm-slot-area');
+    var $slotMount = kbmSlotAreaEl();
+    if ($slotMount.length) {
+      $availability.insertAfter($slotMount);
+    }
 
     new MutationObserver(function () {
       var text = $availability.text().trim();
