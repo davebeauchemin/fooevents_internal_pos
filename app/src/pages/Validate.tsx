@@ -1303,7 +1303,7 @@ export default function Validate() {
 										aria-hidden
 									/>
 								</div>
-								<div className="min-w-0 flex-1 pr-28 sm:pr-44">
+								<div className="min-w-0 flex-1 pr-[4.5rem] sm:pr-24">
 									<p className="text-sm font-semibold leading-snug tracking-tight">
 										{ resultCopy.headline }
 									</p>
@@ -1316,22 +1316,21 @@ export default function Validate() {
 										<Button
 											type="button"
 											variant="ghost"
-											size="sm"
-											className="h-8 gap-1 px-2 text-foreground hover:bg-foreground/10"
+											size="icon"
+											className="text-foreground hover:bg-foreground/10"
 											disabled={ statusMutation.isPending }
 											onClick={ () => setRescheduleOpen( true ) }
 											aria-label="Reschedule booking"
 											title="Reschedule booking"
 										>
-											<CalendarClock className="size-4 shrink-0" aria-hidden />
-											<span>Reschedule</span>
+											<CalendarClock className="size-5" aria-hidden />
 										</Button>
 									) }
 									<Button
 										type="button"
 										variant="ghost"
-										size="sm"
-										className="h-8 gap-1 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+										size="icon"
+										className="text-destructive hover:bg-destructive/10 hover:text-destructive"
 										disabled={
 											statusMutation.isPending
 											|| ticket.WooCommerceEventsStatus === 'Canceled'
@@ -1340,8 +1339,7 @@ export default function Validate() {
 										aria-label="Cancel ticket"
 										title="Cancel ticket"
 									>
-										<Trash2 className="size-4 shrink-0" aria-hidden />
-										<span>Cancel</span>
+										<Trash2 className="size-5" aria-hidden />
 									</Button>
 								</div>
 							</div>
@@ -1367,7 +1365,7 @@ export default function Validate() {
 									) }
 								</div>
 								<Badge
-									className={ `h-fit shrink-0 px-3 py-1.5 text-sm font-black tracking-wide sm:text-base ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
+									className={ `h-fit shrink-0 ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
 								>
 									{ String( ticket.WooCommerceEventsStatus ?? '—' ) }
 								</Badge>
@@ -1391,8 +1389,8 @@ export default function Validate() {
 								) }
 							</div>
 
-							<div className="space-y-3">
-								<div className="space-y-2">
+							<div className="grid gap-2 sm:grid-cols-2">
+								<div>
 									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
 										Attendee
 									</p>
@@ -1400,21 +1398,24 @@ export default function Validate() {
 										{ `${ ticket.WooCommerceEventsAttendeeName ?? '' } ${ ticket.WooCommerceEventsAttendeeLastName ?? '' }`.trim()
 											|| '\u2014' }
 									</p>
-									<div>
-										<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-											Contact
-										</p>
-										<p className="text-sm">{ ticket.WooCommerceEventsAttendeeEmail || '\u2014' }</p>
-										<p className="font-mono text-sm tabular-nums">
-											{ ticket.WooCommerceEventsAttendeeTelephone || '\u2014' }
-										</p>
-									</div>
+								</div>
+								<div>
+									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+										Contact
+									</p>
+									<p className="text-sm">{ ticket.WooCommerceEventsAttendeeEmail || '\u2014' }</p>
+									<p className="font-mono text-sm tabular-nums">
+										{ ticket.WooCommerceEventsAttendeeTelephone || '\u2014' }
+									</p>
 								</div>
 							</div>
 
 							<Separator />
 
 							<div>
+								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
+									Set status
+								</p>
 								<div className="flex flex-col gap-2">
 									{ ticket.WooCommerceEventsStatus === 'Not Checked In' ? (
 										<Button
