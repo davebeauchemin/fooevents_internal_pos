@@ -634,48 +634,74 @@ class Bookings_Service {
 			return $empty;
 		}
 
-		$tz           = $this->get_wp_timezone();
-		$slot_id      = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlotID'] ?? '' ) );
-		$date_id      = trim( (string) ( $ticket_data['WooCommerceEventsBookingDateID'] ?? '' ) );
+		$tz            = $this->get_wp_timezone();
+		$slot_id       = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlotID'] ?? '' ) );
+		$date_id       = trim( (string) ( $ticket_data['WooCommerceEventsBookingDateID'] ?? '' ) );
 		$slot_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlot'] ?? '' ) );
 		$date_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingDate'] ?? '' ) );
 
+		$res_ids = null;
 		if ( '' !== $slot_id && '' !== $date_id ) {
-			$res = $this->resolve_booking_slot_datetime_from_ids( $product_id, $slot_id, $date_id, $tz );
-			if ( is_array( $res ) ) {
-				return array(
-					'eventId'       => $product_id,
-					'slotId'        => $slot_id,
-					'dateId'        => $date_id,
-					'dateYmd'       => (string) $res['dateYmd'],
-					'time'          => (string) $res['time'],
-					'dateLabel'     => $date_lbl_disp ? $date_lbl_disp : (string) $res['dateLabelResolved'],
-					'slotLabel'     => $slot_lbl_disp ? $slot_lbl_disp : (string) $res['slotLabelResolved'],
-					'startsAtLocal' => (string) $res['startsAtLocal'],
-					'source'        => 'slot_ids',
-				);
+			$r = $this->resolve_booking_slot_datetime_from_ids( $product_id, $slot_id, $date_id, $tz );
+			if ( is_array( $r ) ) {
+				$res_ids = $r;
 			}
 		}
 
+		// Ticket display meta (often matches WP admin booking view — prefer over stale slot/date IDs when they disagree materially).
 		$ymd_f  = $this->date_string_to_ymd( $date_lbl_disp );
 		$time_f = $this->extract_time( $slot_lbl_disp );
+		$dt_disp = null;
 		if ( null !== $ymd_f && '' !== $time_f ) {
-			$dt_disp = DateTime::createFromFormat( 'Y-m-d H:i', $ymd_f . ' ' . $time_f, $tz );
-			if ( $dt_disp instanceof DateTime ) {
-				return array(
-					'eventId'       => $product_id,
-					'slotId'        => $slot_id,
-					'dateId'        => $date_id,
-					'dateYmd'       => $ymd_f,
-					'time'          => $time_f,
-					'dateLabel'     => $date_lbl_disp,
-					'slotLabel'     => $slot_lbl_disp,
-					'startsAtLocal' => $dt_disp->format( 'c' ),
-					'source'        => 'display_parse',
-				);
+			$dt_disp_candidate = DateTime::createFromFormat( 'Y-m-d H:i', $ymd_f . ' ' . $time_f, $tz );
+			if ( $dt_disp_candidate instanceof DateTime ) {
+				$dt_disp = $dt_disp_candidate;
 			}
 		}
 
+		$id_disp_skew_secs = null;
+		if ( is_array( $res_ids ) && $dt_disp instanceof DateTime && ! empty( $res_ids['startsAtLocal'] ) ) {
+			try {
+				$dt_ids = new DateTime( (string) $res_ids['startsAtLocal'] );
+				$id_disp_skew_secs = abs( $dt_ids->getTimestamp() - $dt_disp->getTimestamp() );
+			} catch ( \Throwable $e ) {
+				$id_disp_skew_secs = null;
+			}
+		}
+		$prefer_display_timing = is_array( $res_ids )
+			&& $dt_disp instanceof DateTime
+			&& null !== $id_disp_skew_secs
+			&& $id_disp_skew_secs > 120;
+
+		if ( is_array( $res_ids ) && ! $prefer_display_timing ) {
+			return array(
+				'eventId'       => $product_id,
+				'slotId'        => $slot_id,
+				'dateId'        => $date_id,
+				'dateYmd'       => (string) $res_ids['dateYmd'],
+				'time'          => (string) $res_ids['time'],
+				'dateLabel'     => $date_lbl_disp ? $date_lbl_disp : (string) $res_ids['dateLabelResolved'],
+				'slotLabel'     => $slot_lbl_disp ? $slot_lbl_disp : (string) $res_ids['slotLabelResolved'],
+				'startsAtLocal' => (string) $res_ids['startsAtLocal'],
+				'source'        => 'slot_ids',
+			);
+		}
+
+		if ( $dt_disp instanceof DateTime ) {
+			return array(
+				'eventId'       => $product_id,
+				'slotId'        => $slot_id,
+				'dateId'        => $date_id,
+				'dateYmd'       => $ymd_f,
+				'time'          => $time_f,
+				'dateLabel'     => $date_lbl_disp,
+				'slotLabel'     => $slot_lbl_disp,
+				'startsAtLocal' => $dt_disp->format( 'c' ),
+				'source'        => $prefer_display_timing ? 'display_vs_slot_ids' : 'display_parse',
+			);
+		}
+
+		// Prefer MySQL + timestamp fallback only when display labels could not build a discrete instant.
 		$mysql = isset( $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] )
 			? trim( (string) $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] ) : '';
 		if ( '' !== $mysql ) {

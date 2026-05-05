@@ -45,6 +45,7 @@ import {
 	slotMeetsTicketQuantity,
 	slotSelectable,
 } from '@/lib/slotHourGrouping';
+import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
 
 type SlotRow = {
 	id: string;
@@ -180,9 +181,16 @@ export default function Dashboard() {
 			siteTodayYmd
 			?? fromApi
 			?? ( ymd === '' && data?.date ? data.date : null )
+			?? siteYmdPrefixFromWpNowLocal( data?.siteNowLocal )
 			?? format( new Date(), 'yyyy-MM-dd' )
 		);
-	}, [ siteTodayYmd, ymd, data?.date, data?.siteTodayYmd ] );
+	}, [
+		siteTodayYmd,
+		ymd,
+		data?.date,
+		data?.siteTodayYmd,
+		data?.siteNowLocal,
+	] );
 
 	const siteClockHourDashboard = useMemo( () => {
 		const raw = data?.siteCurrentHour;

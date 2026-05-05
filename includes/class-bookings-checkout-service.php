@@ -831,7 +831,7 @@ class Bookings_Checkout_Service {
 				$norm_slots_for_remain[] = array(
 					'event_id' => $event_id,
 					'slot_id'  => (string) $norm['slot_id'],
-					'date_id'  => $date_id,
+					'date_id'  => (string) $norm['internal_date_id'],
 				);
 			}
 

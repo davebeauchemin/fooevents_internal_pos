@@ -80,6 +80,10 @@ import {
 	hourRemainingSpotsLabel,
 	slotSelectable,
 } from '@/lib/slotHourGrouping';
+import {
+	siteUnixMsFromWpNowLocal,
+	siteYmdPrefixFromWpNowLocal,
+} from '@/lib/wpSiteClock';
 import { cn } from '@/lib/utils';
 
 const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
@@ -352,6 +356,15 @@ type FooTicketPayload = Record< string, unknown > & {
 	bookingSession?: BookingSessionPayload;
 };
 
+/** Payload from GET /validate/ticket/{id} merges site clock + `{ ticket }`. */
+type ValidateTicketApiEnvelope = {
+	ticket?: FooTicketPayload;
+	siteTodayYmd?: string;
+	siteNowLocal?: string;
+	siteCurrentHour?: number;
+	siteTimezone?: string;
+};
+
 type EventDetailForReschedule = {
 	id?: number;
 	bookingMethod?: string;
@@ -407,8 +420,9 @@ function TicketRescheduleDialog( props: {
 		if ( typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test( raw.trim() ) ) {
 			return raw.trim();
 		}
-		return '';
-	}, [ detail?.siteTodayYmd ] );
+		const fromClock = siteYmdPrefixFromWpNowLocal( detail?.siteNowLocal );
+		return fromClock ?? '';
+	}, [ detail?.siteTodayYmd, detail?.siteNowLocal ] );
 
 	const rescheduleSiteClockHour = useMemo( () => {
 		const raw = detail?.siteCurrentHour;
@@ -828,35 +842,6 @@ export default function Validate() {
 		[ dashboardData ],
 	);
 
-	const siteNowUnixMs = useMemo( () => {
-		const iso = dashboardData?.siteNowLocal;
-		if ( typeof iso !== 'string' || ! iso.trim() ) {
-			return undefined;
-		}
-		const ms = Date.parse( iso.trim() );
-		return Number.isFinite( ms ) ? ms : undefined;
-	}, [ dashboardData?.siteNowLocal ] );
-
-	const gateSiteClockHour = useMemo( () => {
-		const raw = dashboardData?.siteCurrentHour;
-		if ( raw === null || raw === undefined || raw !== raw ) {
-			return null;
-		}
-		const n = Number( raw );
-		return Number.isFinite( n ) && n >= 0 && n <= 23 ? Math.trunc( n ) : null;
-	}, [ dashboardData?.siteCurrentHour ] );
-
-	const effSiteTodayYmd = useMemo(
-		() =>
-			normalizeWpYmd( dashboardData?.siteTodayYmd )
-			?? normalizeWpYmd( siteTodayYmd )
-			?? format( new Date(), 'yyyy-MM-dd' ),
-		[
-			dashboardData?.siteTodayYmd,
-			siteTodayYmd,
-		],
-	);
-
 	const scanRegionId =
 		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
 
@@ -864,11 +849,67 @@ export default function Validate() {
 	const detailQuery = useTicketDetail( selectedTicketId );
 	const statusMutation = useUpdateTicketStatus();
 
-	const ticket = detailQuery.data?.ticket as FooTicketPayload | undefined;
+	const validateTicketApi = detailQuery.data as ValidateTicketApiEnvelope | undefined;
+	const ticket = validateTicketApi?.ticket as FooTicketPayload | undefined;
+
+	const siteNowUnixMs = useMemo(
+		() =>
+			siteUnixMsFromWpNowLocal( dashboardData?.siteNowLocal )
+			?? siteUnixMsFromWpNowLocal( validateTicketApi?.siteNowLocal ),
+		[ dashboardData?.siteNowLocal, validateTicketApi?.siteNowLocal ],
+	);
+
+	const gateSiteClockHour = useMemo( () => {
+		for ( const raw of [
+			dashboardData?.siteCurrentHour,
+			validateTicketApi?.siteCurrentHour,
+		] as const ) {
+			if (
+				raw === null ||
+				raw === undefined ||
+				raw !== raw
+			) {
+				continue;
+			}
+			const n = Number( raw );
+			if ( Number.isFinite( n ) && n >= 0 && n <= 23 ) {
+				return Math.trunc( n );
+			}
+		}
+		return null;
+	}, [
+		dashboardData?.siteCurrentHour,
+		validateTicketApi?.siteCurrentHour,
+	] );
+
+	const effSiteTodayYmd = useMemo(
+		() =>
+			normalizeWpYmd( dashboardData?.siteTodayYmd )
+			?? normalizeWpYmd( validateTicketApi?.siteTodayYmd )
+			?? normalizeWpYmd( siteTodayYmd )
+			?? siteYmdPrefixFromWpNowLocal( validateTicketApi?.siteNowLocal )
+			?? siteYmdPrefixFromWpNowLocal( dashboardData?.siteNowLocal )
+			?? format( new Date(), 'yyyy-MM-dd' ),
+		[
+			dashboardData?.siteTodayYmd,
+			dashboardData?.siteNowLocal,
+			validateTicketApi?.siteTodayYmd,
+			validateTicketApi?.siteNowLocal,
+			siteTodayYmd,
+		],
+	);
+
+	const sessionClockOpts = useMemo(
+		() =>
+			siteNowUnixMs != null && Number.isFinite( siteNowUnixMs )
+				? { nowMs: siteNowUnixMs }
+				: undefined,
+		[ siteNowUnixMs ],
+	);
 
 	const sessionDelta = useMemo(
-		() => computeValidateSessionDelta( ticket, selectedValidateSession ),
-		[ ticket, selectedValidateSession ],
+		() => computeValidateSessionDelta( ticket, selectedValidateSession, sessionClockOpts ),
+		[ ticket, selectedValidateSession, sessionClockOpts ],
 	);
 
 	const sessionTimingCue = useMemo(
@@ -926,6 +967,16 @@ export default function Validate() {
 	}, [ dashboardData?.siteTodayYmd ] );
 
 	useEffect( () => {
+		const next =
+			normalizeWpYmd( validateTicketApi?.siteTodayYmd )
+			?? siteYmdPrefixFromWpNowLocal( validateTicketApi?.siteNowLocal );
+		if ( ! next ) {
+			return;
+		}
+		setSiteTodayYmd( ( prev ) => prev ?? next );
+	}, [ validateTicketApi?.siteTodayYmd, validateTicketApi?.siteNowLocal ] );
+
+	useEffect( () => {
 		if (
 			! dashboardQuery.data?.date
 			|| ! Array.isArray( dashboardQuery.data.events )
@@ -965,6 +1016,7 @@ export default function Validate() {
 		siteTodayYmd,
 		gateScheduleDay,
 		siteNowUnixMs,
+		validateTicketApi?.siteNowLocal,
 	] );
 
 	useEffect( () => {
@@ -1038,6 +1090,7 @@ export default function Validate() {
 			const delta = computeValidateSessionDelta(
 				ticket,
 				selectedValidateSession,
+				sessionClockOpts,
 			);
 			if ( delta.offSession ) {
 				autoCheckInHandledKeyRef.current = key;
@@ -1086,6 +1139,7 @@ export default function Validate() {
 		detailQuery.isError,
 		selectedTicketId,
 		selectedValidateSession,
+		sessionClockOpts,
 		statusMutation.isPending,
 	] );
 
@@ -1424,6 +1478,9 @@ export default function Validate() {
 										<strong className="text-foreground">{ sessionTimingCue.label }.</strong>{ ' ' }
 										{ sessionDelta.kind === 'later_session' && (
 											<>Use <strong>Check in anyway</strong> only if you approve early entry.</>
+										) }
+										{ sessionDelta.kind === 'earlier_gate_but_upcoming' && (
+											<>Use <strong>Check in anyway</strong> only if you deliberately want to admit before the booked slot starts or on this gate slot.</>
 										) }
 										{ sessionDelta.kind === 'earlier_session' && (
 											<>Use <strong>Check in anyway</strong> only if you are sure this guest should enter on this gate time.</>

@@ -887,13 +887,21 @@ class Rest_API {
 			$ticket_post_id = $this->resolve_ticket_post_id_for_lookup( (string) $data['WooCommerceEventsTicketID'] );
 		}
 		if ( $ticket_post_id > 0 ) {
-			$have_slot = isset( $data['WooCommerceEventsBookingSlotID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingSlotID'] );
-			$have_date = isset( $data['WooCommerceEventsBookingDateID'] ) && '' !== trim( (string) $data['WooCommerceEventsBookingDateID'] );
-			if ( ! $have_slot ) {
-				$data['WooCommerceEventsBookingSlotID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlotID', true );
+			$meta_slot_id = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlotID', true ) );
+			if ( '' !== $meta_slot_id ) {
+				$data['WooCommerceEventsBookingSlotID'] = $meta_slot_id;
 			}
-			if ( ! $have_date ) {
-				$data['WooCommerceEventsBookingDateID'] = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true );
+			$meta_date_id = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true ) );
+			if ( '' !== $meta_date_id ) {
+				$data['WooCommerceEventsBookingDateID'] = $meta_date_id;
+			}
+			$meta_slot_disp = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlot', true ) );
+			if ( '' !== $meta_slot_disp ) {
+				$data['WooCommerceEventsBookingSlot'] = $meta_slot_disp;
+			}
+			$meta_date_disp = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDate', true ) );
+			if ( '' !== $meta_date_disp ) {
+				$data['WooCommerceEventsBookingDate'] = $meta_date_disp;
 			}
 			if ( empty( $data['WooCommerceEventsBookingDateTimestamp'] ) ) {
 				$ts_meta = get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateTimestamp', true );
@@ -926,8 +934,11 @@ class Rest_API {
 		}
 
 		return rest_ensure_response(
-			array(
-				'ticket' => $data,
+			array_merge(
+				$this->bookings->get_site_time_for_rest(),
+				array(
+					'ticket' => $data,
+				)
 			)
 		);
 	}

@@ -38,6 +38,7 @@ import {
 	normalizeTimeInputToHhmm,
 	type SlotLike,
 } from '@/lib/slotHourGrouping';
+import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
 import { cn } from '@/lib/utils';
 
 type ScheduleBlock = {
@@ -437,6 +438,7 @@ export default function Schedule() {
 					id?: number;
 					bookingMethod?: string;
 					siteTodayYmd?: string;
+					siteNowLocal?: string;
 			  }
 			| undefined;
 		isLoading: boolean;
@@ -448,11 +450,13 @@ export default function Schedule() {
 	const addStock = useAddSlotStock( eventId );
 
 	const apiWpSiteYmd = useMemo( () => {
-		const raw =
-			eventData && typeof eventData.siteTodayYmd === 'string'
-				? eventData.siteTodayYmd.trim()
-				: '';
-		return /^\d{4}-\d{2}-\d{2}$/.test( raw ) ? raw : null;
+		if ( eventData && typeof eventData.siteTodayYmd === 'string' ) {
+			const trimmed = eventData.siteTodayYmd.trim();
+			if ( /^\d{4}-\d{2}-\d{2}$/.test( trimmed ) ) {
+				return trimmed;
+			}
+		}
+		return siteYmdPrefixFromWpNowLocal( eventData?.siteNowLocal );
 	}, [ eventData ] );
 
 	/** Prefer WordPress “today” once event payload is loaded. */

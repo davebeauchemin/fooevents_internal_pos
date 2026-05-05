@@ -58,6 +58,7 @@ export type ValidateSessionDelta = {
 	kind:
 		| 'idle'
 		| 'match'
+		| 'earlier_gate_but_upcoming'
 		| 'earlier_session'
 		| 'later_session'
 		| 'wrong_event'
@@ -113,6 +114,16 @@ export function getSessionTimingCue( delta: ValidateSessionDelta ): SessionTimin
 				detail:
 					delta.detailLine
 					|| 'This ticket matches the selected gate session.',
+			};
+		case 'earlier_gate_but_upcoming':
+			return {
+				show: true,
+				tone: 'future',
+				label: 'Session coming soon',
+				detail:
+					delta.detailLine
+					|| delta.subtitleExtra
+					|| 'Earlier slot than gate selection — session has not started yet.',
 			};
 		case 'earlier_session':
 			return {
@@ -327,9 +338,18 @@ export function writeStoredValidateSessionPick( p: ValidateSessionPick | null ) 
 	);
 }
 
+/** Align with default gate picker slack (sessions within this window still count as “now”). */
+export const VALIDATE_GATE_SITE_CLOCK_SLACK_MS = 60_000;
+
 export function computeValidateSessionDelta(
 	ticket: TicketLike | undefined,
 	selected: ValidateSessionPick | null,
+	opts?: {
+		/** WordPress/site clock millis; overrides browser `Date.now()` when finite. */
+		nowMs?: number;
+		/** Defaults to {@link VALIDATE_GATE_SITE_CLOCK_SLACK_MS}. */
+		slackMs?: number;
+	},
 ): ValidateSessionDelta {
 	const idle: ValidateSessionDelta = {
 		kind: 'idle',
@@ -403,6 +423,14 @@ export function computeValidateSessionDelta(
 
 	if ( ! Number.isNaN( tMs ) && ! Number.isNaN( sMs ) ) {
 		const diffMin = Math.round( ( tMs - sMs ) / 60_000 );
+		const refNowMs =
+			opts?.nowMs != null && Number.isFinite( opts.nowMs )
+				? opts.nowMs
+				: Date.now();
+		const slack =
+			opts?.slackMs != null && Number.isFinite( opts.slackMs ) && opts.slackMs >= 0
+				? opts.slackMs
+				: VALIDATE_GATE_SITE_CLOCK_SLACK_MS;
 		if ( diffMin === 0 ) {
 			return {
 				kind: 'match',
@@ -414,6 +442,17 @@ export function computeValidateSessionDelta(
 		}
 		if ( diffMin < 0 ) {
 			const human = formatMinutesAsDuration( -diffMin );
+			const bookingStillUpcoming = tMs >= refNowMs - slack;
+			if ( bookingStillUpcoming ) {
+				return {
+					kind: 'earlier_gate_but_upcoming',
+					offSession: true,
+					detailLine: `Ticket is for an earlier time slot (${ human } before this gate selection); that session hasn’t started yet.`,
+					subtitleExtra: `Different slot vs gate (${ human }) — confirm intentionally before admitting.`,
+					autoCheckInToast:
+						'Ticket vs gate mismatch (session upcoming) — auto check-in paused.',
+				};
+			}
 			return {
 				kind: 'earlier_session',
 				offSession: true,
