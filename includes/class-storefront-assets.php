@@ -148,16 +148,22 @@ class Storefront_Assets {
 			$site_time        = $bookings->get_storefront_cutoff_clock_for_booking_product( $product_id );
 			$site_timestamp_u = isset( $site_time['siteTimestampUtc'] ) ? (int) $site_time['siteTimestampUtc'] : time();
 
-			try {
-				$tz_disp = new \DateTimeZone( (string) $site_time['siteTimezone'] );
-			} catch ( \Exception $e ) {
-				$tz_disp = wp_timezone();
+			$tz_disp      = wp_timezone();
+			$tz_name_live = isset( $site_time['siteTimezone'] ) ? trim( (string) $site_time['siteTimezone'] ) : '';
+			if ( '' !== $tz_name_live ) {
+				try {
+					$tz_disp = new \DateTimeZone( $tz_name_live );
+				} catch ( \Throwable $e ) {
+					$tz_disp = wp_timezone();
+				}
 			}
 
-			if ( '' !== trim( get_option( 'date_format', '' ) ) ) {
-				$site_label = wp_date( (string) get_option( 'date_format', '' ), $site_timestamp_u, $tz_disp );
-			} else {
-				$site_label = wp_date( 'F j, Y', $site_timestamp_u, $tz_disp );
+			$fmt_opt = trim( (string) get_option( 'date_format', '' ) );
+			try {
+				$dt_label   = ( new \DateTimeImmutable( '@' . $site_timestamp_u ) )->setTimezone( $tz_disp );
+				$site_label = $dt_label->format( '' !== $fmt_opt ? $fmt_opt : 'F j, Y' );
+			} catch ( \Throwable $e ) {
+				$site_label = isset( $site_time['siteTodayYmd'] ) ? (string) $site_time['siteTodayYmd'] : '';
 			}
 
 			$event_detail = $product_id > 0 ? $bookings->get_event_detail( $product_id ) : array();

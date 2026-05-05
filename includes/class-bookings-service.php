@@ -123,13 +123,17 @@ class Bookings_Service {
 		if ( $product_id <= 0 ) {
 			return $fallback;
 		}
-		$evt = trim( (string) get_post_meta( $product_id, 'WooCommerceEventsTimeZone', true ) );
+		$evt_raw = get_post_meta( $product_id, 'WooCommerceEventsTimeZone', true );
+		if ( ! is_string( $evt_raw ) ) {
+			return $fallback;
+		}
+		$evt = trim( $evt_raw );
 		if ( '' === $evt ) {
 			return $fallback;
 		}
 		try {
 			return new \DateTimeZone( $evt );
-		} catch ( \Exception $e ) {
+		} catch ( \Throwable $e ) {
 			return $fallback;
 		}
 	}
