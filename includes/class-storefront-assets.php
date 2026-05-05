@@ -142,12 +142,24 @@ class Storefront_Assets {
 		}
 
 		if ( function_exists( 'is_product' ) && is_product() ) {
-			$bookings  = new Bookings_Service();
-			$site_time = $bookings->get_site_time_for_rest();
-			$now_ts    = isset( $site_time['siteNowLocal'] ) ? strtotime( (string) $site_time['siteNowLocal'] ) : false;
-			$minutes   = false === $now_ts ? null : (int) wp_date( 'G', $now_ts ) * 60 + (int) wp_date( 'i', $now_ts );
-
+			$bookings   = new Bookings_Service();
 			$product_id = function_exists( 'get_queried_object_id' ) ? absint( get_queried_object_id() ) : 0;
+			// Product/event TZ when set matches FooEvents expiry; avoids wp_timezone vs America/Toronto drift.
+			$site_time        = $bookings->get_storefront_cutoff_clock_for_booking_product( $product_id );
+			$site_timestamp_u = isset( $site_time['siteTimestampUtc'] ) ? (int) $site_time['siteTimestampUtc'] : time();
+
+			try {
+				$tz_disp = new \DateTimeZone( (string) $site_time['siteTimezone'] );
+			} catch ( \Exception $e ) {
+				$tz_disp = wp_timezone();
+			}
+
+			if ( '' !== trim( get_option( 'date_format', '' ) ) ) {
+				$site_label = wp_date( (string) get_option( 'date_format', '' ), $site_timestamp_u, $tz_disp );
+			} else {
+				$site_label = wp_date( 'F j, Y', $site_timestamp_u, $tz_disp );
+			}
+
 			$event_detail = $product_id > 0 ? $bookings->get_event_detail( $product_id ) : array();
 			$slot_maps    = $this->build_storefront_booking_maps( is_array( $event_detail ) ? $event_detail : array(), $product_id );
 
@@ -176,10 +188,10 @@ class Storefront_Assets {
 				array(
 					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', true ),
 					'siteTodayYmd'    => isset( $site_time['siteTodayYmd'] ) ? (string) $site_time['siteTodayYmd'] : '',
-					'siteTodayLabel'  => wp_date( (string) get_option( 'date_format' ), false === $now_ts ? time() : $now_ts ),
+					'siteTodayLabel'  => $site_label,
 					'siteNowLocal'    => isset( $site_time['siteNowLocal'] ) ? (string) $site_time['siteNowLocal'] : '',
 					'siteTimezone'    => isset( $site_time['siteTimezone'] ) ? (string) $site_time['siteTimezone'] : '',
-					'siteNowMinutes'  => $minutes,
+					'siteNowMinutes'  => isset( $site_time['siteNowMinutes'] ) ? (int) $site_time['siteNowMinutes'] : 0,
 					'slotMaps'        => $slot_maps,
 				)
 			);

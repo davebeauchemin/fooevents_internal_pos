@@ -95,6 +95,46 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Effective clock for storefront slot cutoffs: uses FooEvents {@see WooCommerceEventsTimeZone} when set,
+	 * otherwise WordPress timezone. Keeps calendar day + minute-of-day consistent with FooEvents expiry logic.
+	 *
+	 * @param int $product_id Event product ID.
+	 * @return array{siteTodayYmd:string,siteNowLocal:string,siteNowMinutes:int,siteTimezone:string,siteTimestampUtc:int}
+	 */
+	public function get_storefront_cutoff_clock_for_booking_product( $product_id ) {
+		$tz = $this->resolve_timezone_for_booking_product( absint( $product_id ) );
+		$dt = new DateTime( 'now', $tz );
+
+		return array(
+			'siteTodayYmd'     => $dt->format( 'Y-m-d' ),
+			'siteNowLocal'     => $dt->format( 'c' ),
+			'siteNowMinutes'   => ( (int) $dt->format( 'G' ) ) * 60 + ( (int) $dt->format( 'i' ) ),
+			'siteTimezone'     => $tz->getName(),
+			'siteTimestampUtc' => (int) $dt->format( 'U' ),
+		);
+	}
+
+	/**
+	 * @param int $product_id Product ID.
+	 * @return \DateTimeZone
+	 */
+	private function resolve_timezone_for_booking_product( $product_id ) {
+		$fallback = $this->get_wp_timezone();
+		if ( $product_id <= 0 ) {
+			return $fallback;
+		}
+		$evt = trim( (string) get_post_meta( $product_id, 'WooCommerceEventsTimeZone', true ) );
+		if ( '' === $evt ) {
+			return $fallback;
+		}
+		try {
+			return new DateTimeZone( $evt );
+		} catch ( \Exception $e ) {
+			return $fallback;
+		}
+	}
+
+	/**
 	 * Display price for POS cart/checkout labels (matches storefront inclusive/exclusive logic).
 	 *
 	 * @param int $product_id Product ID.

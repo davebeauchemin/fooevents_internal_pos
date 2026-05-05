@@ -275,10 +275,14 @@ jQuery(document).ready(function ($) {
    */
   function parseSlotRow(optionValue, label) {
     var parsed = parseSlotLabel(label);
+    parsed.slotDateYmd = '';
     var maps = pickerCfg.slotMaps;
     var meta = maps && maps.slotValueMeta ? maps.slotValueMeta[optionValue] : null;
     if (!meta || typeof meta.minuteOfDay !== 'number') {
       return parsed;
+    }
+    if (typeof meta.dateYmd === 'string' && meta.dateYmd.trim()) {
+      parsed.slotDateYmd = meta.dateYmd.trim();
     }
     var minuteOfDay = meta.minuteOfDay;
     var h24 = Math.floor(minuteOfDay / 60);
@@ -304,20 +308,35 @@ jQuery(document).ready(function ($) {
     return parsed;
   }
 
-  function selectedDateIsSiteToday() {
-    var todayYmd = String(pickerCfg.siteTodayYmd || '').trim();
-    if (!todayYmd) return false;
+  function resolvedSelectedCalendarYmd() {
     var $selected = $dateSelect.find('option:selected');
-    var ymd = (currentSelectedDateYmd || '').trim() ||
+    return (currentSelectedDateYmd || '').trim() ||
       resolveDateYmd(String($selected.val() || '').trim(), $selected.text());
-    return ymd === todayYmd;
   }
 
-  function isPastSlotForSelectedDate(parsed) {
-    if (!pickerCfg.siteTodayYmd || typeof pickerCfg.siteNowMinutes !== 'number' || parsed.minuteOfDay === null) {
-      return false;
+  function effectiveSiteNowMinutes() {
+    var n = pickerCfg.siteNowMinutes;
+    if (typeof n === 'number' && Number.isFinite(n)) return n;
+    if (typeof n === 'string' && String(n).trim() !== '') {
+      var parsed = parseInt(n, 10);
+      return Number.isFinite(parsed) ? parsed : NaN;
     }
-    return selectedDateIsSiteToday() && parsed.minuteOfDay < pickerCfg.siteNowMinutes;
+    return NaN;
+  }
+
+  /**
+   * Hide slots that started earlier today using slot-local dateYmd (authoritative when present).
+   */
+  function isPastSlotForSelectedDate(parsed) {
+    var todayYmd = String(pickerCfg.siteTodayYmd || '').trim();
+    if (!todayYmd || parsed.minuteOfDay === null) return false;
+
+    var nowM = effectiveSiteNowMinutes();
+    if (!Number.isFinite(nowM)) return false;
+
+    var slotDay = parsed.slotDateYmd ? String(parsed.slotDateYmd).trim() : '';
+    var dayToCompare = slotDay || resolvedSelectedCalendarYmd();
+    return !!dayToCompare && dayToCompare === todayYmd && parsed.minuteOfDay < nowM;
   }
 
   // ─── Date slider ─────────────────────────────────────────────────────────────
