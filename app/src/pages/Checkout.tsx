@@ -2,7 +2,7 @@ import { useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
-import { useCheckoutPreview, useCreateBooking, usePaymentMethods } from '../api/queries.js';
+import { useCheckoutPreview, useCreateBooking, usePaymentMethods, usePosVisibleCoupons } from '../api/queries.js';
 import { CartLineRow } from '@/components/Cart';
 import { cartLineKey, useCart } from '@/context/CartContext';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,30 @@ function parseCouponCodesInput( raw: string ): string[] {
 	return out;
 }
 
+function normalizeCouponCodeKey( raw: string ): string {
+	return raw.trim().toLowerCase();
+}
+
+function mergeCouponIntoInput(
+	prevRaw: string,
+	codeToAdd: string,
+	max: number = MAX_POS_COUPONS,
+): string {
+	const parts = parseCouponCodesInput( prevRaw );
+	const want = normalizeCouponCodeKey( codeToAdd );
+	if ( ! want ) {
+		return prevRaw;
+	}
+	for ( const p of parts ) {
+		if ( normalizeCouponCodeKey( p ) === want ) {
+			return prevRaw;
+		}
+	}
+	const nextList = [ ...parts, codeToAdd.trim() ];
+
+	return nextList.slice( 0, max ).join( ', ' );
+}
+
 type PreviewTaxRow = {
 	id?: string;
 	label?: string;
@@ -69,6 +93,14 @@ type PreviewBundleDiscount = {
 	qtyCovered?: number;
 	amount?: string;
 	amountFormatted?: string;
+};
+
+type PosPromoCoupon = {
+	code?: string;
+	label?: string;
+	description?: string;
+	discountSummary?: string;
+	id?: number;
 };
 
 type CheckoutPreviewResponse = {
@@ -125,6 +157,33 @@ export default function Checkout() {
 
 	const preview = previewRaw as CheckoutPreviewResponse | undefined;
 
+	const { data: posVisibleCouponsRaw } = usePosVisibleCoupons( items.length > 0 );
+
+	const appliedCouponKeysNormalized = useMemo( () => {
+		const set = new Set<string>();
+		for ( const c of couponCodesForApi ) {
+			const k = normalizeCouponCodeKey( String( c ) );
+			if ( k ) {
+				set.add( k );
+			}
+		}
+		for ( const a of preview?.appliedCoupons ?? [] ) {
+			const k = normalizeCouponCodeKey( htmlToPlainText( String( a.code ?? '' ) ) );
+			if ( k ) {
+				set.add( k );
+			}
+		}
+		return set;
+	}, [ couponCodesForApi, preview?.appliedCoupons ] );
+
+	const posPromoCoupons: PosPromoCoupon[] = useMemo(
+		() =>
+			Array.isArray( posVisibleCouponsRaw?.coupons )
+				? ( posVisibleCouponsRaw.coupons as PosPromoCoupon[] )
+				: [],
+		[ posVisibleCouponsRaw?.coupons ],
+	);
+
 	const couponBlocking = Boolean(
 		! previewFetching &&
 			preview?.couponErrors?.some( ( row ) => row?.manualEntry && row?.message ),
@@ -147,14 +206,13 @@ export default function Checkout() {
 		}
 		return ( paymentMethods.find( ( m ) => m.key === 'fooeventspos_card' ) ?? paymentMethods[ 0 ] ).key;
 	}, [ paymentMethods, paymentMethodKey ] );
+	const showPaymentSelector = Boolean( paymentMethods && paymentMethods.length > 1 );
 
 	const disabledSubmit =
 		items.length === 0
 		|| mutation.isPending
 		|| paymentMethodsLoading
 		|| ! effectivePaymentKey
-		|| ! first.trim()
-		|| ! last.trim()
 		|| ! email.trim()
 		|| ! postalCode.trim()
 		|| couponBlocking;
@@ -311,24 +369,26 @@ export default function Checkout() {
 									</p>
 									<div className="grid gap-3 sm:grid-cols-2">
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-first` }>First name</Label>
+											<Label htmlFor={ `${ formId }-first` }>
+												First name <span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-first` }
 												value={ first }
 												onChange={ ( e ) => setFirst( e.target.value ) }
-												required
 												maxLength={ 100 }
 												autoComplete="given-name"
 												disabled={ mutation.isPending }
 											/>
 										</div>
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-last` }>Last name</Label>
+											<Label htmlFor={ `${ formId }-last` }>
+												Last name <span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-last` }
 												value={ last }
 												onChange={ ( e ) => setLast( e.target.value ) }
-												required
 												maxLength={ 100 }
 												autoComplete="family-name"
 												disabled={ mutation.isPending }
@@ -370,6 +430,52 @@ export default function Checkout() {
 									<p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
 										Checkout totals
 									</p>
+									{ posPromoCoupons.length > 0 ? (
+										<div className="space-y-2">
+											<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+												POS promotions
+											</p>
+											<p className="text-muted-foreground text-xs leading-snug">
+												One-click add (validated with your preview totals; coupons can still be typed below).
+											</p>
+											<div className="flex flex-wrap gap-2">
+												{ posPromoCoupons.map( ( row ) => {
+													const apiCode = String( row.code ?? '' ).trim();
+													const keyed = normalizeCouponCodeKey( apiCode );
+													const inactive = ! keyed || appliedCouponKeysNormalized.has( keyed );
+
+													return (
+														<Button
+															key={ String( row.id ?? row.code ) }
+															type="button"
+															variant={ inactive ? 'secondary' : 'outline' }
+															size="sm"
+															className={ cn(
+																'h-auto min-h-9 shrink-0 flex-col gap-0.5 py-2',
+																inactive && 'opacity-80',
+															) }
+															disabled={ mutation.isPending || inactive }
+															onClick={ () =>
+																setCouponInput( ( prev ) =>
+																	mergeCouponIntoInput( prev, apiCode ),
+																)
+															}
+															title={ row.description ? row.description : undefined }
+														>
+															<span className="font-mono text-xs">
+																{ row.label ?? apiCode }
+															</span>
+															{ row.discountSummary ? (
+																<span className="text-muted-foreground max-w-[12rem] text-center text-[10px] leading-tight break-words">
+																	{ row.discountSummary }
+																</span>
+															) : null }
+														</Button>
+													);
+												} ) }
+											</div>
+										</div>
+									) : null }
 									<Accordion type="single" collapsible className="w-full">
 										<AccordionItem value="coupons" className="border-0">
 											<AccordionTrigger className="py-3 hover:no-underline">
@@ -378,7 +484,7 @@ export default function Checkout() {
 														Coupon codes (optional)
 													</span>
 													<span className="text-muted-foreground text-xs font-normal">
-														Store coupons can auto-apply—open this to type extra codes.
+														Quick promos appear above when enabled—open this to type extra codes.
 													</span>
 												</span>
 											</AccordionTrigger>
@@ -402,7 +508,7 @@ export default function Checkout() {
 														id={ `${ formId }-coupons-hint` }
 														className="text-muted-foreground text-xs leading-relaxed"
 													>
-														Codes are validated like on your storefront checkout. Auto-apply and bundle tiers are set on each coupon in the admin (&quot;FooEvents POS / storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
+														Tick &quot;Show on POS&quot; on a WooCommerce coupon to surface it above. Codes are validated like on your storefront checkout. Auto-apply and bundle tiers are set on each coupon in the admin (&quot;FooEvents POS / storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
 													</p>
 												</div>
 											</AccordionContent>
@@ -608,15 +714,21 @@ export default function Checkout() {
 
 								<div className="space-y-4">
 									<p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-										Payment & check-in
+										{ showPaymentSelector ? 'Payment & check-in' : 'Check-in' }
 									</p>
-									<div className="grid gap-2">
-										<Label id={ `${ formId }-pm-label` }>Payment method</Label>
-										{ paymentMethodsLoading && ! paymentMethods?.length ? (
+									{ paymentMethodsLoading && ! paymentMethods?.length ? (
+										<div className="grid gap-2">
+											<Label id={ `${ formId }-pm-label` }>Payment method</Label>
 											<p className="text-muted-foreground text-sm">Loading payment methods…</p>
-										) : ! paymentMethods?.length ? (
+										</div>
+									) : ! paymentMethods?.length ? (
+										<div className="grid gap-2">
+											<Label id={ `${ formId }-pm-label` }>Payment method</Label>
 											<p className="text-muted-foreground text-sm">No payment methods available.</p>
-										) : (
+										</div>
+									) : showPaymentSelector ? (
+										<div className="grid gap-2">
+											<Label id={ `${ formId }-pm-label` }>Payment method</Label>
 											<ToggleGroup
 												type="single"
 												value={ effectivePaymentKey }
@@ -639,8 +751,8 @@ export default function Checkout() {
 													</ToggleGroupItem>
 												) ) }
 											</ToggleGroup>
-										) }
-									</div>
+										</div>
+									) : null }
 									<div className="grid gap-2">
 										<Label id={ `${ formId }-checkin-label` }>Check-in right now</Label>
 										<p className="text-muted-foreground text-xs leading-snug">

@@ -22,6 +22,8 @@ class Coupon_Rules {
 
 	public const META_CHANNEL_RESTRICTION = '_fooevents_channel_restriction';
 
+	public const META_SHOW_ON_POS = '_fooevents_show_on_pos';
+
 	public const META_IS_BUNDLE_TIER = '_fooevents_is_bundle_tier';
 
 	public const META_BUNDLE_QTY = '_fooevents_bundle_qty';
@@ -150,7 +152,7 @@ class Coupon_Rules {
 	 * @param WC_Coupon $coupon Coupon.
 	 * @return bool
 	 */
-	private static function coupon_is_usable_for_auto( WC_Coupon $coupon ) {
+	public static function coupon_is_usable_for_auto( WC_Coupon $coupon ) {
 		if ( $coupon->get_id() <= 0 ) {
 			return false;
 		}
@@ -164,6 +166,51 @@ class Coupon_Rules {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * WooCommerce coupon meta: surfaced as POS quick-apply buttons on checkout.
+	 *
+	 * @param WC_Coupon $coupon Coupon instance.
+	 * @return bool
+	 */
+	public static function coupon_show_on_pos_enabled( WC_Coupon $coupon ) {
+		return 'yes' === (string) $coupon->get_meta( self::META_SHOW_ON_POS );
+	}
+
+	/**
+	 * Plain-text summary of the discount rule for POS button labels / API.
+	 *
+	 * @param WC_Coupon $coupon Coupon instance.
+	 * @return string
+	 */
+	public static function coupon_pos_quick_apply_discount_summary( WC_Coupon $coupon ) {
+		$type = (string) $coupon->get_discount_type();
+
+		switch ( $type ) {
+			case 'percent':
+				$f = wc_format_decimal( (string) $coupon->get_amount(), 2 );
+				$f = rtrim( rtrim( $f, '0' ), '.' );
+
+				return '' !== $f ? sprintf( '%1$s%% %2$s', $f, __( 'off', 'fooevents-internal-pos' ) ) : '';
+
+			case 'fixed_cart':
+			case 'fixed_product':
+				$n = (float) $coupon->get_amount();
+				if ( $n <= 0 ) {
+					return '';
+				}
+
+				return wp_strip_all_tags( (string) wc_price( $n ) );
+
+			default:
+				$labels = function_exists( 'wc_get_coupon_types' ) ? wc_get_coupon_types() : array();
+				if ( isset( $labels[ $type ] ) && is_string( $labels[ $type ] ) && '' !== trim( $labels[ $type ] ) ) {
+					return wp_strip_all_tags( trim( $labels[ $type ] ) );
+				}
+
+				return '';
+		}
 	}
 
 	/**
@@ -532,5 +579,98 @@ class Coupon_Rules {
 			return $out;
 		}
 		return array_slice( $out, 0, self::MAX_COUPONS_PER_REQUEST );
+	}
+
+	/**
+	 * REST-readable list for POS quick-apply coupons (published, unexpired, Show on POS, allowed on POS channel).
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function get_pos_visible_quick_apply_coupons_rest() {
+		if ( ! function_exists( 'get_posts' ) ) {
+			return array();
+		}
+
+		$ids = get_posts(
+			array(
+				'post_type'              => 'shop_coupon',
+				'post_status'            => 'publish',
+				'posts_per_page'         => 200,
+				'fields'                 => 'ids',
+				'orderby'                => 'post_title',
+				'order'                  => 'ASC',
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => false,
+				'meta_query'             => array(
+					array(
+						'key'   => self::META_SHOW_ON_POS,
+						'value' => 'yes',
+					),
+				),
+			)
+		);
+
+		$rows = array();
+		if ( ! is_array( $ids ) ) {
+			return array();
+		}
+
+		foreach ( $ids as $pid ) {
+			$coupon = new WC_Coupon( (int) $pid );
+			if ( $coupon->get_id() <= 0 ) {
+				continue;
+			}
+
+			if ( Next_Purchase_Coupon_Service::is_next_purchase_coupon( $coupon ) ) {
+				continue;
+			}
+
+			if ( ! self::coupon_show_on_pos_enabled( $coupon ) ) {
+				continue;
+			}
+
+			if ( ! self::coupon_is_usable_for_auto( $coupon ) ) {
+				continue;
+			}
+
+			if ( ! self::coupon_allowed_for_channel( $coupon, 'pos' ) ) {
+				continue;
+			}
+
+			$raw_code = trim( (string) $coupon->get_code() );
+			if ( '' === $raw_code ) {
+				continue;
+			}
+
+			$code = function_exists( 'wc_format_coupon_code' ) ? wc_format_coupon_code( $raw_code ) : strtoupper( $raw_code );
+			if ( '' === $code ) {
+				continue;
+			}
+
+			$desc_plain = wp_strip_all_tags( (string) $coupon->get_description() );
+
+			if ( function_exists( 'mb_strlen' ) && function_exists( 'mb_substr' ) ) {
+				if ( mb_strlen( $desc_plain, 'UTF-8' ) > 240 ) {
+					$desc_plain = mb_substr( $desc_plain, 0, 237, 'UTF-8' ) . '…';
+				}
+			}
+
+			$rows[] = array(
+				'code'           => $code,
+				'label'          => function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $raw_code, 'UTF-8' ) : strtoupper( $raw_code ),
+				'description'   => $desc_plain,
+				'discountSummary' => self::coupon_pos_quick_apply_discount_summary( $coupon ),
+				'id'             => (int) $coupon->get_id(),
+			);
+		}
+
+		usort(
+			$rows,
+			static function ( $a, $b ) {
+				return strcasecmp( (string) ( $a['label'] ?? '' ), (string) ( $b['label'] ?? '' ) );
+			}
+		);
+
+		return $rows;
 	}
 }

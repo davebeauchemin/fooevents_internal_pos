@@ -207,6 +207,15 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/coupons/pos-visible',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_pos_visible_coupons' ),
+				'permission_callback' => array( $this, 'can_use_pos' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/validate/search',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -530,6 +539,21 @@ class Rest_API {
 	 */
 	public function get_payment_methods() {
 		return rest_ensure_response( Bookings_Checkout_Service::get_payment_methods_for_rest() );
+	}
+
+	/**
+	 * GET /coupons/pos-visible — Coupons marked visible on POS (published, unexpired, POS-eligible channel).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 */
+	public function get_pos_visible_coupons( WP_REST_Request $request ) {
+		unset( $request );
+
+		return rest_ensure_response(
+			array(
+				'coupons' => Coupon_Rules::get_pos_visible_quick_apply_coupons_rest(),
+			)
+		);
 	}
 
 	/**
@@ -1040,8 +1064,8 @@ class Rest_API {
 			$booking_args['qty']      = $qty;
 		}
 
-		if ( '' === $fn || '' === $ln || mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
-			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required (max 100 characters each).', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		if ( mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 		if ( ! is_email( $em ) ) {
 			return new WP_Error( 'rest_invalid_param', __( 'A valid attendee.email is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );

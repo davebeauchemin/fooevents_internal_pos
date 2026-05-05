@@ -39,6 +39,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-access-helper.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-coupon-rules.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-pos-settings.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-next-purchase-coupon-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-checkout-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
@@ -66,6 +67,7 @@ function fooevents_internal_pos_init() {
 	( new \FooEvents_Internal_POS\Rest_API() )->init();
 	( new \FooEvents_Internal_POS\Storefront_Assets() )->init();
 
+	( new \FooEvents_Internal_POS\Pos_Settings() )->init();
 	( new \FooEvents_Internal_POS\Coupon_Admin_Fields() )->init();
 	( new \FooEvents_Internal_POS\Storefront_Bundles() )->init();
 	( new \FooEvents_Internal_POS\Product_Bundle_Pricing() )->init();

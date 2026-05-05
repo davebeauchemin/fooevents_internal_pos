@@ -1041,10 +1041,10 @@ class Bookings_Checkout_Service {
 				}
 			}
 
-			$next_purchase_code   = '';
-			$next_purchase_amount = 0.0;
-			$next_purchase_label  = '';
-			if ( $completed_order instanceof WC_Order ) {
+			$next_purchase_code    = '';
+			$next_purchase_amount  = 0.0;
+			$next_purchase_label   = '';
+			if ( $completed_order instanceof WC_Order && Pos_Settings::generated_next_purchase_coupons_enabled() ) {
 				$next_purchase = Next_Purchase_Coupon_Service::ensure_next_purchase_coupon_for_order( $completed_order );
 				if ( is_array( $next_purchase ) && '' !== (string) ( $next_purchase['code'] ?? '' ) ) {
 					$next_purchase_code   = (string) $next_purchase['code'];

@@ -53,6 +53,9 @@ class Next_Purchase_Coupon_Service {
 	 * @param WC_Order|false $order    Order instance (may be missing on older callers).
 	 */
 	public function maybe_create_coupon_for_order( $order_id, $order = null ) {
+		if ( ! Pos_Settings::generated_next_purchase_coupons_enabled() ) {
+			return;
+		}
 		if ( ! $order instanceof WC_Order ) {
 			$order = wc_get_order( $order_id );
 		}
@@ -71,6 +74,10 @@ class Next_Purchase_Coupon_Service {
 	public function email_after_order_table( $order, $sent_to_admin, $plain_text, $email ) {
 		unset( $email );
 		if ( $sent_to_admin || ! $order instanceof WC_Order ) {
+			return;
+		}
+
+		if ( ! Pos_Settings::generated_next_purchase_coupons_enabled() ) {
 			return;
 		}
 

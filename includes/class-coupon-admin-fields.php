@@ -105,6 +105,16 @@ class Coupon_Admin_Fields {
 			)
 		);
 
+		$show_on_pos = 'yes' === (string) $coupon->get_meta( Coupon_Rules::META_SHOW_ON_POS );
+		echo '<p class="form-field fipos_show_on_pos_field">';
+		echo '<label for="fipos_show_on_pos">' . esc_html__( 'Show on POS', 'fooevents-internal-pos' ) . '</label>';
+		echo '<span class="fipos-show-on-pos-wrap" style="float:left;margin-top:6px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-left:-10px">';
+		echo '<input type="checkbox" name="fipos_show_on_pos" id="fipos_show_on_pos" class="checkbox" value="yes" ' . checked( $show_on_pos, true, false ) . ' />';
+		echo '<span class="description" style="max-width:36rem;display:block;line-height:1.5;margin:0;">';
+		echo esc_html__( 'When checked, POS checkout shows this coupon as a one-click apply button (only if redeemable on the POS channel above). Orders may still manually type the code.', 'fooevents-internal-pos' );
+		echo '</span>';
+		echo '</span></p>';
+
 		echo '<p class="form-field fipos_is_bundle_tier_field fipos-bundle-tier-field">';
 		echo '<label for="fipos_is_bundle_tier">' . esc_html__( 'Bundle tier', 'fooevents-internal-pos' ) . '</label>';
 		echo '<span class="fipos-bundle-tier-control-col">';
@@ -157,6 +167,9 @@ class Coupon_Admin_Fields {
 			$restriction = 'both';
 		}
 		$coupon->update_meta_data( Coupon_Rules::META_CHANNEL_RESTRICTION, $restriction );
+
+		$show_on_pos = ! empty( $_POST['fipos_show_on_pos'] ) ? 'yes' : 'no';
+		$coupon->update_meta_data( Coupon_Rules::META_SHOW_ON_POS, $show_on_pos );
 
 		$is_tier = ! empty( $_POST['fipos_is_bundle_tier'] ) ? 'yes' : 'no';
 		$coupon->update_meta_data( Coupon_Rules::META_IS_BUNDLE_TIER, $is_tier );

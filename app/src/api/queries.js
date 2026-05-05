@@ -180,6 +180,20 @@ export function useCheckoutPreview( lines, couponCodes, billingEmail = '' ) {
 	} );
 }
 
+/**
+ * Coupons marked Show on POS in WooCommerce admin (readable by POS cashier).
+ *
+ * @param {boolean} [enabled=true]
+ */
+export function usePosVisibleCoupons( enabled = true ) {
+	return useQuery( {
+		queryKey: [ 'internalpos', 'posVisibleCoupons' ],
+		queryFn: () => restFetch( `${ prefix }/coupons/pos-visible` ),
+		enabled: Boolean( enabled ),
+		staleTime: 60_000,
+	} );
+}
+
 export function useCheckAvailability() {
 	return useMutation( {
 		mutationKey: [ 'internalpos', 'availability' ],
