@@ -250,37 +250,70 @@ export function groupSlotsByHour( slots: SlotLike[] ): HourSlotGroup[] {
 }
 
 /**
+ * Resolved site clock hour 0–23 from backend, or null if unknown / invalid.
+ */
+function resolvedSiteHour(
+	siteCurrentHour: number | null | undefined,
+): number | null {
+	if (
+		siteCurrentHour === null ||
+		siteCurrentHour === undefined ||
+		siteCurrentHour !== siteCurrentHour
+	) {
+		return null;
+	}
+	const n = Number( siteCurrentHour );
+	if ( Number.isFinite( n ) && n >= 0 && n <= 23 ) {
+		return Math.trunc( n );
+	}
+	return null;
+}
+
+/**
  * When the calendar is on “today” (`viewYmd === siteTodayYmd`), remove hour buckets that
- * fall before the browser’s current clock hour (whole hours 0–23). Other days unchanged.
+ * fall before the site clock hour (`siteCurrentHour`). If unknown, buckets are unchanged.
  */
 export function hidePastHourBucketsForToday(
 	groups: HourSlotGroup[],
 	viewYmd: string,
 	siteTodayYmd: string,
+	siteCurrentHour?: number | null,
 ): HourSlotGroup[] {
 	if ( viewYmd !== siteTodayYmd || groups.length === 0 ) {
 		return groups;
 	}
-	const currentHour = new Date().getHours();
-	return groups.filter( ( g ) => g.hour >= currentHour );
+	const h = resolvedSiteHour( siteCurrentHour );
+	if ( h === null ) {
+		return groups;
+	}
+	return groups.filter( ( g ) => g.hour >= h );
 }
 
 export function hourBucketIsPastForToday(
 	group: Pick<HourSlotGroup, 'hour'>,
 	viewYmd: string,
 	siteTodayYmd: string,
+	siteCurrentHour?: number | null,
 ): boolean {
-	return viewYmd === siteTodayYmd && group.hour < new Date().getHours();
+	if ( viewYmd !== siteTodayYmd ) {
+		return false;
+	}
+	const h = resolvedSiteHour( siteCurrentHour );
+	if ( h === null ) {
+		return false;
+	}
+	return group.hour < h;
 }
 
 /**
- * Hour bucket (`g.key`) to open first: viewing “today” uses the browser’s local hour,
+ * Hour bucket (`g.key`) to open first: viewing “today” uses the site clock hour,
  * then next bucket ≥ that hour; other days opens the earliest hour group.
  */
 export function defaultAccordionHourKey(
 	groups: HourSlotGroup[],
 	viewYmd: string,
 	siteTodayYmd: string,
+	siteCurrentHour?: number | null,
 ) {
 	if ( groups.length === 0 ) {
 		return undefined;
@@ -288,7 +321,11 @@ export function defaultAccordionHourKey(
 	if ( viewYmd !== siteTodayYmd ) {
 		return groups[ 0 ].key;
 	}
-	const nowHour = new Date().getHours();
+	const h = resolvedSiteHour( siteCurrentHour );
+	if ( h === null ) {
+		return groups[ 0 ].key;
+	}
+	const nowHour = h;
 	const exact = groups.find( ( g ) => g.hour === nowHour );
 	if ( exact ) {
 		return exact.key;

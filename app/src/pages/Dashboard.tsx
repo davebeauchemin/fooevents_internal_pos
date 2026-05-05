@@ -68,6 +68,10 @@ type DashboardResponse = {
 	date: string;
 	events: DayEvent[];
 	calendarSummary?: BookingScheduleSummaryPayload;
+	siteTodayYmd?: string;
+	siteNowLocal?: string;
+	siteCurrentHour?: number;
+	siteTimezone?: string;
 };
 
 function findNextSelectableSlotOnDay(
@@ -166,13 +170,32 @@ export default function Dashboard() {
 	}, [displayYmd]);
 
 	/** Site “today” Y-m-d — same source for Today/Tomorrow labels and the 3-day strip. */
-	const effectiveSiteTodayYmd = useMemo(
-		() =>
+	const effectiveSiteTodayYmd = useMemo( () => {
+		const fromApi =
+			typeof data?.siteTodayYmd === 'string' &&
+				/^\d{4}-\d{2}-\d{2}$/.test( data.siteTodayYmd.trim() )
+				? data.siteTodayYmd.trim()
+				: null;
+		return (
 			siteTodayYmd
-			?? (ymd === '' && data?.date ? data.date : null)
-			?? format(new Date(), 'yyyy-MM-dd'),
-		[siteTodayYmd, ymd, data?.date],
-	);
+			?? fromApi
+			?? ( ymd === '' && data?.date ? data.date : null )
+			?? format( new Date(), 'yyyy-MM-dd' )
+		);
+	}, [ siteTodayYmd, ymd, data?.date, data?.siteTodayYmd ] );
+
+	const siteClockHourDashboard = useMemo( () => {
+		const raw = data?.siteCurrentHour;
+		if (
+			raw === null ||
+			raw === undefined ||
+			raw !== raw
+		) {
+			return null;
+		}
+		const n = Number( raw );
+		return Number.isFinite( n ) && n >= 0 && n <= 23 ? Math.trunc( n ) : null;
+	}, [ data?.siteCurrentHour ] );
 
 	const refTodayForLabels = useMemo(
 		() => parseISO(`${effectiveSiteTodayYmd}T12:00:00`),
@@ -193,10 +216,15 @@ export default function Dashboard() {
 	);
 
 	useEffect(() => {
-		if (ymd === '' && data?.date) {
-			setSiteTodayYmd((prev) => prev ?? data.date);
+		const raw = data?.siteTodayYmd;
+		const next =
+			typeof raw === 'string' ? raw.trim()
+			: '';
+		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( next ) ) {
+			return;
 		}
-	}, [ymd, data?.date]);
+		setSiteTodayYmd(next);
+	}, [data?.siteTodayYmd]);
 
 	useEffect(() => {
 		if (isError && error) {
@@ -491,6 +519,7 @@ export default function Dashboard() {
 														hourGroups,
 														displayYmd,
 														effectiveSiteTodayYmd,
+														siteClockHourDashboard,
 													);
 													return (
 														<Accordion
@@ -506,6 +535,7 @@ export default function Dashboard() {
 																	g,
 																	displayYmd,
 																	effectiveSiteTodayYmd,
+																	siteClockHourDashboard,
 																);
 																return (
 																	<AccordionItem

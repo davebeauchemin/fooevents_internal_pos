@@ -69,6 +69,10 @@ export type EventDetailForSchedule = {
 	price?: number | null;
 	priceHtml?: string;
 	bookingMethod?: string;
+	siteTodayYmd?: string;
+	siteNowLocal?: string;
+	siteCurrentHour?: number;
+	siteTimezone?: string;
 };
 
 function findNextAvailable( days: DayApi[] ) {
@@ -154,7 +158,18 @@ export default function EventSlotOverview( {
 		title: string;
 		currentStock: number;
 	} | null >( null );
-	const siteTodayYmd = siteTodayYmdProp ?? format( new Date(), 'yyyy-MM-dd' );
+	const siteTodayYmd = useMemo( () => {
+		const norm = ( v: unknown ) => {
+			if ( typeof v !== 'string' ) {
+				return null;
+			}
+			const t = v.trim();
+			return /^\d{4}-\d{2}-\d{2}$/.test( t ) ? t : null;
+		};
+		return norm( siteTodayYmdProp ) ??
+			norm( detail.siteTodayYmd )
+			?? format( new Date(), 'yyyy-MM-dd' );
+	}, [ siteTodayYmdProp, detail.siteTodayYmd ] );
 	const [ selectedYmd, setSelectedYmd ] = useState( () => detail.dates[ 0 ]?.date ?? '' );
 	const [ otherDateDialogOpen, setOtherDateDialogOpen ] = useState( false );
 

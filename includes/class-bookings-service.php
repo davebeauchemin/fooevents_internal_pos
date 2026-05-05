@@ -75,6 +75,26 @@ class Bookings_Service {
 	}
 
 	/**
+	 * WordPress site calendar + clock for POS (authoritative timezone for UI timing).
+	 *
+	 * @return array{siteTodayYmd:string,siteNowLocal:string,siteCurrentHour:int,siteTimezone:string}
+	 */
+	public function get_site_time_for_rest() {
+		$tz   = $this->get_wp_timezone();
+		$dt   = new DateTime( 'now', $tz );
+		$tz_s = function_exists( 'wp_timezone_string' ) ? wp_timezone_string() : $tz->getName();
+		if ( ! is_string( $tz_s ) || '' === $tz_s ) {
+			$tz_s = $tz->getName();
+		}
+		return array(
+			'siteTodayYmd'      => $dt->format( 'Y-m-d' ),
+			'siteNowLocal'      => $dt->format( 'c' ),
+			'siteCurrentHour'   => (int) $dt->format( 'G' ),
+			'siteTimezone'      => $tz_s,
+		);
+	}
+
+	/**
 	 * Display price for POS cart/checkout labels (matches storefront inclusive/exclusive logic).
 	 *
 	 * @param int $product_id Product ID.
@@ -182,14 +202,16 @@ class Bookings_Service {
 		$product_id = absint( $product_id );
 		$product    = wc_get_product( $product_id );
 		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
-			return array(
-				'id'             => $product_id,
-				'error'          => 'not_booking_event',
-				'title'         => $product ? $product->get_name() : '',
-				'bookingMethod' => '',
-				'labels'        => array( 'date' => __( 'Date', 'fooevents-internal-pos' ), 'slot' => __( 'Slot', 'fooevents-internal-pos' ) ),
-				'dates'         => array(),
-				'siteTodayYmd'  => $this->today_ymd(),
+			return array_merge(
+				array(
+					'id'             => $product_id,
+					'error'          => 'not_booking_event',
+					'title'         => $product ? $product->get_name() : '',
+					'bookingMethod' => '',
+					'labels'        => array( 'date' => __( 'Date', 'fooevents-internal-pos' ), 'slot' => __( 'Slot', 'fooevents-internal-pos' ) ),
+					'dates'         => array(),
+				),
+				$this->get_site_time_for_rest(),
 			);
 		}
 
@@ -307,15 +329,17 @@ class Bookings_Service {
 
 		$price_row = $this->get_product_price_for_rest( $product_id );
 
-		return array(
-			'id'             => $product_id,
-			'title'         => $product->get_name(),
-			'bookingMethod' => $method,
-			'labels'        => $labels,
-			'dates'         => $dates_out,
-			'price'         => $price_row['price'],
-			'priceHtml'     => $price_row['priceHtml'],
-			'siteTodayYmd'  => $this->today_ymd(),
+		return array_merge(
+			array(
+				'id'             => $product_id,
+				'title'         => $product->get_name(),
+				'bookingMethod' => $method,
+				'labels'        => $labels,
+				'dates'         => $dates_out,
+				'price'         => $price_row['price'],
+				'priceHtml'     => $price_row['priceHtml'],
+			),
+			$this->get_site_time_for_rest(),
 		);
 	}
 
@@ -616,44 +640,6 @@ class Bookings_Service {
 		$slot_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingSlot'] ?? '' ) );
 		$date_lbl_disp = trim( (string) ( $ticket_data['WooCommerceEventsBookingDate'] ?? '' ) );
 
-		$raw_ts = $ticket_data['WooCommerceEventsBookingDateTimestamp'] ?? null;
-		$dt_ts  = $this->parse_booking_timestamp_to_datetime( $raw_ts, $tz );
-		if ( $dt_ts instanceof DateTime ) {
-			return array(
-				'eventId'       => $product_id,
-				'slotId'        => $slot_id,
-				'dateId'        => $date_id,
-				'dateYmd'       => $dt_ts->format( 'Y-m-d' ),
-				'time'          => $dt_ts->format( 'H:i' ),
-				'dateLabel'     => $date_lbl_disp,
-				'slotLabel'     => $slot_lbl_disp,
-				'startsAtLocal' => $dt_ts->format( 'c' ),
-				'source'        => 'timestamp',
-			);
-		}
-
-		$mysql = isset( $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] )
-			? trim( (string) $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] ) : '';
-		if ( '' !== $mysql ) {
-			$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i:s', $mysql, $tz );
-			if ( ! $dt_mysql instanceof DateTime ) {
-				$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i', $mysql, $tz );
-			}
-			if ( $dt_mysql instanceof DateTime ) {
-				return array(
-					'eventId'       => $product_id,
-					'slotId'        => $slot_id,
-					'dateId'        => $date_id,
-					'dateYmd'       => $dt_mysql->format( 'Y-m-d' ),
-					'time'          => $dt_mysql->format( 'H:i' ),
-					'dateLabel'     => $date_lbl_disp,
-					'slotLabel'     => $slot_lbl_disp,
-					'startsAtLocal' => $dt_mysql->format( 'c' ),
-					'source'        => 'mysql',
-				);
-			}
-		}
-
 		if ( '' !== $slot_id && '' !== $date_id ) {
 			$res = $this->resolve_booking_slot_datetime_from_ids( $product_id, $slot_id, $date_id, $tz );
 			if ( is_array( $res ) ) {
@@ -688,6 +674,44 @@ class Bookings_Service {
 					'source'        => 'display_parse',
 				);
 			}
+		}
+
+		$mysql = isset( $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] )
+			? trim( (string) $ticket_data['WooCommerceEventsBookingDateMySQLFormat'] ) : '';
+		if ( '' !== $mysql ) {
+			$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i:s', $mysql, $tz );
+			if ( ! $dt_mysql instanceof DateTime ) {
+				$dt_mysql = DateTime::createFromFormat( 'Y-m-d H:i', $mysql, $tz );
+			}
+			if ( $dt_mysql instanceof DateTime ) {
+				return array(
+					'eventId'       => $product_id,
+					'slotId'        => $slot_id,
+					'dateId'        => $date_id,
+					'dateYmd'       => $dt_mysql->format( 'Y-m-d' ),
+					'time'          => $dt_mysql->format( 'H:i' ),
+					'dateLabel'     => $date_lbl_disp,
+					'slotLabel'     => $slot_lbl_disp,
+					'startsAtLocal' => $dt_mysql->format( 'c' ),
+					'source'        => 'mysql',
+				);
+			}
+		}
+
+		$raw_ts = $ticket_data['WooCommerceEventsBookingDateTimestamp'] ?? null;
+		$dt_ts  = $this->parse_booking_timestamp_to_datetime( $raw_ts, $tz );
+		if ( $dt_ts instanceof DateTime ) {
+			return array(
+				'eventId'       => $product_id,
+				'slotId'        => $slot_id,
+				'dateId'        => $date_id,
+				'dateYmd'       => $dt_ts->format( 'Y-m-d' ),
+				'time'          => $dt_ts->format( 'H:i' ),
+				'dateLabel'     => $date_lbl_disp,
+				'slotLabel'     => $slot_lbl_disp,
+				'startsAtLocal' => $dt_ts->format( 'c' ),
+				'source'        => 'timestamp',
+			);
 		}
 
 		return array(
@@ -855,20 +879,23 @@ class Bookings_Service {
 		);
 		$next_best = ! empty( $next_entries ) ? $next_entries[0] : null;
 
-		return array(
-			'date'   => $ymd,
-			'events' => $out,
-			'calendarSummary' => array(
-				'upcomingDistinctDays' => count( $distinct_upcoming ),
-				'slotsOnSelectedDay'   => count( $flatten_focus_slots ),
-				'capacityOnSelectedDay' => $this->dashboard_capacity_label_from_slots( $flatten_focus_slots ),
-				'nextAvailable'       => null !== $next_best
-					? array(
-						'dateYmd' => (string) $next_best['ymd'],
-						'slot'    => $next_best['slot'],
-					)
-					: null,
+		return array_merge(
+			array(
+				'date'            => $ymd,
+				'events'          => $out,
+				'calendarSummary' => array(
+					'upcomingDistinctDays'  => count( $distinct_upcoming ),
+					'slotsOnSelectedDay'    => count( $flatten_focus_slots ),
+					'capacityOnSelectedDay' => $this->dashboard_capacity_label_from_slots( $flatten_focus_slots ),
+					'nextAvailable'         => null !== $next_best
+						? array(
+							'dateYmd' => (string) $next_best['ymd'],
+							'slot'    => $next_best['slot'],
+						)
+						: null,
+				),
 			),
+			$this->get_site_time_for_rest(),
 		);
 	}
 

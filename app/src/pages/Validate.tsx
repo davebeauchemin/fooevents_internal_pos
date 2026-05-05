@@ -90,6 +90,14 @@ function isNonEmptyStr( s: unknown ): s is string {
 	return typeof s === 'string' && s.trim().length > 0;
 }
 
+function normalizeWpYmd( raw: unknown ): string | null {
+	if ( typeof raw !== 'string' ) {
+		return null;
+	}
+	const t = raw.trim();
+	return /^\d{4}-\d{2}-\d{2}$/.test( t ) ? t : null;
+}
+
 type TicketTone = 'neutral' | 'blue' | 'green' | 'yellow' | 'red';
 
 /** Badge + search row accents aligned with ticket visual language. */
@@ -361,6 +369,10 @@ type EventDetailForReschedule = {
 		}>;
 	}>;
 	error?: string;
+	siteTodayYmd?: string;
+	siteCurrentHour?: number;
+	siteNowLocal?: string;
+	siteTimezone?: string;
 };
 
 type ScanPurpose = 'validate' | 'checkin';
@@ -390,7 +402,23 @@ function TicketRescheduleDialog( props: {
 	const rescheduleMut = useRescheduleTicket();
 	const detail = eventQ.data as EventDetailForReschedule | undefined;
 
-	const siteTodayYmd = format( new Date(), 'yyyy-MM-dd' );
+	const siteTodayYmd = useMemo( () => {
+		const raw = detail?.siteTodayYmd;
+		if ( typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test( raw.trim() ) ) {
+			return raw.trim();
+		}
+		return '';
+	}, [ detail?.siteTodayYmd ] );
+
+	const rescheduleSiteClockHour = useMemo( () => {
+		const raw = detail?.siteCurrentHour;
+		if ( raw === null || raw === undefined || raw !== raw ) {
+			return null;
+		}
+		const n = Number( raw );
+		return Number.isFinite( n ) && n >= 0 && n <= 23 ? Math.trunc( n ) : null;
+	}, [ detail?.siteCurrentHour ] );
+
 	const [ viewYmd, setViewYmd ] = useState( '' );
 	const [ datePickerOpen, setDatePickerOpen ] = useState( false );
 	const [ picked, setPicked ] = useState< {
@@ -441,6 +469,7 @@ function TicketRescheduleDialog( props: {
 		groupSlotsByHour( slots ),
 		viewYmd,
 		siteTodayYmd,
+		rescheduleSiteClockHour,
 	);
 
 	const submitDisabled = ( () => {
@@ -799,12 +828,33 @@ export default function Validate() {
 		[ dashboardData ],
 	);
 
+	const siteNowUnixMs = useMemo( () => {
+		const iso = dashboardData?.siteNowLocal;
+		if ( typeof iso !== 'string' || ! iso.trim() ) {
+			return undefined;
+		}
+		const ms = Date.parse( iso.trim() );
+		return Number.isFinite( ms ) ? ms : undefined;
+	}, [ dashboardData?.siteNowLocal ] );
+
+	const gateSiteClockHour = useMemo( () => {
+		const raw = dashboardData?.siteCurrentHour;
+		if ( raw === null || raw === undefined || raw !== raw ) {
+			return null;
+		}
+		const n = Number( raw );
+		return Number.isFinite( n ) && n >= 0 && n <= 23 ? Math.trunc( n ) : null;
+	}, [ dashboardData?.siteCurrentHour ] );
+
 	const effSiteTodayYmd = useMemo(
 		() =>
-			siteTodayYmd
-			?? dashboardData?.date
+			normalizeWpYmd( dashboardData?.siteTodayYmd )
+			?? normalizeWpYmd( siteTodayYmd )
 			?? format( new Date(), 'yyyy-MM-dd' ),
-		[ siteTodayYmd, dashboardData?.date ],
+		[
+			dashboardData?.siteTodayYmd,
+			siteTodayYmd,
+		],
 	);
 
 	const scanRegionId =
@@ -868,10 +918,12 @@ export default function Validate() {
 	}, [ selectedGateSessionKey, dashboardData?.date, gateScheduleDay ] );
 
 	useEffect( () => {
-		if ( dashboardYmdParam === '' && dashboardData?.date ) {
-			setSiteTodayYmd( ( prev ) => prev ?? dashboardData.date );
+		const next = normalizeWpYmd( dashboardData?.siteTodayYmd );
+		if ( ! next ) {
+			return;
 		}
-	}, [ dashboardYmdParam, dashboardData?.date ] );
+		setSiteTodayYmd( next );
+	}, [ dashboardData?.siteTodayYmd ] );
 
 	useEffect( () => {
 		if (
@@ -887,12 +939,15 @@ export default function Validate() {
 			return;
 		}
 		const effToday =
-			siteTodayYmd
-			?? d.date
+			normalizeWpYmd( d.siteTodayYmd )
+			?? normalizeWpYmd( siteTodayYmd )
 			?? format( new Date(), 'yyyy-MM-dd' );
 		setSelectedValidateSession( ( prev ) => {
 			const stored = readStoredValidateSessionPick( d.date, flat );
-			const next = stored ?? pickDefaultValidateSession( d, effToday );
+			const next = stored ??
+				pickDefaultValidateSession( d, effToday, {
+					nowMs: siteNowUnixMs,
+				} );
 			if ( ! next ) {
 				return null;
 			}
@@ -909,6 +964,7 @@ export default function Validate() {
 		dashboardEventsSig,
 		siteTodayYmd,
 		gateScheduleDay,
+		siteNowUnixMs,
 	] );
 
 	useEffect( () => {
@@ -1642,6 +1698,7 @@ export default function Validate() {
 											hourGroups,
 											viewYmd,
 											effSiteTodayYmd,
+											gateSiteClockHour,
 										) ?? hourGroups[ 0 ]!.key;
 									if (
 										selectedValidateSession
@@ -1679,6 +1736,7 @@ export default function Validate() {
 														g,
 														viewYmd,
 														effSiteTodayYmd,
+														gateSiteClockHour,
 													);
 													return (
 														<AccordionItem

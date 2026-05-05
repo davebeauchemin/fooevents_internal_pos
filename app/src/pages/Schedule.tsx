@@ -447,13 +447,16 @@ export default function Schedule() {
 	const addManual = useAddManualSlot( eventId );
 	const addStock = useAddSlotStock( eventId );
 
-	const siteTodayYmd = useMemo( () => {
+	const apiWpSiteYmd = useMemo( () => {
 		const raw =
 			eventData && typeof eventData.siteTodayYmd === 'string'
 				? eventData.siteTodayYmd.trim()
 				: '';
-		return /^\d{4}-\d{2}-\d{2}$/.test( raw ) ? raw : todayYmdLocal();
+		return /^\d{4}-\d{2}-\d{2}$/.test( raw ) ? raw : null;
 	}, [ eventData ] );
+
+	/** Prefer WordPress “today” once event payload is loaded. */
+	const siteTodayYmd = apiWpSiteYmd ?? todayYmdLocal();
 
 	const siteTodayWeekday = useMemo( () => {
 		const d = parseLocalYmd( siteTodayYmd );
@@ -476,6 +479,30 @@ export default function Schedule() {
 	const [ fillFromYmd, setFillFromYmd ] = useState( () => todayYmdLocal() );
 	const [ fillToYmd, setFillToYmd ] = useState( () => todayYmdLocal() );
 	const [ fillConfirmOpen, setFillConfirmOpen ] = useState( false );
+
+	// Bump manual date and block ranges to WP “today” when the server calendar is ahead of browser-local init
+	// (runs after initial event hydrate so preset blocks aren’t immediately overwritten).
+	useEffect( () => {
+		if ( ! apiWpSiteYmd || ! formInitialized ) {
+			return;
+		}
+		setManualDate( ( prev ) => {
+			const p = prev.trim();
+			if ( ! /^\d{4}-\d{2}-\d{2}$/.test( p ) ) {
+				return apiWpSiteYmd;
+			}
+			return p < apiWpSiteYmd ? apiWpSiteYmd : p;
+		} );
+		setBlocks( ( prev ) =>
+			prev.map( ( b ) => ( {
+				...b,
+				startDate:
+					b.startDate.trim() < apiWpSiteYmd ? apiWpSiteYmd : b.startDate,
+				endDate:
+					b.endDate.trim() < apiWpSiteYmd ? apiWpSiteYmd : b.endDate,
+			} ) ),
+		);
+	}, [ apiWpSiteYmd, formInitialized ] );
 
 	// Bump fill range to site today once WordPress date is known (browser init can be one calendar day behind).
 	useEffect( () => {

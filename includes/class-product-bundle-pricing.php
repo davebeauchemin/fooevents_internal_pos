@@ -223,6 +223,15 @@ class Product_Bundle_Pricing {
 		}
 
 		$badges = '';
+		if ( 'append' === $context ) {
+			$base_badge_text = sprintf(
+				/* translators: %s: formatted unit price */
+				__( '1 ticket for %s', 'fooevents-internal-pos' ),
+				wp_strip_all_tags( wc_price( $unit ) )
+			);
+			$badges         .= self::get_bundle_pricing_badge_html( $product, 1, $base_badge_text );
+		}
+
 		foreach ( $rows as $row ) {
 			$qty  = isset( $row['qty'] ) ? (int) $row['qty'] : 0;
 			$text = isset( $row['text'] ) ? (string) $row['text'] : '';
@@ -230,18 +239,7 @@ class Product_Bundle_Pricing {
 				continue;
 			}
 
-			/**
-			 * CSS classes for each bundle chip (Automatic.css / ACSS: `btn btn--primary`).
-			 *
-			 * @param string     $classes Space‑separated classes.
-			 * @param WC_Product $product Product.
-			 * @param int        $qty     Tickets in this tier.
-			 */
-			$chip_classes = (string) apply_filters( 'fipos_dynamic_bundle_pricing_badge_classes', 'btn btn--primary', $product, $qty );
-			$chip_classes = self::sanitize_html_class_list( $chip_classes );
-			$full_class   = trim( 'fipos-dynamic-bundle-pricing__badge' . ( '' !== $chip_classes ? ' ' . $chip_classes : '' ) );
-
-			$badges .= '<span class="' . esc_attr( $full_class ) . '" data-fipos-bundle-qty="' . esc_attr( (string) $qty ) . '">' . esc_html( $text ) . '</span>';
+			$badges .= self::get_bundle_pricing_badge_html( $product, $qty, $text );
 		}
 
 		if ( '' !== $badges ) {
@@ -387,8 +385,29 @@ class Product_Bundle_Pricing {
 			return $price;
 		}
 
-		$sep = apply_filters( 'fipos_dynamic_bundle_pricing_html_append_separator', ' ' );
+		return $extra;
+	}
 
-		return $price . wp_kses_post( $sep ) . $extra;
+	/**
+	 * Single clickable bundle-pricing chip.
+	 *
+	 * @param WC_Product $product Product.
+	 * @param int        $qty     Ticket quantity.
+	 * @param string     $text    Badge label.
+	 * @return string
+	 */
+	private static function get_bundle_pricing_badge_html( $product, $qty, $text ) {
+		/**
+		 * CSS classes for each bundle chip (Automatic.css / ACSS: `btn btn--primary`).
+		 *
+		 * @param string     $classes Space‑separated classes.
+		 * @param WC_Product $product Product.
+		 * @param int        $qty     Tickets in this tier.
+		 */
+		$chip_classes = (string) apply_filters( 'fipos_dynamic_bundle_pricing_badge_classes', 'btn btn--primary', $product, $qty );
+		$chip_classes = self::sanitize_html_class_list( $chip_classes );
+		$full_class   = trim( 'fipos-dynamic-bundle-pricing__badge' . ( '' !== $chip_classes ? ' ' . $chip_classes : '' ) );
+
+		return '<span class="' . esc_attr( $full_class ) . '" data-fipos-bundle-qty="' . esc_attr( (string) $qty ) . '">' . esc_html( $text ) . '</span>';
 	}
 }

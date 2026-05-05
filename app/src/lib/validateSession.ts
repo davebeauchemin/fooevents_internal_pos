@@ -46,6 +46,12 @@ export type DashboardDayResponse = {
 		eventTitle: string;
 		slots: DashboardSlotRow[];
 	}>;
+	/** Y-m-d in WordPress timezone (today on the server). */
+	siteTodayYmd?: string;
+	/** RFC 3339 datetime with offset matching `siteTimezone`. */
+	siteNowLocal?: string;
+	siteCurrentHour?: number;
+	siteTimezone?: string;
 };
 
 export type ValidateSessionDelta = {
@@ -233,6 +239,10 @@ export function flattenDashboardToSessionPicks(
 export function pickDefaultValidateSession(
 	data: DashboardDayResponse,
 	siteTodayYmd: string,
+	opts?: {
+		/** Prefer WordPress clock (from `siteNowLocal`) over the browser’s `Date.now()`. */
+		nowMs?: number;
+	},
 ): ValidateSessionPick | null {
 	const rows = flattenDashboardToSessionPicks( data );
 	if ( ! rows.length ) {
@@ -247,7 +257,11 @@ export function pickDefaultValidateSession(
 			: Number.MAX_SAFE_INTEGER;
 		return ta - tb;
 	} );
-	const now = Date.now();
+	const now =
+		opts?.nowMs != null &&
+		Number.isFinite( opts.nowMs )
+			? opts.nowMs
+			: Date.now();
 	if ( data.date === siteTodayYmd ) {
 		const upcoming = sorted.filter(
 			( r ) =>
