@@ -217,7 +217,7 @@ jQuery(document).ready(function ($) {
   function parseSlotLabel(label) {
     var m = label.match(/\((\d{1,2}):(\d{2})(?:\s*(a\.m\.|p\.m\.))?\)/i);
     if (!m) {
-      return { hourKey: label, timeLabel: label, slideTitle: label, category: '', displayLabel: label };
+      return { hourKey: label, timeLabel: label, slideTitle: label, category: '', displayLabel: label, minuteOfDay: null };
     }
     var h = parseInt(m[1], 10);
     var apRaw = m[3] ? m[3].replace(/\./g, '').toLowerCase() : '';
@@ -236,6 +236,7 @@ jQuery(document).ready(function ($) {
     var hourKey = String(h24);
     var category = label.replace(/\s*\([^)]*\)\s*$/, '').trim();
     var mm = m[2];
+    var minuteOfDay = (h24 * 60) + parseInt(mm, 10);
     var timeNice = h12 + ':' + mm + ' ' + apLabel;
     var slideTitle = h12 + ' ' + apLabel;
 
@@ -261,8 +262,33 @@ jQuery(document).ready(function ($) {
       timeLabel: m[1] + ':' + m[2],
       slideTitle: slideTitle,
       category: category,
-      displayLabel: displayLabel
+      displayLabel: displayLabel,
+      minuteOfDay: minuteOfDay
     };
+  }
+
+  function dateLikeToYmd(raw) {
+    raw = String(raw || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    var d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function selectedDateYmd() {
+    var $selected = $dateSelect.find('option:selected');
+    return dateLikeToYmd($selected.val()) || dateLikeToYmd($selected.text());
+  }
+
+  function isPastSlotForSelectedDate(parsed) {
+    var cfg = window.fiposDateSlotPicker || {};
+    if (!cfg.siteTodayYmd || typeof cfg.siteNowMinutes !== 'number' || parsed.minuteOfDay === null) {
+      return false;
+    }
+    return selectedDateYmd() === cfg.siteTodayYmd && parsed.minuteOfDay < cfg.siteNowMinutes;
   }
 
   function buildSlotSlider() {
@@ -279,6 +305,10 @@ jQuery(document).ready(function ($) {
         parsed: parseSlotLabel(label),
         soldOut: label.toLowerCase().indexOf('sold out') !== -1
       });
+    });
+
+    rows = rows.filter(function (row) {
+      return !isPastSlotForSelectedDate(row.parsed);
     });
 
     var allCats = Object.create(null);
@@ -308,7 +338,7 @@ jQuery(document).ready(function ($) {
     removeLoading($('#kbm-slot-area'));
 
     if (!hourOrder.length) {
-      $('#kbm-slot-area').html('<p class="kbm-no-slots">No time slots available for this date.</p>');
+      $('#kbm-slot-area').html('<p class="kbm-no-slots">No upcoming time slots remain for this date.</p>');
       return;
     }
 
@@ -329,7 +359,7 @@ jQuery(document).ready(function ($) {
       var group = hourGroups[groupKey];
       var $slide = $('<div class="kbm-slot-slide"></div>');
       var $grid = $('<div class="kbm-slot-grid"></div>');
-      $slide.append($('<div class="kbm-slot-hour-label"></div>').text(group.title), $grid);
+      $slide.append($grid);
 
       group.slots.forEach(function (slot) {
         var $pill = $('<button type="button" class="kbm-pill">' + slot.label + '</button>');

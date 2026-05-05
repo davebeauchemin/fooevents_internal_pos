@@ -45,6 +45,10 @@ class Storefront_Assets {
 		}
 
 		if ( function_exists( 'is_product' ) && is_product() ) {
+			$site_time = ( new Bookings_Service() )->get_site_time_for_rest();
+			$now_ts    = isset( $site_time['siteNowLocal'] ) ? strtotime( (string) $site_time['siteNowLocal'] ) : false;
+			$minutes   = false === $now_ts ? null : (int) wp_date( 'G', $now_ts ) * 60 + (int) wp_date( 'i', $now_ts );
+
 			wp_enqueue_style(
 				'fipos-bundle-pricing',
 				$url . 'css/bundle-pricing.css',
@@ -69,6 +73,8 @@ class Storefront_Assets {
 				'fiposDateSlotPicker',
 				array(
 					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', true ),
+					'siteTodayYmd'    => isset( $site_time['siteTodayYmd'] ) ? (string) $site_time['siteTodayYmd'] : '',
+					'siteNowMinutes'  => $minutes,
 				)
 			);
 		}
