@@ -9,6 +9,8 @@ jQuery(document).ready(function ($) {
 
   var $dateSelect = $(DATE_SELECT_ID);
   var $slotSelect = $(SLOT_SELECT_ID);
+  var currentSelectedDateYmd = '';
+  var currentSelectedDateLabel = '';
 
   // Promo bundle chips set the real WooCommerce quantity field, then let Woo/FooEvents react.
   function getQuantityInput() {
@@ -165,6 +167,12 @@ jQuery(document).ready(function ($) {
       return;
     }
 
+    var initialDateValue = String($dateSelect.val() || '').trim();
+    var initialDateLabel = $dateSelect.find('option:selected').text().trim();
+    var defaultPill = pills[0];
+    currentSelectedDateYmd = dateLikeToYmd(initialDateValue) || dateLikeToYmd(initialDateLabel) || dateLikeToYmd(defaultPill.value) || dateLikeToYmd(defaultPill.label);
+    currentSelectedDateLabel = initialDateLabel || defaultPill.label;
+
     // Group into pages of 4
     var pages = [], PAGE_SIZE = 4;
     for (var i = 0; i < pills.length; i += PAGE_SIZE) {
@@ -183,9 +191,14 @@ jQuery(document).ready(function ($) {
       page.forEach(function (pill) {
         var dayName = new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
         var $pill = $('<button type="button" class="kbm-pill"><span class="kbm-pill__date">' + pill.label + '</span><span class="kbm-pill__day">' + dayName + '</span></button>');
+        if (pill.value === initialDateValue || (!initialDateValue && pill === defaultPill)) {
+          $pill.addClass('active');
+        }
         $pill.on('click', function () {
           $track.find('.kbm-pill').removeClass('active');
           $pill.addClass('active');
+          currentSelectedDateYmd = dateLikeToYmd(pill.value) || dateLikeToYmd(pill.label);
+          currentSelectedDateLabel = pill.label;
           $dateSelect.val(pill.value).trigger('change');
           if (useCustomTimeSlots) {
             $('#kbm-slot-area').show();
@@ -294,11 +307,12 @@ jQuery(document).ready(function ($) {
     var $selected = $dateSelect.find('option:selected');
     var selectedValue = String($selected.val() || '').trim();
     var selectedText = normalizedText($selected.text());
+    var trackedLabel = normalizedText(currentSelectedDateLabel);
 
-    if (todayYmd && (selectedValue === todayYmd || selectedDateYmd() === todayYmd)) {
+    if (todayYmd && (currentSelectedDateYmd === todayYmd || selectedValue === todayYmd || selectedDateYmd() === todayYmd)) {
       return true;
     }
-    return !!todayLabel && (normalizedText(selectedValue) === todayLabel || selectedText === todayLabel);
+    return !!todayLabel && (trackedLabel === todayLabel || normalizedText(selectedValue) === todayLabel || selectedText === todayLabel);
   }
 
   function isPastSlotForSelectedDate(parsed) {
