@@ -18,7 +18,7 @@ import {
 import { RequireManageEventsRoute, RequireValidateTicketsRoute, useAuth } from '@/context/AuthContext';
 import Dashboard from './pages/Dashboard';
 import Checkout from './pages/Checkout';
-import EventDetail from './pages/EventDetail.jsx';
+import EventDetail from './pages/EventDetail';
 import EventList from './pages/EventList.jsx';
 import Schedule from './pages/Schedule';
 import Validate from './pages/Validate.tsx';
@@ -36,11 +36,8 @@ function breadcrumbPageLabel( pathname ) {
 	if ( pathname === '/events' ) {
 		return 'Events';
 	}
-	if ( pathname.match( /^\/event\/[^/]+\/manage$/ ) ) {
-		return 'Manage schedule';
-	}
-	if ( pathname.match( /^\/event\/[^/]+$/ ) ) {
-		return 'Event';
+	if ( pathname.match( /^\/event\/[^/]+/ ) ) {
+		return 'Event workspace';
 	}
 	return 'Internal POS';
 }

@@ -67,18 +67,15 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
       return base
     }
     const detailPath = `/event/${ activeEventId }`
-    const managePath = `/event/${ activeEventId }/manage`
+    const manageAliasPath = `/event/${ activeEventId }/manage`
     return [
       ...base,
       {
-        title: "Event details",
+        title: "Event workspace",
         url: detailPath,
-        isActive: pathname === detailPath,
-      },
-      {
-        title: "Manage schedule",
-        url: managePath,
-        isActive: pathname === managePath,
+        isActive:
+          pathname === detailPath
+          || pathname === manageAliasPath,
       },
     ]
   }, [ pathname, activeEventId ] )

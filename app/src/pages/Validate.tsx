@@ -1367,7 +1367,7 @@ export default function Validate() {
 									) }
 								</div>
 								<Badge
-									className={ `h-fit shrink-0 ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
+									className={ `h-fit shrink-0 px-3 py-1.5 text-sm font-black tracking-wide sm:text-base ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
 								>
 									{ String( ticket.WooCommerceEventsStatus ?? '—' ) }
 								</Badge>
@@ -1391,8 +1391,8 @@ export default function Validate() {
 								) }
 							</div>
 
-							<div className="grid gap-2 sm:grid-cols-2">
-								<div>
+							<div className="space-y-3">
+								<div className="space-y-2">
 									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
 										Attendee
 									</p>
@@ -1400,24 +1400,21 @@ export default function Validate() {
 										{ `${ ticket.WooCommerceEventsAttendeeName ?? '' } ${ ticket.WooCommerceEventsAttendeeLastName ?? '' }`.trim()
 											|| '\u2014' }
 									</p>
-								</div>
-								<div>
-									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-										Contact
-									</p>
-									<p className="text-sm">{ ticket.WooCommerceEventsAttendeeEmail || '\u2014' }</p>
-									<p className="font-mono text-sm tabular-nums">
-										{ ticket.WooCommerceEventsAttendeeTelephone || '\u2014' }
-									</p>
+									<div>
+										<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+											Contact
+										</p>
+										<p className="text-sm">{ ticket.WooCommerceEventsAttendeeEmail || '\u2014' }</p>
+										<p className="font-mono text-sm tabular-nums">
+											{ ticket.WooCommerceEventsAttendeeTelephone || '\u2014' }
+										</p>
+									</div>
 								</div>
 							</div>
 
 							<Separator />
 
 							<div>
-								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
-									Set status
-								</p>
 								<div className="flex flex-col gap-2">
 									{ ticket.WooCommerceEventsStatus === 'Not Checked In' ? (
 										<Button

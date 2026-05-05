@@ -15,6 +15,7 @@ export type POSBootstrapUser = {
 export type POSAccessBootstrap = {
 	canUsePos: boolean;
 	canManageEvents: boolean;
+	canReplaceEventSchedules: boolean;
 	canValidateTickets: boolean;
 	currentUser?: POSBootstrapUser | null;
 	site?: { name: string };
@@ -33,6 +34,7 @@ function defaultDevAccess(): POSAccessBootstrap {
 	return {
 		canUsePos: true,
 		canManageEvents: true,
+		canReplaceEventSchedules: true,
 		canValidateTickets: true,
 		currentUser: {
 			name: 'Dev User',
@@ -57,6 +59,7 @@ function readBootstrap(): POSAccessBootstrap {
 		return {
 			canUsePos: false,
 			canManageEvents: false,
+			canReplaceEventSchedules: false,
 			canValidateTickets: false,
 			currentUser: null,
 			site: undefined,
@@ -69,6 +72,9 @@ function readBootstrap(): POSAccessBootstrap {
 	return {
 		canUsePos: Boolean( ( raw as POSAccessBootstrap ).canUsePos ),
 		canManageEvents: Boolean( ( raw as POSAccessBootstrap ).canManageEvents ),
+		canReplaceEventSchedules: Boolean(
+			( raw as POSAccessBootstrap ).canReplaceEventSchedules,
+		),
 		canValidateTickets: Boolean( ( raw as POSAccessBootstrap ).canValidateTickets ),
 		currentUser:
 			userRaw && typeof userRaw === 'object'

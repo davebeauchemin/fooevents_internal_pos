@@ -72,6 +72,13 @@ final class Access_Helper {
 	}
 
 	/**
+	 * Replace entire FooEvents schedule for an event product (destructive — administrator only).
+	 */
+	public static function can_replace_event_schedules(): bool {
+		return is_user_logged_in() && current_user_can( 'manage_options' );
+	}
+
+	/**
 	 * FooEvents ticket-app style caps (not required for calendar checkout; optional UI later).
 	 */
 	public static function can_validate_fooevents_tickets(): bool {
@@ -136,9 +143,10 @@ final class Access_Helper {
 	 */
 	public static function pos_access_flags(): array {
 		$out = array(
-			'canUsePos'          => self::can_use_pos(),
-			'canManageEvents'    => self::can_manage_shop_events(),
-			'canValidateTickets' => self::can_validate_fooevents_tickets(),
+			'canUsePos'                  => self::can_use_pos(),
+			'canManageEvents'            => self::can_manage_shop_events(),
+			'canReplaceEventSchedules'   => self::can_replace_event_schedules(),
+			'canValidateTickets'         => self::can_validate_fooevents_tickets(),
 		);
 
 		if ( is_user_logged_in() ) {

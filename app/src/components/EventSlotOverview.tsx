@@ -180,12 +180,15 @@ type Props = {
 	detail: EventDetailForSchedule;
 	/** Y-m-d site “today” for past-day check; browser-local if omitted. */
 	siteTodayYmd?: string;
+	/** Hide inline quick-add toolbar when scheduling actions live in event dialogs. */
+	hideManualAddToolbar?: boolean;
 };
 
 /** Schedule overview on event detail: availability by hour plus optional manual sessions (slot-first and date-first booking). */
 export default function EventSlotOverview( {
 	detail,
 	siteTodayYmd: siteTodayYmdProp,
+	hideManualAddToolbar = false,
 }: Props ) {
 	const { canManageEvents } = useAuth();
 	const { dates, labels } = detail;
@@ -471,15 +474,26 @@ export default function EventSlotOverview( {
 							</span>
 							{ manageSlotsUi && (
 								<span className="text-muted-foreground mt-2 block font-normal leading-relaxed">
-									You can add or remove ticket spots, delete a session for{' '}
-									<span className="font-mono text-xs">{ selectedDay?.date }</span>, or use Manage
-									schedule for bulk changes.
+									{ hideManualAddToolbar ? (
+										<>
+											Use <strong>Add new session</strong> or <strong>Add ticket spots</strong> on
+											this page for toolbar-driven adds. Inline actions below adjust ticket spots,
+											reduce limits, or remove sessions on{ ' ' }
+											<span className="font-mono text-xs">{ selectedDay?.date }</span>.
+										</>
+									) : (
+										<>
+											You can add or remove ticket spots, delete a session for{ ' ' }
+											<span className="font-mono text-xs">{ selectedDay?.date }</span>, or open
+											Manage schedule for bulk changes from the toolbar.
+										</>
+									) }
 								</span>
 							) }
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4 pt-0">
-						{ manageSlotsUi && selectedDay?.date ? (
+						{ manageSlotsUi && selectedDay?.date && ! hideManualAddToolbar ? (
 							<EventOverviewManualAddToolbar
 								eventId={ detail.id as number }
 								selectedYmd={ selectedDay.date }
@@ -790,7 +804,7 @@ function EventOverviewManualAddToolbar( {
 } ) {
 	const [ addMode, setAddMode ] = useState< 'newSession' | 'extraSpots' >( 'newSession' );
 	const [ manualTime, setManualTime ] = useState( '09:00' );
-	const [ manualCapacity, setManualCapacity ] = useState( 10 );
+	const [ manualCapacity, setManualCapacity ] = useState( 12 );
 	const [ manualLabel, setManualLabel ] = useState( '' );
 	const [ spotSelectValue, setSpotSelectValue ] = useState( '' );
 	const [ addSpotsDelta, setAddSpotsDelta ] = useState( 1 );

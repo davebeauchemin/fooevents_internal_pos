@@ -392,6 +392,13 @@ class Rest_API {
 			$params['mode'] = 'fillEmpty';
 			$result         = $this->slot_generator->generate_fill_empty_days( $id, $params );
 		} else {
+			if ( ! Access_Helper::can_replace_event_schedules() ) {
+				return new WP_Error(
+					'rest_forbidden',
+					__( 'Administrator permission is required to replace all booking slots.', 'fooevents-internal-pos' ),
+					array( 'status' => 403 )
+				);
+			}
 			$result = $this->slot_generator->generate( $id, $params );
 		}
 		if ( is_wp_error( $result ) ) {
