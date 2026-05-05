@@ -283,12 +283,30 @@ jQuery(document).ready(function ($) {
     return dateLikeToYmd($selected.val()) || dateLikeToYmd($selected.text());
   }
 
+  function normalizedText(raw) {
+    return String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function selectedDateIsSiteToday() {
+    var cfg = window.fiposDateSlotPicker || {};
+    var todayYmd = String(cfg.siteTodayYmd || '').trim();
+    var todayLabel = normalizedText(cfg.siteTodayLabel);
+    var $selected = $dateSelect.find('option:selected');
+    var selectedValue = String($selected.val() || '').trim();
+    var selectedText = normalizedText($selected.text());
+
+    if (todayYmd && (selectedValue === todayYmd || selectedDateYmd() === todayYmd)) {
+      return true;
+    }
+    return !!todayLabel && (normalizedText(selectedValue) === todayLabel || selectedText === todayLabel);
+  }
+
   function isPastSlotForSelectedDate(parsed) {
     var cfg = window.fiposDateSlotPicker || {};
     if (!cfg.siteTodayYmd || typeof cfg.siteNowMinutes !== 'number' || parsed.minuteOfDay === null) {
       return false;
     }
-    return selectedDateYmd() === cfg.siteTodayYmd && parsed.minuteOfDay < cfg.siteNowMinutes;
+    return selectedDateIsSiteToday() && parsed.minuteOfDay < cfg.siteNowMinutes;
   }
 
   function buildSlotSlider() {

@@ -74,6 +74,9 @@ class Storefront_Assets {
 				array(
 					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', true ),
 					'siteTodayYmd'    => isset( $site_time['siteTodayYmd'] ) ? (string) $site_time['siteTodayYmd'] : '',
+					'siteTodayLabel'  => wp_date( (string) get_option( 'date_format' ), false === $now_ts ? time() : $now_ts ),
+					'siteNowLocal'    => isset( $site_time['siteNowLocal'] ) ? (string) $site_time['siteNowLocal'] : '',
+					'siteTimezone'    => isset( $site_time['siteTimezone'] ) ? (string) $site_time['siteTimezone'] : '',
 					'siteNowMinutes'  => $minutes,
 				)
 			);
