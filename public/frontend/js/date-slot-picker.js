@@ -188,6 +188,14 @@ jQuery(document).ready(function ($) {
     return d.toLocaleDateString('en-US', { weekday: 'long' });
   }
 
+  /** 24h HH:MM from minute-of-day (site-local semantics match PHP slot metadata). */
+  function minuteOfDayToHhMm(mod) {
+    if (typeof mod !== 'number' || mod < 0 || mod >= 1440) return '';
+    var h24 = Math.floor(mod / 60);
+    var mm = mod % 60;
+    return String(h24).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+  }
+
   function parseSlotLabel(label) {
     var m = label.match(/\((\d{1,2}):(\d{2})(?:\s*(a\.m\.|p\.m\.))?\)/i);
     if (!m) {
@@ -201,39 +209,36 @@ jQuery(document).ready(function ($) {
       else if (apRaw === 'am' && h === 12) h24 = 0;
       else h24 = h;
     } else {
+      // No a.m./p.m.: treat as already 24h (e.g. slot configured as 20:00).
       h24 = h;
     }
-    var isPm = h24 >= 12 && h24 < 24;
-    var apLabel = isPm ? 'PM' : 'AM';
-    var h12 = h24 % 12;
-    if (h12 === 0) h12 = 12;
     var hourKey = String(h24);
     var category = label.replace(/\s*\([^)]*\)\s*$/, '').trim();
-    var mm = m[2];
-    var minuteOfDay = (h24 * 60) + parseInt(mm, 10);
-    var timeNice = h12 + ':' + mm + ' ' + apLabel;
-    var slideTitle = h12 + ' ' + apLabel;
+    var mmDigits = String(parseInt(m[2], 10)).padStart(2, '0');
+    var minuteOfDay = (h24 * 60) + parseInt(mmDigits, 10);
+    var timeHhMm = minuteOfDayToHhMm(minuteOfDay);
+    // Hour buckets and nav: anchored at HH:00 in 24h (e.g. 22:00, not "10 PM").
+    var slideTitle = String(h24).padStart(2, '0') + ':00';
 
-    // Pill text: "Category · 11:00 AM". If the label is time-only (e.g. 11:00 (11:00 a.m.)), show time once.
+    // Pill text: "Category · 22:35". If duplicate time-only category, collapse.
     var displayLabel;
     var catHm = category.match(/^(\d{1,2}):(\d{2})$/);
     if (catHm) {
       var catM = parseInt(catHm[1], 10) * 60 + parseInt(catHm[2], 10);
-      var slotM = h24 * 60 + parseInt(mm, 10);
-      if (catM === slotM) {
-        displayLabel = timeNice;
+      if (catM === minuteOfDay) {
+        displayLabel = timeHhMm;
       } else {
-        displayLabel = category + ' \u00b7 ' + timeNice;
+        displayLabel = category + ' \u00b7 ' + timeHhMm;
       }
     } else if (category) {
-      displayLabel = category + ' \u00b7 ' + timeNice;
+      displayLabel = category + ' \u00b7 ' + timeHhMm;
     } else {
-      displayLabel = timeNice;
+      displayLabel = timeHhMm;
     }
 
     return {
       hourKey: hourKey,
-      timeLabel: m[1] + ':' + m[2],
+      timeLabel: timeHhMm,
       slideTitle: slideTitle,
       category: category,
       displayLabel: displayLabel,
@@ -253,23 +258,23 @@ jQuery(document).ready(function ($) {
     }
     var minuteOfDay = meta.minuteOfDay;
     var h24 = Math.floor(minuteOfDay / 60);
-    var mmNum = minuteOfDay % 60;
-    var mm = String(mmNum).padStart(2, '0');
-    var isPmSlot = h24 >= 12 && h24 < 24;
-    var apLbl = isPmSlot ? 'PM' : 'AM';
-    var h12 = h24 % 12;
-    if (h12 === 0) h12 = 12;
+    var timeHhMm = minuteOfDayToHhMm(minuteOfDay);
     parsed.minuteOfDay = minuteOfDay;
     parsed.hourKey = String(h24);
-    parsed.slideTitle = h12 + ' ' + apLbl;
-    parsed.timeLabel = h24 + ':' + mm;
+    parsed.slideTitle = String(h24).padStart(2, '0') + ':00';
+    parsed.timeLabel = timeHhMm;
 
     var category = parsed.category;
-    var timeNice = h12 + ':' + mm + ' ' + apLbl;
     if (category && category.trim()) {
-      parsed.displayLabel = category + ' \u00b7 ' + timeNice;
+      var catHmMeta = category.match(/^(\d{1,2}):(\d{2})$/);
+      if (catHmMeta) {
+        var catM = parseInt(catHmMeta[1], 10) * 60 + parseInt(catHmMeta[2], 10);
+        parsed.displayLabel = catM === minuteOfDay ? timeHhMm : category + ' \u00b7 ' + timeHhMm;
+      } else {
+        parsed.displayLabel = category + ' \u00b7 ' + timeHhMm;
+      }
     } else {
-      parsed.displayLabel = timeNice;
+      parsed.displayLabel = timeHhMm;
     }
 
     return parsed;
@@ -407,8 +412,12 @@ jQuery(document).ready(function ($) {
         hourGroups[gk] = { title: slideTitle, hourTitle: parsed.slideTitle, slots: [] };
         hourOrder.push(gk);
       }
-      // Pill text = raw FooEvents option label (no displayLabel / time reformatting).
-      hourGroups[gk].slots.push({ value: row.val, label: row.label, disabled: row.soldOut });
+      hourGroups[gk].slots.push({
+        value: row.val,
+        label: row.label,
+        pillText: row.parsed.minuteOfDay !== null ? row.parsed.displayLabel : row.label,
+        disabled: row.soldOut
+      });
     });
 
     removeLoading($('#kbm-slot-area'));
@@ -438,7 +447,8 @@ jQuery(document).ready(function ($) {
       $slide.append($grid);
 
       group.slots.forEach(function (slot) {
-        var $pill = $('<button type="button" class="kbm-pill">' + slot.label + '</button>');
+        var $pill = $('<button type="button" class="kbm-pill"></button>');
+        $pill.text(slot.pillText);
         if (slot.disabled) $pill.addClass('disabled').prop('disabled', true).attr('title', 'Sold out');
         $pill.on('click', function () {
           $wrapper.find('.kbm-pill').removeClass('active');
