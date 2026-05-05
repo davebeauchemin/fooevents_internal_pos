@@ -10,6 +10,7 @@ import {
 	CircleAlert,
 	Loader2,
 	ScanBarcode,
+	Trash2,
 	UserSearch,
 	X,
 	XCircle,
@@ -26,18 +27,18 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+	Accordion,
+	AccordionContent,
+	AccordionItem,
+	AccordionTrigger,
+} from '@/components/ui/accordion';
+import {
 	Card,
 	CardContent,
 	CardDescription,
 	CardHeader,
 	CardTitle,
 } from '@/components/ui/card';
-import {
-	Accordion,
-	AccordionContent,
-	AccordionItem,
-	AccordionTrigger,
-} from '@/components/ui/accordion';
 import {
 	Dialog,
 	DialogContent,
@@ -64,7 +65,6 @@ import {
 	ticketHasBookingSlotIds,
 	type BookingSessionPayload,
 	type DashboardDayResponse,
-	type SessionTimingCueTone,
 	type ValidateSessionDelta,
 	type ValidateSessionPick,
 	validateSessionOptionKey,
@@ -152,44 +152,6 @@ function ticketLookupArg(
 		return fmt;
 	}
 	return String( ticket.WooCommerceEventsTicketID ?? '' ).trim();
-}
-
-/** Colored panel on the scanned ticket card for past / current / future vs selected gate. */
-function sessionTimingCuePanelClass( tone: SessionTimingCueTone ): string {
-	switch ( tone ) {
-		case 'match':
-			return cn(
-				'border-2 border-emerald-600/45 bg-emerald-500/12',
-				'text-emerald-950 dark:border-emerald-500/50 dark:bg-emerald-950/40 dark:text-emerald-50',
-			);
-		case 'future':
-			return cn(
-				'border-2 border-orange-500/45 bg-orange-500/12',
-				'text-orange-950 dark:border-orange-500/50 dark:bg-orange-950/40 dark:text-orange-50',
-			);
-		case 'past':
-			return cn(
-				'border-2 border-red-600/45 bg-red-500/12',
-				'text-red-950 dark:border-red-500/50 dark:bg-red-950/40 dark:text-red-50',
-			);
-		case 'wrong':
-			return cn(
-				'border-2 border-destructive/55 bg-destructive/15',
-				'text-destructive dark:border-destructive/60 dark:bg-destructive/20 dark:text-red-200',
-			);
-		case 'warn':
-			return cn(
-				'border-2 border-amber-600/45 bg-amber-500/12',
-				'text-amber-950 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-50',
-			);
-		case 'unknown':
-			return cn(
-				'border-2 border-muted-foreground/40 bg-muted/60',
-				'text-foreground',
-			);
-		default:
-			return 'border-2 border-border bg-muted/40 text-foreground';
-	}
 }
 
 /** Card border/background tone for main ticket Card. */
@@ -293,11 +255,11 @@ function ticketResultCopy( args: {
 			if ( sd?.kind === 'no_selection' ) {
 				return {
 					ResultIcon: CircleAlert,
-					headline: 'Choose gate session',
+					headline: 'Verify booking timing',
 					subtitle:
 						sd.detailLine
 						|| sd.subtitleExtra
-						|| 'Select the current gate session to verify timing.',
+						|| "Compare the booked date/slot below to today's admitting window manually.",
 				};
 			}
 			if ( sd?.offSession && sd.kind !== 'non_booking' ) {
@@ -307,7 +269,7 @@ function ticketResultCopy( args: {
 					subtitle:
 						sd.detailLine
 						|| sd.subtitleExtra
-						|| 'Booking does not match the selected gate session.',
+						|| 'Booking timing does not match POS session comparison.',
 				};
 			}
 			return {
@@ -355,6 +317,38 @@ type FooTicketPayload = Record< string, unknown > & {
 	eventDisplayName?: string;
 	bookingSession?: BookingSessionPayload;
 };
+
+function ticketBookingDateDisplay( t: FooTicketPayload ): string {
+	if ( isNonEmptyStr( t.WooCommerceEventsBookingDate ) ) {
+		return String( t.WooCommerceEventsBookingDate ).trim();
+	}
+	const bs = t.bookingSession;
+	if ( bs && bs.source !== 'none' ) {
+		const fromLabel = bs.dateLabel?.trim() ?? '';
+		if ( fromLabel ) {
+			return fromLabel;
+		}
+		const y = bs.dateYmd?.trim() ?? '';
+		return y;
+	}
+	return '';
+}
+
+function ticketBookingSlotDisplay( t: FooTicketPayload ): string {
+	if ( isNonEmptyStr( t.WooCommerceEventsBookingSlot ) ) {
+		return String( t.WooCommerceEventsBookingSlot ).trim();
+	}
+	const bs = t.bookingSession;
+	if ( bs && bs.source !== 'none' ) {
+		const lbl = bs.slotLabel?.trim() ?? '';
+		if ( lbl ) {
+			return lbl;
+		}
+		const ti = bs.time?.trim() ?? '';
+		return ti;
+	}
+	return '';
+}
 
 /** Payload from GET /validate/ticket/{id} merges site clock + `{ ticket }`. */
 type ValidateTicketApiEnvelope = {
@@ -797,6 +791,7 @@ export default function Validate() {
 	const [ siteTodayYmd, setSiteTodayYmd ] = useState< string | null >( null );
 	const [ selectedValidateSession, setSelectedValidateSession ] =
 		useState< ValidateSessionPick | null >( null );
+	const gateSlotsScrollRef = useRef< HTMLDivElement | null >( null );
 
 	const dashboardYmdParam = useMemo( () => {
 		if ( ! siteTodayYmd || ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
@@ -917,46 +912,19 @@ export default function Validate() {
 		[ sessionDelta ],
 	);
 
-	const autoCheckInHandledKeyRef = useRef< string >( '' );
-	const gateSlotsScrollRef = useRef< HTMLDivElement >( null );
-
 	const selectedGateSessionKey = useMemo(
 		() =>
 			selectedValidateSession
 				? validateSessionOptionKey( selectedValidateSession )
-				: null,
+				: '',
 		[ selectedValidateSession ],
 	);
+
+	const autoCheckInHandledKeyRef = useRef< string >( '' );
 
 	/** Stable lookup for mutate (same logic as mutation body). */
 	const getLookupFromTicket = ( t?: FooTicketPayload ) =>
 		t ? ticketLookupArg( t, selectedTicketId ) : '';
-
-	useEffect( () => {
-		if ( ! selectedGateSessionKey ) {
-			return;
-		}
-		const root = gateSlotsScrollRef.current;
-		if ( ! root ) {
-			return;
-		}
-		const t = window.setTimeout( () => {
-			const nodes = root.querySelectorAll< HTMLElement >( '[data-gate-slot]' );
-			const el = Array.from( nodes ).find(
-				( node ) =>
-					node.getAttribute( 'data-gate-slot' ) === selectedGateSessionKey,
-			);
-			const reduceMotion =
-				typeof window !== 'undefined'
-				&& window.matchMedia( '(prefers-reduced-motion: reduce)' ).matches;
-			el?.scrollIntoView( {
-				behavior: reduceMotion ? 'auto' : 'smooth',
-				block: 'start',
-				inline: 'nearest',
-			} );
-		}, 120 );
-		return () => window.clearTimeout( t );
-	}, [ selectedGateSessionKey, dashboardData?.date, gateScheduleDay ] );
 
 	useEffect( () => {
 		const next = normalizeWpYmd( dashboardData?.siteTodayYmd );
@@ -1016,8 +984,20 @@ export default function Validate() {
 		siteTodayYmd,
 		gateScheduleDay,
 		siteNowUnixMs,
-		validateTicketApi?.siteNowLocal,
 	] );
+
+	useEffect( () => {
+		if ( ! selectedGateSessionKey || ! gateSlotsScrollRef.current ) {
+			return;
+		}
+		const el = gateSlotsScrollRef.current.querySelector< HTMLElement >(
+			`[data-gate-slot="${ CSS.escape( selectedGateSessionKey ) }"]`,
+		);
+		el?.scrollIntoView( {
+			block: 'nearest',
+			inline: 'nearest',
+		} );
+	}, [ selectedGateSessionKey, dashboardData?.date ] );
 
 	useEffect( () => {
 		if ( ! scannerOpen ) {
@@ -1217,6 +1197,21 @@ export default function Validate() {
 		const numericIdDisp = ticket
 			? String( ticket.WooCommerceEventsTicketID ?? '' )
 			: '';
+		const bookingHeroDate =
+			ticket != null ? ticketBookingDateDisplay( ticket ) : '';
+		const bookingHeroSlot =
+			ticket != null ? ticketBookingSlotDisplay( ticket ) : '';
+		const eventTitlePrimary =
+			ticket != null
+				? ( isNonEmptyStr( ticket.eventDisplayName )
+					? String( ticket.eventDisplayName ).trim()
+					: `Event product #${ String( ticket.WooCommerceEventsProductID ?? '' ) }` )
+				: '';
+		const showReschedule =
+			ticket != null
+			&& ticketHasBookingSlotIds( ticket )
+			&& Number( ticket.WooCommerceEventsProductID ) > 0
+			&& ticket.WooCommerceEventsStatus !== 'Canceled';
 
 		return (
 			<div className="space-y-4">
@@ -1278,10 +1273,10 @@ export default function Validate() {
 							ticketCardToneClass( tone ),
 						) }
 					>
-						<CardHeader className="pb-4">
+						<CardHeader className="space-y-4 pb-4">
 							<div
 								className={ cn(
-									'mb-4 flex flex-wrap items-start gap-3 rounded-lg border p-4',
+									'relative flex flex-wrap items-start gap-3 rounded-lg border p-3 sm:p-4',
 									tone === 'blue' &&
 										'border-blue-700/35 bg-blue-500/15 dark:bg-blue-950/50',
 									tone === 'green' &&
@@ -1296,7 +1291,7 @@ export default function Validate() {
 								<div className="shrink-0">
 									<DisplayResultIcon
 										className={ cn(
-											'size-12 stroke-[1.75]',
+											'size-10 shrink-0 stroke-[1.75] sm:size-11',
 											tone === 'green' &&
 												'text-green-700 dark:text-green-400',
 											tone === 'yellow' &&
@@ -1308,77 +1303,78 @@ export default function Validate() {
 										aria-hidden
 									/>
 								</div>
-								<div className="min-w-0 flex-1">
-									<p className="text-xl font-semibold tracking-tight">
+								<div className="min-w-0 flex-1 pr-28 sm:pr-44">
+									<p className="text-sm font-semibold leading-snug tracking-tight">
 										{ resultCopy.headline }
 									</p>
-									<p className="text-muted-foreground mt-1 max-w-prose text-sm">
+									<p className="text-muted-foreground mt-0.5 max-w-prose text-xs leading-relaxed">
 										{ resultCopy.subtitle }
 									</p>
+								</div>
+								<div className="absolute right-1.5 top-1.5 flex items-center gap-0.5 sm:right-2 sm:top-2">
+									{ showReschedule && (
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											className="h-8 gap-1 px-2 text-foreground hover:bg-foreground/10"
+											disabled={ statusMutation.isPending }
+											onClick={ () => setRescheduleOpen( true ) }
+											aria-label="Reschedule booking"
+											title="Reschedule booking"
+										>
+											<CalendarClock className="size-4 shrink-0" aria-hidden />
+											<span>Reschedule</span>
+										</Button>
+									) }
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-8 gap-1 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+										disabled={
+											statusMutation.isPending
+											|| ticket.WooCommerceEventsStatus === 'Canceled'
+										}
+										onClick={ () => applyStatus( 'Canceled' ) }
+										aria-label="Cancel ticket"
+										title="Cancel ticket"
+									>
+										<Trash2 className="size-4 shrink-0" aria-hidden />
+										<span>Cancel</span>
+									</Button>
 								</div>
 							</div>
 
 							<div className="flex flex-wrap items-start justify-between gap-3">
-								<CardTitle className="min-w-0 flex-1 text-xl leading-tight">
-									{ isNonEmptyStr( ticket.eventDisplayName )
-										? ticket.eventDisplayName
-										: `Event product #${ String( ticket.WooCommerceEventsProductID ?? '' ) }` }
-								</CardTitle>
+								<div className="min-w-0 flex-1 space-y-2">
+									{ bookingHeroDate ? (
+										<p className="text-foreground text-4xl font-black leading-[1.05] tracking-tight tabular-nums sm:text-5xl sm:leading-[1.05]">
+											{ bookingHeroDate }
+										</p>
+									) : (
+										<p className="text-muted-foreground text-sm font-medium">
+											No booking date on ticket.
+										</p>
+									) }
+									<p className="text-muted-foreground max-w-prose text-xs font-normal leading-snug sm:text-sm">
+										{ eventTitlePrimary }
+									</p>
+									{ bookingHeroSlot !== '' && (
+										<p className="text-foreground text-lg font-semibold leading-tight sm:text-xl">
+											{ bookingHeroSlot }
+										</p>
+									) }
+								</div>
 								<Badge
-									className={ `shrink-0 ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
+									className={ `h-fit shrink-0 ${ statusBadgeClass( String( ticket.WooCommerceEventsStatus ?? '' ) ) }` }
 								>
 									{ String( ticket.WooCommerceEventsStatus ?? '—' ) }
 								</Badge>
 							</div>
+						</CardHeader>
 
-							{ sessionTimingCue.show && (
-								<div
-									className={ cn(
-										'mt-3 rounded-lg p-3 sm:p-4',
-										sessionTimingCuePanelClass( sessionTimingCue.tone ),
-									) }
-									role="status"
-									aria-live="polite"
-								>
-									<p className="text-lg font-bold leading-tight tracking-tight sm:text-xl">
-										{ sessionTimingCue.label }
-									</p>
-									<p className="mt-1.5 text-sm font-semibold leading-snug sm:text-base">
-										{ sessionTimingCue.detail }
-									</p>
-									{ selectedValidateSession ? (
-										<p className="mt-3 border-t border-current/25 pt-3 text-xs font-medium leading-relaxed sm:text-sm">
-											<span className="opacity-90">Compared to gate:</span>{ ' ' }
-											{ selectedValidateSession.eventTitle } ·{ ' ' }
-											{ selectedValidateSession.slotTime }{ ' ' }
-											{ selectedValidateSession.slotLabel }
-											<span className="ml-1 font-mono tabular-nums opacity-90">
-												({ selectedValidateSession.viewDateYmd })
-											</span>
-										</p>
-									) : (
-										sessionDelta.kind === 'no_selection' && (
-											<p className="mt-3 border-t border-current/25 pt-3 text-xs sm:text-sm">
-												Select a session in <strong>Gate session</strong> above to enable comparison.
-											</p>
-										)
-									) }
-								</div>
-							) }
-
-							<div className="mt-3 space-y-1">
-								{ isNonEmptyStr( ticket.WooCommerceEventsBookingDate ) && (
-									<p className="text-foreground text-base font-medium tabular-nums">
-										{ ticket.WooCommerceEventsBookingDate }
-									</p>
-								) }
-								{ isNonEmptyStr( ticket.WooCommerceEventsBookingSlot ) && (
-									<p className="text-foreground text-lg font-semibold leading-snug sm:text-xl">
-										{ ticket.WooCommerceEventsBookingSlot }
-									</p>
-								) }
-							</div>
-
+						<CardContent className="space-y-5">
 							<div className="pt-2">
 								<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
 									Ticket ID
@@ -1394,9 +1390,7 @@ export default function Validate() {
 									</p>
 								) }
 							</div>
-						</CardHeader>
 
-						<CardContent className="space-y-5">
 							<div className="grid gap-2 sm:grid-cols-2">
 								<div>
 									<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
@@ -1424,120 +1418,89 @@ export default function Validate() {
 								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
 									Set status
 								</p>
-								<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
-									<Button
-										type="button"
-										className={ cn(
-											'w-full sm:min-h-11 sm:min-w-[11rem]',
-											ticket.WooCommerceEventsStatus === 'Not Checked In'
-												&& sessionDelta.offSession
-												&& sessionDelta.kind !== 'non_booking'
-												&& 'shadow-md ring-2 ring-amber-600/45 dark:ring-amber-400/35',
-											ticket.WooCommerceEventsStatus === 'Not Checked In'
-												&& ! (
+								<div className="flex flex-col gap-2">
+									{ ticket.WooCommerceEventsStatus === 'Not Checked In' ? (
+										<Button
+											type="button"
+											className={ cn(
+												'w-full min-h-11 border-transparent bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-500',
+												sessionDelta.offSession
+													&& sessionDelta.kind !== 'non_booking'
+													&& 'shadow-md ring-2 ring-amber-600/45 dark:ring-amber-400/35',
+												! (
 													sessionDelta.offSession
 													&& sessionDelta.kind !== 'non_booking'
 												)
-												&& 'shadow-md ring-2 ring-blue-600/35 dark:ring-blue-400/30',
-										) }
-										size="lg"
-										disabled={ statusMutation.isPending || ticket.WooCommerceEventsStatus === 'Checked In' }
-										onClick={ () => applyStatus( 'Checked In' ) }
-									>
-										{ sessionDelta.offSession && sessionDelta.kind !== 'non_booking'
-											? 'Check in anyway'
-											: 'Check in now' }
-									</Button>
-									<Button
-										type="button"
-										variant="secondary"
-										disabled={
-											statusMutation.isPending
-											|| ticket.WooCommerceEventsStatus === 'Not Checked In'
-										}
-										onClick={ () => applyStatus( 'Not Checked In' ) }
-									>
-										Undo check-in
-									</Button>
-									<Button
-										type="button"
-										variant="destructive"
-										disabled={ statusMutation.isPending || ticket.WooCommerceEventsStatus === 'Canceled' }
-										onClick={ () => applyStatus( 'Canceled' ) }
-									>
-										Cancel ticket
-									</Button>
+													&& 'shadow-md ring-2 ring-emerald-500/40 dark:ring-emerald-400/25',
+											) }
+											size="lg"
+											disabled={ statusMutation.isPending }
+											onClick={ () => applyStatus( 'Checked In' ) }
+										>
+											{ sessionDelta.offSession && sessionDelta.kind !== 'non_booking'
+												? 'Check-in'
+												: 'Check in now' }
+										</Button>
+									) : ticket.WooCommerceEventsStatus === 'Checked In' ? (
+										<Button
+											type="button"
+											variant="destructive"
+											className="w-full min-h-11"
+											size="lg"
+											disabled={ statusMutation.isPending }
+											onClick={ () => applyStatus( 'Not Checked In' ) }
+										>
+											Undo check-in
+										</Button>
+									) : null }
+									{ ticket.WooCommerceEventsStatus === 'Not Checked In'
+										&& sessionDelta.offSession
+										&& sessionDelta.kind !== 'non_booking'
+										&& sessionDelta.kind !== 'earlier_session' && (
+										<p className="text-muted-foreground max-w-prose rounded-md border border-border/80 bg-muted/30 px-3 py-2 text-xs leading-relaxed">
+											<strong className="text-foreground">{ sessionTimingCue.label }.</strong>{ ' ' }
+											{ sessionDelta.kind === 'later_session' && (
+												<>Use <strong>Check-in</strong> only if you approve early entry.</>
+											) }
+											{ sessionDelta.kind === 'earlier_gate_but_upcoming' && (
+												<>Use <strong>Check-in</strong> only if you deliberately want to admit before the booked slot starts or on this admitting slot.</>
+											) }
+											{ sessionDelta.kind === 'wrong_event' && (
+												<>Use <strong>Check-in</strong> only after confirming this is the correct guest and event.</>
+											) }
+											{ sessionDelta.kind === 'no_selection' && (
+												<>Automatic session comparison isn&apos;t available — verify booking labels on this ticket before using <strong>Check-in</strong>.</>
+											) }
+											{ sessionDelta.kind === 'unresolved' && (
+												<>Use <strong>Check-in</strong> only after verifying booking labels manually.</>
+											) }
+										</p>
+									) }
+									{ showReschedule && (
+										<TicketRescheduleDialog
+											open={ rescheduleOpen }
+											onOpenChange={ setRescheduleOpen }
+											ticket={ ticket }
+											ticketLookup={ getLookupFromTicket( ticket ) }
+											eventProductId={ Number( ticket.WooCommerceEventsProductID ) }
+										/>
+									) }
 									{ statusMutation.isPending && (
-										<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+										<div className="flex justify-center pt-1">
+											<Loader2 className="size-5 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+										</div>
 									) }
 								</div>
-								{ ticket.WooCommerceEventsStatus === 'Not Checked In'
-									&& sessionDelta.offSession
-									&& sessionDelta.kind !== 'non_booking' && (
-									<p className="text-muted-foreground mt-3 max-w-prose border-t border-border/80 pt-3 text-xs leading-relaxed">
-										<strong className="text-foreground">{ sessionTimingCue.label }.</strong>{ ' ' }
-										{ sessionDelta.kind === 'later_session' && (
-											<>Use <strong>Check in anyway</strong> only if you approve early entry.</>
-										) }
-										{ sessionDelta.kind === 'earlier_gate_but_upcoming' && (
-											<>Use <strong>Check in anyway</strong> only if you deliberately want to admit before the booked slot starts or on this gate slot.</>
-										) }
-										{ sessionDelta.kind === 'earlier_session' && (
-											<>Use <strong>Check in anyway</strong> only if you are sure this guest should enter on this gate time.</>
-										) }
-										{ sessionDelta.kind === 'wrong_event' && (
-											<>Use <strong>Check in anyway</strong> only after confirming this is the correct guest and event.</>
-										) }
-										{ sessionDelta.kind === 'no_selection' && (
-											<>Pick the gate session on this page, or use <strong>Check in anyway</strong> after manual verification.</>
-										) }
-										{ sessionDelta.kind === 'unresolved' && (
-											<>Use <strong>Check in anyway</strong> only after verifying booking labels manually.</>
-										) }
-									</p>
-								) }
-							</div>
-
-							<Separator />
-
-							<div>
-								<p className="text-muted-foreground mb-3 text-xs font-semibold uppercase tracking-wide">
-									Reschedule
-								</p>
-								<p className="text-muted-foreground mb-3 text-sm">
-									Change date or time on the same event (booking tickets only). Your order and payment stay the
-									same.
-								</p>
 								{ ticket.WooCommerceEventsStatus === 'Canceled' ? (
-									<p className="text-muted-foreground text-sm">
+									<p className="text-muted-foreground mt-3 border-t border-border pt-3 text-xs leading-relaxed">
 										Canceled tickets cannot be rescheduled.
 									</p>
-								)
-									: ticketHasBookingSlotIds( ticket )
-										&& Number( ticket.WooCommerceEventsProductID ) > 0 ? (
-											<>
-												<Button
-													type="button"
-													variant="outline"
-													className="gap-2"
-													onClick={ () => setRescheduleOpen( true ) }
-												>
-													<CalendarClock className="size-4" aria-hidden />
-													Reschedule booking
-												</Button>
-												<TicketRescheduleDialog
-													open={ rescheduleOpen }
-													onOpenChange={ setRescheduleOpen }
-													ticket={ ticket }
-													ticketLookup={ getLookupFromTicket( ticket ) }
-													eventProductId={ Number( ticket.WooCommerceEventsProductID ) }
-												/>
-											</>
-										) : (
-											<p className="text-muted-foreground text-sm">
-												This ticket has no booking slot to reschedule.
-											</p>
-										) }
+								) : ! ticketHasBookingSlotIds( ticket )
+									|| Number( ticket.WooCommerceEventsProductID ) <= 0 ? (
+										<p className="text-muted-foreground mt-3 border-t border-border pt-3 text-xs leading-relaxed">
+											This ticket has no booking slot to reschedule.
+										</p>
+									) : null }
 							</div>
 
 							<SiblingTicketsBlock
@@ -1561,8 +1524,8 @@ export default function Validate() {
 				</h1>
 				<p className="text-muted-foreground mt-1 max-w-prose text-sm leading-relaxed">
 					Validate only (lookup) or check in on scan — or search by email, phone number, or ticket ID.
-					Scan check-in pauses when the ticket does not match the selected gate session until you tap{ ' ' }
-					<strong>Check in anyway</strong>.
+					Check-in scan may pause until you tap <strong>Check-in</strong> when booking timing
+					is not aligned with today&apos;s admitting session.
 				</p>
 			</div>
 
@@ -1681,11 +1644,72 @@ export default function Validate() {
 					<CardHeader className="space-y-1 pb-2">
 						<CardTitle className="text-base">Gate session</CardTitle>
 						<CardDescription className="text-xs leading-snug">
-							Today or tomorrow only (site timezone). Pick the admitting slot — compared to each
-							ticket&apos;s booking. Scan below.
+							Select the admitting slot for scan comparison, then validate or check in below.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-3">
+						<div className="space-y-2">
+							<div className="flex flex-wrap items-center justify-end gap-2">
+								{ scannerOpen && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="gap-1"
+										onClick={ () => setScannerOpen( false ) }
+									>
+										<X className="size-4" aria-hidden />
+										Close
+									</Button>
+								) }
+							</div>
+							{ scannerOpen ? (
+								<>
+									<div className="bg-muted overflow-hidden rounded-lg">
+										<div id={ scanRegionId } />
+									</div>
+									<p
+										className="text-muted-foreground text-xs leading-relaxed"
+										role="status"
+										aria-live="polite"
+									>
+										{ scannerKind === 'checkin'
+											? 'Grant camera access if prompted; unused tickets that align with admitting time check in automatically after the read.'
+											: 'Grant camera access if prompted; ticket details load after a successful read.' }
+									</p>
+								</>
+							) : (
+								<div className="grid grid-cols-1 gap-2">
+									<Button
+										type="button"
+										size="lg"
+										className="min-h-12 w-full justify-center gap-2 text-base font-semibold"
+										onClick={ () => {
+											setScannerKind( 'validate' );
+											setScannerOpen( true );
+										} }
+									>
+										<Camera className="size-5 shrink-0" aria-hidden />
+										Validate Scan
+									</Button>
+									<Button
+										type="button"
+										size="lg"
+										className="min-h-12 w-full justify-center gap-2 bg-amber-600 text-base font-semibold text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
+										onClick={ () => {
+											setScannerKind( 'checkin' );
+											setScannerOpen( true );
+										} }
+									>
+										<ScanBarcode className="size-5 shrink-0" aria-hidden />
+										Check-in Scan
+									</Button>
+								</div>
+							) }
+						</div>
+
+						<Separator />
+
 						<div className="grid grid-cols-2 gap-2">
 							<Button
 								type="button"
@@ -1719,17 +1743,16 @@ export default function Validate() {
 						</p>
 
 						{ dashboardQuery.isLoading && (
-							<div className="text-muted-foreground flex items-center gap-2 text-sm">
-								<Loader2 className="size-4 animate-spin" aria-hidden />
-								Loading sessions…
+							<div className="text-muted-foreground flex items-center gap-2 text-xs">
+								<Loader2 className="size-3.5 animate-spin" aria-hidden />
+								Syncing today&apos;s schedule for scan comparison…
 							</div>
 						) }
-
 						{ dashboardQuery.isError && (
-							<p className="text-destructive text-sm">
+							<p className="text-destructive text-xs leading-snug">
 								{ dashboardQuery.error instanceof Error
 									? dashboardQuery.error.message
-									: 'Could not load schedule.' }
+									: 'Could not load schedule for today.' }
 							</p>
 						) }
 
@@ -1899,70 +1922,6 @@ export default function Validate() {
 							</p>
 						) }
 
-						<Separator />
-
-						<div className="space-y-2">
-							<div className="flex flex-wrap items-center justify-between gap-2">
-								<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-									Scan
-								</p>
-								{ scannerOpen && (
-									<Button
-										type="button"
-										variant="outline"
-										size="sm"
-										className="gap-1"
-										onClick={ () => setScannerOpen( false ) }
-									>
-										<X className="size-4" aria-hidden />
-										Close
-									</Button>
-								) }
-							</div>
-							{ scannerOpen ? (
-								<>
-									<div className="bg-muted overflow-hidden rounded-lg">
-										<div id={ scanRegionId } />
-									</div>
-									<p
-										className="text-muted-foreground text-xs leading-relaxed"
-										role="status"
-										aria-live="polite"
-									>
-										{ scannerKind === 'checkin'
-											? 'Grant camera access if prompted; unused tickets that match the selected gate session check in automatically after the read.'
-											: 'Grant camera access if prompted; ticket details load after a successful read.' }
-									</p>
-								</>
-							) : (
-								<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-									<Button
-										type="button"
-										size="sm"
-										className="gap-2"
-										onClick={ () => {
-											setScannerKind( 'validate' );
-											setScannerOpen( true );
-										} }
-									>
-										<Camera className="size-4 shrink-0" aria-hidden />
-										Validate (scan)
-									</Button>
-									<Button
-										type="button"
-										size="sm"
-										className="gap-2 bg-amber-600 text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
-										onClick={ () => {
-											setScannerKind( 'checkin' );
-											setScannerOpen( true );
-										} }
-									>
-										<ScanBarcode className="size-4 shrink-0" aria-hidden />
-										Check-in (scan)
-									</Button>
-								</div>
-							) }
-						</div>
 					</CardContent>
 				</Card>
 			</div>

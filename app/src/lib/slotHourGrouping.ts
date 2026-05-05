@@ -47,6 +47,23 @@ export function formatSlotTime( slot: Pick<SlotLike, 'label' | 'time' | 'stock' 
 	return '—';
 }
 
+/** Start time as minutes since midnight (0–1439), or null if not parseable. */
+export function slotStartMinutesSinceMidnight(
+	slot: Pick<SlotLike, 'label' | 'time'>,
+): number | null {
+	const hhmm = slotNormHhmm( slot as Pick<SlotLike, 'label' | 'time' | 'stock'> );
+	if ( ! hhmm ) {
+		return null;
+	}
+	const [ hs, ms ] = hhmm.split( ':' );
+	const h = parseInt( hs, 10 );
+	const m = parseInt( ms, 10 );
+	if ( h < 0 || h > 23 || m < 0 || m > 59 ) {
+		return null;
+	}
+	return h * 60 + m;
+}
+
 function slotNormHhmm( slot: Pick< SlotLike, 'label' | 'time' | 'stock' > ): string | null {
 	const fromTime = normHhmm( ( slot.time ?? '' ).trim() );
 	if ( fromTime ) {

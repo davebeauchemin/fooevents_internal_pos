@@ -42,8 +42,10 @@ import {
 	manualSlotWouldDuplicateExisting,
 	normalizeTimeInputToHhmm,
 	slotSelectable,
+	slotStartMinutesSinceMidnight,
 	type HourSlotGroup,
 } from '@/lib/slotHourGrouping';
+import { siteMinutesSinceMidnightFromWpNowLocal } from '@/lib/wpSiteClock';
 
 type SlotApi = {
 	id: string;
@@ -75,19 +77,77 @@ export type EventDetailForSchedule = {
 	siteTimezone?: string;
 };
 
-function findNextAvailable( days: DayApi[] ) {
+function slotHasBookableStock( s: SlotApi ) {
+	return s.stock === null || s.stock === undefined || s.stock > 0;
+}
+
+/** Slot start is still in the future on the site calendar day (`siteTodayYmd`). */
+function slotIsFutureOnSiteToday(
+	slot: SlotApi,
+	dayYmd: string,
+	siteTodayYmd: string,
+	siteNowLocal: string | undefined,
+): boolean {
+	if ( dayYmd !== siteTodayYmd ) {
+		return true;
+	}
+	const nowMin = siteMinutesSinceMidnightFromWpNowLocal( siteNowLocal );
+	if ( nowMin === null ) {
+		return true;
+	}
+	const startMin = slotStartMinutesSinceMidnight( slot );
+	if ( startMin === null ) {
+		return true;
+	}
+	return startMin > nowMin;
+}
+
+function findNextAvailable(
+	days: DayApi[],
+	siteTodayYmd: string,
+	siteNowLocal: string | undefined,
+) {
 	const sorted = [ ...days ].sort( ( a, b ) => a.date.localeCompare( b.date ) );
 	for ( const d of sorted ) {
 		const slots = [ ... ( d.slots || [] ) ].sort( ( a, b ) =>
 			formatSlotTime( a ).localeCompare( formatSlotTime( b ) ),
 		);
 		for ( const s of slots ) {
-			if ( s.stock === null || s.stock === undefined || s.stock > 0 ) {
-				return { day: d, slot: s };
+			if ( ! slotHasBookableStock( s ) ) {
+				continue;
 			}
+			if ( ! slotIsFutureOnSiteToday( s, d.date, siteTodayYmd, siteNowLocal ) ) {
+				continue;
+			}
+			return { day: d, slot: s };
 		}
 	}
 	return null;
+}
+
+function firstBookableDayYmd(
+	days: DayApi[],
+	siteTodayYmd: string,
+	siteNowLocal: string | undefined,
+): string | null {
+	const na = findNextAvailable( days, siteTodayYmd, siteNowLocal );
+	return na ? na.day.date : null;
+}
+
+function dayHasFutureBookableSlot(
+	day: DayApi,
+	siteTodayYmd: string,
+	siteNowLocal: string | undefined,
+): boolean {
+	for ( const s of day.slots || [] ) {
+		if ( ! slotHasBookableStock( s ) ) {
+			continue;
+		}
+		if ( slotIsFutureOnSiteToday( s, day.date, siteTodayYmd, siteNowLocal ) ) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /** One line for remove-confirm copy: avoid repeating HH:MM when `label` already contains it. */
@@ -170,7 +230,27 @@ export default function EventSlotOverview( {
 			norm( detail.siteTodayYmd )
 			?? format( new Date(), 'yyyy-MM-dd' );
 	}, [ siteTodayYmdProp, detail.siteTodayYmd ] );
-	const [ selectedYmd, setSelectedYmd ] = useState( () => detail.dates[ 0 ]?.date ?? '' );
+
+	const siteNowLocal = detail.siteNowLocal;
+
+	const [ selectedYmd, setSelectedYmd ] = useState( () => {
+		const d = detail.dates ?? [];
+		if ( ! d.length ) {
+			return '';
+		}
+		const norm = ( v: unknown ) => {
+			if ( typeof v !== 'string' ) {
+				return null;
+			}
+			const t = v.trim();
+			return /^\d{4}-\d{2}-\d{2}$/.test( t ) ? t : null;
+		};
+		const ymdToday =
+			norm( siteTodayYmdProp ) ??
+			norm( detail.siteTodayYmd ) ??
+			format( new Date(), 'yyyy-MM-dd' );
+		return firstBookableDayYmd( d, ymdToday, detail.siteNowLocal ) ?? d[ 0 ]!.date;
+	} );
 	const [ otherDateDialogOpen, setOtherDateDialogOpen ] = useState( false );
 
 	useEffect( () => {
@@ -178,28 +258,58 @@ export default function EventSlotOverview( {
 			return;
 		}
 		setSelectedYmd( ( prev ) => {
+			const firstBookable = firstBookableDayYmd( dates, siteTodayYmd, siteNowLocal );
+			const fallback = firstBookable ?? dates[ 0 ]!.date;
+
 			if ( prev && dates.some( ( d ) => d.date === prev ) ) {
+				const day = dates.find( ( d ) => d.date === prev );
+				if (
+					day
+					&& prev === siteTodayYmd
+					&& ! dayHasFutureBookableSlot( day, siteTodayYmd, siteNowLocal )
+					&& firstBookable
+					&& firstBookable !== prev
+				) {
+					return firstBookable;
+				}
 				return prev;
 			}
-			return dates[ 0 ]!.date;
+			return fallback;
 		} );
-	}, [ dates ] );
+	}, [ dates, siteTodayYmd, siteNowLocal ] );
 
 	const selectedDay = useMemo(
 		() => dates?.find( ( d ) => d.date === selectedYmd ),
 		[ dates, selectedYmd ],
 	);
 
-	const nextAvail = useMemo( () => findNextAvailable( dates || [] ), [ dates ] );
+	/** Hide past start times on site “today” so the grid matches real-world availability. */
+	const slotsForScheduleGrid = useMemo( () => {
+		if ( ! selectedDay?.slots?.length ) {
+			return [];
+		}
+		return ( selectedDay.slots || [] ).filter( ( s ) => {
+			if ( ! slotHasBookableStock( s ) ) {
+				return false;
+			}
+			return slotIsFutureOnSiteToday( s, selectedDay.date, siteTodayYmd, siteNowLocal );
+		} );
+	}, [ selectedDay, siteTodayYmd, siteNowLocal ] );
+
+	const nextAvail = useMemo(
+		() => findNextAvailable( dates || [], siteTodayYmd, siteNowLocal ),
+		[ dates, siteTodayYmd, siteNowLocal ],
+	);
 
 	const summaryCardsPayload = useMemo( (): BookingScheduleSummaryPayload => {
 		const na = nextAvail;
 		return {
 			upcomingDistinctDays: dates?.length ?? 0,
-			slotsOnSelectedDay: selectedDay?.slots?.length ?? 0,
-			capacityOnSelectedDay: selectedDay
-				? capacityLabelForSlots( selectedDay.slots || [] )
-				: '—',
+			slotsOnSelectedDay: slotsForScheduleGrid.length,
+			capacityOnSelectedDay:
+				slotsForScheduleGrid.length > 0
+					? capacityLabelForSlots( slotsForScheduleGrid )
+					: '—',
 			nextAvailable:
 				na && na.day && na.slot
 					? {
@@ -212,14 +322,14 @@ export default function EventSlotOverview( {
 					  }
 					: null,
 		};
-	}, [ dates, nextAvail, selectedDay ] );
+	}, [ dates, nextAvail, slotsForScheduleGrid ] );
 
 	const hourGroups = useMemo( () => {
-		if ( ! selectedDay?.slots?.length ) {
+		if ( ! slotsForScheduleGrid.length ) {
 			return [];
 		}
-		return groupSlotsByHour( selectedDay.slots );
-	}, [ selectedDay ] );
+		return groupSlotsByHour( slotsForScheduleGrid );
+	}, [ slotsForScheduleGrid ] );
 
 	const allowedDateSet = useMemo(
 		() => new Set( ( dates ?? [] ).map( ( d ) => d.date ) ),
@@ -412,8 +522,12 @@ export default function EventSlotOverview( {
 							/>
 						) : null }
 
-						{ ! selectedDay?.slots?.length && (
-							<p className="text-muted-foreground text-sm">No slots on this day.</p>
+						{ selectedDay && ! hourGroups.length && (
+							<p className="text-muted-foreground text-sm">
+								{ selectedDay.slots?.length
+									? 'No more bookable sessions today from the current site time. Choose tomorrow or another date to see the next openings.'
+									: 'No slots on this day.' }
+							</p>
 						) }
 						{ hourGroups.length > 0 && selectedDay && (
 							<div key={ selectedYmd } className="space-y-8">
