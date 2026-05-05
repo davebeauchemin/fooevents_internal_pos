@@ -183,7 +183,15 @@
 
 .kbm-slot-hour-nav.is-single-hour {
   display: flex;
-  justify-content: center;
+  width: 100%;
+  justify-content: stretch;
+}
+
+.kbm-slot-hour-nav.is-single-hour .kbm-slot-hour-nav__current {
+  width: 100%;
+  flex: 1 1 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .kbm-slot-hour-nav.is-at-start .kbm-slot-hour-nav__hint--prev,
