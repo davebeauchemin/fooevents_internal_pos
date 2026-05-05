@@ -173,6 +173,41 @@
   margin: 0 0 12px;
 }
 
+.kbm-slot-hour-nav.is-at-start {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.kbm-slot-hour-nav.is-at-end {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.kbm-slot-hour-nav.is-single-hour {
+  display: flex;
+  justify-content: center;
+}
+
+.kbm-slot-hour-nav.is-at-start .kbm-slot-hour-nav__hint--prev,
+.kbm-slot-hour-nav.is-at-end .kbm-slot-hour-nav__hint--next,
+.kbm-slot-hour-nav.is-single-hour .kbm-slot-hour-nav__hint {
+  display: none !important;
+}
+
+.kbm-slot-hour-nav.is-at-start .kbm-slot-hour-nav__current {
+  grid-column: 1;
+}
+
+.kbm-slot-hour-nav.is-at-start .kbm-slot-hour-nav__hint--next {
+  grid-column: 2;
+}
+
+.kbm-slot-hour-nav.is-at-end .kbm-slot-hour-nav__hint--prev {
+  grid-column: 1;
+}
+
+.kbm-slot-hour-nav.is-at-end .kbm-slot-hour-nav__current {
+  grid-column: 2;
+}
+
 .kbm-slot-hour-nav__current,
 .kbm-slot-hour-nav__hint {
   min-height: 38px;

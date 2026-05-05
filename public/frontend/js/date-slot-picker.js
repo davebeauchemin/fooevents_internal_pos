@@ -393,6 +393,10 @@ jQuery(document).ready(function ($) {
       var currentTitle = hourTitleAt(index);
       var nextTitle = hourTitleAt(index + 1);
 
+      $hourNav
+        .toggleClass('is-at-start', !prevTitle && !!nextTitle)
+        .toggleClass('is-at-end', !!prevTitle && !nextTitle)
+        .toggleClass('is-single-hour', !prevTitle && !nextTitle);
       $prevHour
         .text(prevTitle ? '\u2039 ' + prevTitle : '')
         .prop('disabled', !prevTitle)
