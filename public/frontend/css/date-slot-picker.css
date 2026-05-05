@@ -174,11 +174,11 @@
 }
 
 .kbm-slot-hour-nav.is-at-start {
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .kbm-slot-hour-nav.is-at-end {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .kbm-slot-hour-nav.is-single-hour {
@@ -208,6 +208,11 @@
   grid-column: 2;
 }
 
+.kbm-slot-hour-nav.is-at-start .kbm-slot-hour-nav__current,
+.kbm-slot-hour-nav.is-at-end .kbm-slot-hour-nav__current {
+  width: 100%;
+}
+
 .kbm-slot-hour-nav__current,
 .kbm-slot-hour-nav__hint {
   min-height: 38px;
@@ -219,6 +224,8 @@
   line-height: 1 !important;
   text-transform: uppercase !important;
   letter-spacing: 0.06em !important;
+  transform-origin: center;
+  will-change: transform, opacity;
 }
 
 .kbm-slot-hour-nav__current {
@@ -252,6 +259,23 @@
 .kbm-slot-hour-nav__hint.is-hidden {
   visibility: hidden;
   pointer-events: none;
+}
+
+.kbm-slot-hour-nav.is-animating .kbm-slot-hour-nav__current,
+.kbm-slot-hour-nav.is-animating .kbm-slot-hour-nav__hint:not(.is-hidden) {
+  animation: kbm-hour-chip-scale 180ms ease-out;
+}
+
+@keyframes kbm-hour-chip-scale {
+  from {
+    opacity: 0.68;
+    transform: scaleX(0.88);
+  }
+
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
 }
 
 .kbm-slot-hour-label {
