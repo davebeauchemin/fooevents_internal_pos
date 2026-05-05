@@ -15,9 +15,46 @@ defined( 'ABSPATH' ) || exit;
 class Coupon_Admin_Fields {
 
 	public function init() {
-		add_action( 'woocommerce_coupon_options', array( $this, 'render_panel' ), 15, 2 );
+		add_filter( 'woocommerce_coupon_data_tabs', array( $this, 'register_coupon_data_tab' ), 99 );
+		add_action( 'woocommerce_coupon_data_panels', array( $this, 'render_coupon_data_panel' ), 99 );
 		add_action( 'woocommerce_coupon_options_save', array( $this, 'save' ), 10, 2 );
 		add_action( 'admin_head', array( $this, 'print_coupon_styles' ), 20 );
+	}
+
+	/**
+	 * Sidebar tab on the WooCommerce Coupon data metabox (next to General, Usage restriction, Usage limits).
+	 *
+	 * @param array<string, array<string, string|array<int, string>>> $tabs Tabs.
+	 * @return array<string, array<string, string|array<int, string>>>
+	 */
+	public function register_coupon_data_tab( $tabs ) {
+		if ( ! is_array( $tabs ) ) {
+			$tabs = array();
+		}
+
+		$tabs['module_rouge_pos'] = array(
+			'label'  => __( 'Module Rouge POS', 'fooevents-internal-pos' ),
+			'target' => 'module_rouge_pos_coupon_panel',
+			'class'  => array(),
+		);
+
+		return $tabs;
+	}
+
+	/**
+	 * Tab panel body (coupon edit screen — right pane when tab is selected).
+	 */
+	public function render_coupon_data_panel() {
+		global $post;
+
+		if ( ! $post instanceof \WP_Post || 'shop_coupon' !== $post->post_type ) {
+			return;
+		}
+
+		$coupon = new \WC_Coupon( (int) $post->ID );
+		echo '<div id="module_rouge_pos_coupon_panel" class="panel woocommerce_options_panel">';
+		$this->render_fields_for_coupon( $coupon );
+		echo '</div>';
 	}
 
 	/**
@@ -41,19 +78,16 @@ class Coupon_Admin_Fields {
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field .fipos-bundle-tier-control-col{display:flex;flex-direction:column;align-items:flex-start;gap:8px;float:left;max-width:calc(100% - 24px);} ' .
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field .fipos-bundle-tier-control-col input.checkbox{float:none!important;margin:4px 0 0!important;} ' .
 			'#woocommerce-coupon-data .options_group.fipos-coupon-rules .fipos_is_bundle_tier_field .fipos-bundle-tier-control-col input.checkbox+.description{display:block!important;margin:0!important;padding:0!important;clear:none;line-height:1.5;max-width:36rem;} ' .
+			'#module_rouge_pos_coupon_panel{padding-block:14px;} ' .
 			'</style>';
 	}
 
 	/**
-	 * @param int       $coupon_id Coupon post ID.
-	 * @param \WC_Coupon $coupon    Coupon instance.
+	 * POS / storefront fields for the standalone Coupon data sidebar tab.
+	 *
+	 * @param \WC_Coupon $coupon Coupon instance.
 	 */
-	public function render_panel( $coupon_id, $coupon ) {
-		unset( $coupon_id );
-		if ( ! $coupon instanceof \WC_Coupon ) {
-			return;
-		}
-
+	private function render_fields_for_coupon( \WC_Coupon $coupon ) {
 		$scope     = (string) $coupon->get_meta( Coupon_Rules::META_AUTO_APPLY_SCOPE );
 		if ( '' === $scope ) {
 			$scope = 'none';
@@ -138,6 +172,7 @@ class Coupon_Admin_Fields {
 			)
 		);
 
+		echo '<div class="clear"></div>';
 		echo '</div>';
 	}
 

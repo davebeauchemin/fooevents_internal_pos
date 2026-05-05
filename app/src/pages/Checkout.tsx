@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
@@ -49,24 +49,53 @@ function normalizeCouponCodeKey( raw: string ): string {
 	return raw.trim().toLowerCase();
 }
 
-function mergeCouponIntoInput(
-	prevRaw: string,
-	codeToAdd: string,
-	max: number = MAX_POS_COUPONS,
-): string {
-	const parts = parseCouponCodesInput( prevRaw );
-	const want = normalizeCouponCodeKey( codeToAdd );
-	if ( ! want ) {
-		return prevRaw;
-	}
-	for ( const p of parts ) {
-		if ( normalizeCouponCodeKey( p ) === want ) {
-			return prevRaw;
+function mergeManualAndQuickCouponCodes( manualParsed: string[], quickCodes: string[] ): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+
+	for ( const c of manualParsed.concat( quickCodes ) ) {
+		const k = normalizeCouponCodeKey( c );
+		if ( ! k || seen.has( k ) ) {
+			continue;
+		}
+		seen.add( k );
+		out.push( c.trim() );
+		if ( out.length >= MAX_POS_COUPONS ) {
+			break;
 		}
 	}
-	const nextList = [ ...parts, codeToAdd.trim() ];
 
-	return nextList.slice( 0, max ).join( ', ' );
+	return out;
+}
+
+function appendQuickApplyCouponCode( couponInputRaw: string, prevQuick: string[], apiCode: string ): string[] {
+	const trimmed = apiCode.trim();
+	const key = normalizeCouponCodeKey( trimmed );
+	if ( ! key ) {
+		return prevQuick;
+	}
+	const manual = parseCouponCodesInput( couponInputRaw );
+	const seen = new Set<string>();
+	for ( const c of manual ) {
+		const k = normalizeCouponCodeKey( c );
+		if ( k ) {
+			seen.add( k );
+		}
+	}
+	for ( const c of prevQuick ) {
+		const k = normalizeCouponCodeKey( c );
+		if ( k ) {
+			seen.add( k );
+		}
+	}
+	if ( seen.has( key ) ) {
+		return prevQuick;
+	}
+	if ( manual.length + prevQuick.length >= MAX_POS_COUPONS ) {
+		return prevQuick;
+	}
+
+	return [ ...prevQuick, trimmed ];
 }
 
 type PreviewTaxRow = {
@@ -142,9 +171,14 @@ export default function Checkout() {
 	);
 
 	const [ couponInput, setCouponInput ] = useState( '' );
+	const [ quickApplyCouponCodes, setQuickApplyCouponCodes ] = useState<string[]>( [] );
 	const couponCodesForApi = useMemo(
-		() => parseCouponCodesInput( couponInput ),
-		[ couponInput ],
+		() =>
+			mergeManualAndQuickCouponCodes(
+				parseCouponCodesInput( couponInput ),
+				quickApplyCouponCodes,
+			),
+		[ couponInput, quickApplyCouponCodes ],
 	);
 	const [ email, setEmail ] = useState( '' );
 
@@ -183,6 +217,12 @@ export default function Checkout() {
 				: [],
 		[ posVisibleCouponsRaw?.coupons ],
 	);
+
+	useEffect( () => {
+		if ( items.length === 0 ) {
+			setQuickApplyCouponCodes( [] );
+		}
+	}, [ items.length ] );
 
 	const couponBlocking = Boolean(
 		! previewFetching &&
@@ -269,6 +309,7 @@ export default function Checkout() {
 			setEmail( '' );
 			setPostalCode( '' );
 			setCouponInput( '' );
+			setQuickApplyCouponCodes( [] );
 			setCheckInNow( false );
 			navigate( '/' );
 		} catch ( err: unknown ) {
@@ -436,40 +477,43 @@ export default function Checkout() {
 												POS promotions
 											</p>
 											<p className="text-muted-foreground text-xs leading-snug">
-												One-click add (validated with your preview totals; coupons can still be typed below).
+												Buttons show the discount only; codes stay off-screen and still apply at checkout.
 											</p>
 											<div className="flex flex-wrap gap-2">
-												{ posPromoCoupons.map( ( row ) => {
+												{ posPromoCoupons.map( ( row, promoIdx ) => {
 													const apiCode = String( row.code ?? '' ).trim();
 													const keyed = normalizeCouponCodeKey( apiCode );
 													const inactive = ! keyed || appliedCouponKeysNormalized.has( keyed );
 
+													const valueLabel =
+														htmlToPlainText( String( row.label ?? '' ) ).trim()
+														|| htmlToPlainText( String( row.discountSummary ?? '' ) ).trim()
+														|| 'Promotion';
+
 													return (
 														<Button
-															key={ String( row.id ?? row.code ) }
+															key={
+																typeof row.id === 'number' && row.id > 0
+																	? `promo-${ row.id }`
+																	: `promo-${ keyed || promoIdx }`
+															}
 															type="button"
 															variant={ inactive ? 'secondary' : 'outline' }
 															size="sm"
 															className={ cn(
-																'h-auto min-h-9 shrink-0 flex-col gap-0.5 py-2',
+																'h-auto min-h-9 shrink-0 px-4 py-2 text-sm font-semibold tabular-nums',
 																inactive && 'opacity-80',
 															) }
 															disabled={ mutation.isPending || inactive }
+															aria-label={ `Apply promo ${ valueLabel }` }
+															title={ row.description ? row.description : undefined }
 															onClick={ () =>
-																setCouponInput( ( prev ) =>
-																	mergeCouponIntoInput( prev, apiCode ),
+																setQuickApplyCouponCodes( ( prev ) =>
+																	appendQuickApplyCouponCode( couponInput, prev, apiCode ),
 																)
 															}
-															title={ row.description ? row.description : undefined }
 														>
-															<span className="font-mono text-xs">
-																{ row.label ?? apiCode }
-															</span>
-															{ row.discountSummary ? (
-																<span className="text-muted-foreground max-w-[12rem] text-center text-[10px] leading-tight break-words">
-																	{ row.discountSummary }
-																</span>
-															) : null }
+															{ valueLabel }
 														</Button>
 													);
 												} ) }
@@ -508,7 +552,7 @@ export default function Checkout() {
 														id={ `${ formId }-coupons-hint` }
 														className="text-muted-foreground text-xs leading-relaxed"
 													>
-														Tick &quot;Show on POS&quot; on a WooCommerce coupon to surface it above. Codes are validated like on your storefront checkout. Auto-apply and bundle tiers are set on each coupon in the admin (&quot;Module Rouge POS/Storefront&quot;). Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
+														Tick &quot;Show on POS&quot; on a WooCommerce coupon (Coupon data sidebar → Module Rouge POS tab). Codes are validated like on your storefront checkout. Auto-apply and bundle tiers live there too. Enter optional extra codes above (comma-separated, max { MAX_POS_COUPONS } ).
 													</p>
 												</div>
 											</AccordionContent>
@@ -813,6 +857,8 @@ export default function Checkout() {
 									variant="destructive"
 									onClick={ () => {
 										clearCart();
+										setCouponInput( '' );
+										setQuickApplyCouponCodes( [] );
 										setClearOrderDialogOpen( false );
 									} }
 								>

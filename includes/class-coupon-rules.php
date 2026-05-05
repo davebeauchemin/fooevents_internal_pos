@@ -179,6 +179,34 @@ class Coupon_Rules {
 	}
 
 	/**
+	 * Short label for POS quick-apply buttons: percent figure or formatted money (never the WooCommerce coupon code).
+	 *
+	 * @param WC_Coupon $coupon Coupon instance.
+	 * @return string
+	 */
+	public static function coupon_pos_quick_apply_value_label( WC_Coupon $coupon ) {
+		$type = (string) $coupon->get_discount_type();
+
+		if ( 'percent' === $type ) {
+			$f = wc_format_decimal( (string) $coupon->get_amount(), 2 );
+			$f = rtrim( rtrim( (string) $f, '0' ), '.' );
+
+			return '' !== $f ? sprintf( '%s%%', $f ) : '';
+		}
+
+		if ( 'fixed_cart' === $type || 'fixed_product' === $type ) {
+			$n = (float) wc_format_decimal( (string) $coupon->get_amount(), wc_get_price_decimals() );
+			if ( $n <= 0 ) {
+				return '';
+			}
+
+			return wp_strip_all_tags( (string) wc_price( $n ) );
+		}
+
+		return self::coupon_pos_quick_apply_discount_summary( $coupon );
+	}
+
+	/**
 	 * Plain-text summary of the discount rule for POS button labels / API.
 	 *
 	 * @param WC_Coupon $coupon Coupon instance.
@@ -655,12 +683,20 @@ class Coupon_Rules {
 				}
 			}
 
+			$value_label = self::coupon_pos_quick_apply_value_label( $coupon );
+			if ( '' === $value_label ) {
+				$value_label = self::coupon_pos_quick_apply_discount_summary( $coupon );
+			}
+			if ( '' === $value_label ) {
+				$value_label = __( 'Promotion', 'fooevents-internal-pos' );
+			}
+
 			$rows[] = array(
-				'code'           => $code,
-				'label'          => function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $raw_code, 'UTF-8' ) : strtoupper( $raw_code ),
-				'description'   => $desc_plain,
+				'code'            => $code,
+				'label'           => $value_label,
+				'description'    => $desc_plain,
 				'discountSummary' => self::coupon_pos_quick_apply_discount_summary( $coupon ),
-				'id'             => (int) $coupon->get_id(),
+				'id'              => (int) $coupon->get_id(),
 			);
 		}
 
