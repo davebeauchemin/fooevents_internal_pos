@@ -99,15 +99,28 @@ jQuery(document).ready(function ($) {
 
   if (!$dateSelect.length) return;
 
-  // FooEvents/themes sometimes duplicate booking fields in one form (duplicate illegal ids). Hide every echoed row so only the kiosk UI stays visible.
+  function disableDuplicateBookingSelects() {
+    $cartForm.find(DATE_SELECT_SEL).each(function (index) {
+      var isCanonical = this === $dateSelect[0];
+      $(this)
+        .prop('disabled', !isCanonical)
+        .closest('p.form-row')
+        .hide();
+    });
+    $cartForm.find(SLOT_SELECT_SEL).each(function (index) {
+      var isCanonical = this === $slotSelect[0];
+      $(this)
+        .prop('disabled', !isCanonical)
+        .closest('p.form-row')
+        .hide();
+    });
+  }
+
+  // FooEvents/themes sometimes duplicate booking fields in one form (duplicate illegal ids). Hide and disable duplicates so empty fields cannot submit.
   $dateFieldRow = $dateSelect.closest('p.form-row');
   $slotFieldRow = $slotSelect.closest('p.form-row');
-  $cartForm.find(DATE_SELECT_SEL).each(function () {
-    $(this).closest('p.form-row').hide();
-  });
-  $cartForm.find(SLOT_SELECT_SEL).each(function () {
-    $(this).closest('p.form-row').hide();
-  });
+  disableDuplicateBookingSelects();
+  $cartForm.on('submit', disableDuplicateBookingSelects);
   $cartForm.find('#fooevents-checkout-attendee-info-val-trans').slice(1).remove();
 
   function kbmSlotAreaEl() {
