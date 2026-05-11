@@ -38,7 +38,20 @@ export default function EventDetail() {
 		canReplaceEventSchedules,
 	);
 
-	const mgr = useManageSchedule( eventId );
+	const closeManagedDialogs = useCallback( () => {
+		setSearchParams(
+			( prev ) => {
+				const p = new URLSearchParams( prev.toString() );
+				p.delete( 'manage' );
+				return p;
+			},
+			{ replace: true },
+		);
+	}, [ setSearchParams ] );
+
+	const mgr = useManageSchedule( eventId, {
+		onMutationSuccess: closeManagedDialogs,
+	} );
 	const scheduleMutationsBusy = useEventScheduleMutationsBusy( eventId );
 
 	const openTab = useCallback(
@@ -54,17 +67,6 @@ export default function EventDetail() {
 		},
 		[ setSearchParams ],
 	);
-
-	const closeManagedDialogs = useCallback( () => {
-		setSearchParams(
-			( prev ) => {
-				const p = new URLSearchParams( prev.toString() );
-				p.delete( 'manage' );
-				return p;
-			},
-			{ replace: true },
-		);
-	}, [ setSearchParams ] );
 
 	if ( mgr.isLoading ) {
 		return (

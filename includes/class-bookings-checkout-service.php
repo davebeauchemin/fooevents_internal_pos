@@ -1027,6 +1027,26 @@ class Bookings_Checkout_Service {
 			}
 
 			$ids             = $this->get_order_ticket_ids( $order_id );
+
+			/**
+			 * Strings suitable for FooEvents {@see get_single_ticket()} paths (scanner / REST validate lookup).
+			 * {@see Rest_API::ticket_lookup_identifier_for_post()} keeps the same rules.
+			 *
+			 * @var array<int, string>
+			 */
+			$ticket_lookup_strings = array();
+			foreach ( $ids as $post_id_ticket ) {
+				$ticket_lookup_strings[] = $this->ticket_lookup_string_from_ticket_post( (int) $post_id_ticket );
+			}
+
+			$primary_ticket_lookup = '';
+			foreach ( $ticket_lookup_strings as $tls ) {
+				if ( '' !== $tls ) {
+					$primary_ticket_lookup = $tls;
+					break;
+				}
+			}
+
 			$completed_order = wc_get_order( $order_id );
 			$order_total     = $completed_order instanceof WC_Order ? (float) $completed_order->get_total() : 0.0;
 
@@ -1073,8 +1093,10 @@ class Bookings_Checkout_Service {
 			}
 
 			return array(
-				'orderId'              => (int) $order_id,
-				'ticketIds'            => $ids,
+				'orderId'               => (int) $order_id,
+				'ticketIds'             => $ids,
+				'ticketLookups'         => $ticket_lookup_strings,
+				'primaryTicketLookup'   => $primary_ticket_lookup,
 				'checkedInTicketIds'   => $checked_in_ticket_ids,
 				'checkedInCount'       => count( $checked_in_ticket_ids ),
 				'remaining'            => $last_remain,
@@ -1401,6 +1423,33 @@ class Bookings_Checkout_Service {
 			)
 		);
 		return is_array( $q->posts ) ? array_map( 'intval', $q->posts ) : array();
+	}
+
+	/**
+	 * REST / scanner lookup matching {@see Rest_API::ticket_lookup_identifier_for_post()} `ticketId` string.
+	 *
+	 * @param int $ticket_post_id `event_magic_tickets` post id.
+	 * @return string Non-empty scanner id / numeric ticket id string.
+	 */
+	private function ticket_lookup_string_from_ticket_post( $ticket_post_id ) {
+		$ticket_post_id = absint( $ticket_post_id );
+		if ( $ticket_post_id <= 0 ) {
+			return '';
+		}
+		$product_id  = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsProductID', true );
+		$numeric_tid = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketID', true );
+		$formatted   = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketNumberFormatted', true );
+		if ( '' === $product_id ) {
+			return $numeric_tid;
+		}
+		$identifier_mode = (string) get_post_meta( absint( $product_id ), 'WooCommerceEventsTicketIdentifierOutput', true );
+		if ( '' === $identifier_mode ) {
+			$identifier_mode = 'ticketid';
+		}
+		if ( 'ticketnumberformatted' === $identifier_mode && '' !== $formatted ) {
+			return $product_id . '-' . $formatted;
+		}
+		return $numeric_tid;
 	}
 
 	/**

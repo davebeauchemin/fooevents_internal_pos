@@ -461,6 +461,46 @@ export function useUpdateTicketStatus() {
 }
 
 /**
+ * Body: `{ status: 'Checked In' | 'Canceled' }` — same FooEvents booking-slot group (`WooCommerceEventsOrderTickets`).
+ *
+ * @returns {import('@tanstack/react-query').UseMutationResult<
+ *   unknown,
+ *   Error,
+ *   { ticketLookup: string, status: string }
+ * >}
+ */
+export function useUpdateRelatedTicketsStatus() {
+	const qc = useQueryClient();
+	return useMutation( {
+		mutationKey: [ 'internalpos', 'validateRelatedTicketStatus' ],
+		mutationFn: ( { ticketLookup, status } ) =>
+			restFetch(
+				`${ prefix }/validate/ticket/${ encodeURIComponent( ticketLookup ) }/related-status`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify( { status } ),
+				},
+			),
+		onSuccess: ( _data, variables ) => {
+			const lk =
+				variables && typeof variables.ticketLookup === 'string'
+					? variables.ticketLookup.trim()
+					: '';
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket' ] } );
+			if ( lk ) {
+				qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', lk ] } );
+			}
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateEvent' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+		},
+	} );
+}
+
+/**
  * Same-event booking reschedule (ticket CPT + inventory); body `{ eventId, slotId, dateId }`.
  *
  * @returns {import('@tanstack/react-query').UseMutationResult<

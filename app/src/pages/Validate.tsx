@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDays, format, parseISO } from 'date-fns';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import {
@@ -21,6 +22,7 @@ import {
 	useRescheduleTicket,
 	useTicketDetail,
 	useTicketSearch,
+	useUpdateRelatedTicketsStatus,
 	useUpdateTicketStatus,
 	useValidateEvent,
 } from '@/api/queries.js';
@@ -786,12 +788,32 @@ export default function Validate() {
 	const [ lastScanPurpose, setLastScanPurpose ] = useState< ScanPurpose | null >( null );
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
 	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
+	const [ cancelRelatedBulkOpen, setCancelRelatedBulkOpen ] = useState( false );
 
 	const [ gateScheduleDay, setGateScheduleDay ] = useState< 'today' | 'tomorrow' >( 'today' );
 	const [ siteTodayYmd, setSiteTodayYmd ] = useState< string | null >( null );
 	const [ selectedValidateSession, setSelectedValidateSession ] =
 		useState< ValidateSessionPick | null >( null );
 	const gateSlotsScrollRef = useRef< HTMLDivElement | null >( null );
+	const autoCheckInHandledKeyRef = useRef< string >( '' );
+
+	const navigate = useNavigate();
+	const [ searchParams ] = useSearchParams();
+
+	useEffect( () => {
+		const raw = searchParams.get( 'ticket' );
+		const tid = typeof raw === 'string' ? raw.trim() : '';
+		if ( ! tid ) {
+			return;
+		}
+		navigate( '/validate', { replace: true } );
+		setJustCheckedInNumericId( null );
+		setLastScanPurpose( null );
+		setRescheduleOpen( false );
+		autoCheckInHandledKeyRef.current = '';
+		setSelectedTicketId( tid );
+		setScannerOpen( false );
+	}, [ navigate, searchParams ] );
 
 	const dashboardYmdParam = useMemo( () => {
 		if ( ! siteTodayYmd || ! /^\d{4}-\d{2}-\d{2}$/.test( siteTodayYmd ) ) {
@@ -843,9 +865,31 @@ export default function Validate() {
 	const searchQuery = useTicketSearch( deferredSearch );
 	const detailQuery = useTicketDetail( selectedTicketId );
 	const statusMutation = useUpdateTicketStatus();
+	const relatedBulkMutation = useUpdateRelatedTicketsStatus();
 
 	const validateTicketApi = detailQuery.data as ValidateTicketApiEnvelope | undefined;
 	const ticket = validateTicketApi?.ticket as FooTicketPayload | undefined;
+
+	const relatedBulkNumericIds = useMemo( (): string[] => {
+		if ( ! ticket ) {
+			return [];
+		}
+		const set = new Set<string>();
+		const addOne = ( u: unknown ): void => {
+			const z = typeof u === 'string' ? u.trim() : '';
+			if ( z !== '' ) {
+				set.add( z );
+			}
+		};
+		if ( Array.isArray( ticket.WooCommerceEventsOrderTickets ) ) {
+			for ( const row of ticket.WooCommerceEventsOrderTickets ) {
+				addOne( row );
+			}
+		}
+		addOne( ticket.WooCommerceEventsTicketID );
+
+		return [ ...set ];
+	}, [ ticket ] );
 
 	const siteNowUnixMs = useMemo(
 		() =>
@@ -919,8 +963,6 @@ export default function Validate() {
 				: '',
 		[ selectedValidateSession ],
 	);
-
-	const autoCheckInHandledKeyRef = useRef< string >( '' );
 
 	/** Stable lookup for mutate (same logic as mutation body). */
 	const getLookupFromTicket = ( t?: FooTicketPayload ) =>
@@ -1169,6 +1211,56 @@ export default function Validate() {
 		);
 	};
 
+	const applyRelatedBulkStatus = ( status: 'Checked In' | 'Canceled' ) => {
+		if ( ! ticket?.WooCommerceEventsTicketID ) {
+			return;
+		}
+		const lookup = getLookupFromTicket( ticket );
+		if ( ! lookup ) {
+			return;
+		}
+		const groupCountFallback = Math.max(
+			1,
+			Array.isArray( relatedBulkNumericIds ) ? relatedBulkNumericIds.length : 1,
+		);
+		relatedBulkMutation.mutate(
+			{ ticketLookup: lookup, status },
+			{
+				onSuccess: ( dataRaw ) => {
+					setCancelRelatedBulkOpen( false );
+					let ct = groupCountFallback;
+					if (
+						dataRaw !== null
+						&& typeof dataRaw === 'object'
+						&& 'updatedCount' in dataRaw
+					) {
+						const typed = dataRaw as { updatedCount?: unknown };
+						const maybeCt = typed.updatedCount;
+						if ( typeof maybeCt === 'number' && Number.isFinite( maybeCt ) ) {
+							ct = maybeCt;
+						}
+					}
+					if ( status === 'Checked In' ) {
+						setJustCheckedInNumericId(
+							String( ticket.WooCommerceEventsTicketID ?? '' ).trim(),
+						);
+						toast.success(
+							`Checked in ${ String( ct ) } ticket${ ct === 1 ? '' : 's' } in this session.`,
+						);
+						return;
+					}
+					setJustCheckedInNumericId( null );
+					toast.success(
+						`Canceled ${ String( ct ) } ticket${ ct === 1 ? '' : 's' } in this session.`,
+					);
+				},
+				onError: ( err: Error ) => {
+					toast.error( err?.message ?? 'Bulk update failed' );
+				},
+			},
+		);
+	};
+
 	if ( selectedTicketId ) {
 		const tone =
 			resolveTicketTone( {
@@ -1267,8 +1359,9 @@ export default function Validate() {
 				) }
 
 				{ ticket && (
-					<Card
-						className={ cn(
+					<>
+						<Card
+							className={ cn(
 							'overflow-hidden border-2 transition-colors',
 							ticketCardToneClass( tone ),
 						) }
@@ -1507,8 +1600,99 @@ export default function Validate() {
 								labels={ ticket.WooCommerceEventsOrderTicketsData }
 								onPick={ openTicketFromSearchOrSibling }
 							/>
+							{ relatedBulkNumericIds.length >= 2 && ! detailQuery.isError ? (
+								<>
+									<Separator />
+									<div className="space-y-2">
+										<p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+											Session group ({ relatedBulkNumericIds.length } tickets)
+										</p>
+										<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+											<Button
+												type="button"
+												size="lg"
+												disabled={
+													statusMutation.isPending
+													|| relatedBulkMutation.isPending
+													|| ticket.WooCommerceEventsStatus === 'Canceled'
+												}
+												className={ cn(
+													'h-11 shrink-0 border-transparent bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 sm:min-w-[12rem]',
+												) }
+												onClick={ () => applyRelatedBulkStatus( 'Checked In' ) }
+											>
+												Check in all ({ relatedBulkNumericIds.length })
+											</Button>
+											<Button
+												type="button"
+												size="lg"
+												variant="destructive"
+												disabled={
+													statusMutation.isPending || relatedBulkMutation.isPending
+												}
+												className="sm:min-w-[12rem]"
+												onClick={ () => setCancelRelatedBulkOpen( true ) }
+											>
+												Cancel all ({ relatedBulkNumericIds.length })
+											</Button>
+										</div>
+										<p className="text-muted-foreground text-xs leading-relaxed">
+											Same{' '}
+											<strong>{ ticketBookingSlotDisplay( ticket ) || 'booking slot' }</strong>
+											{ bookingHeroDate ? (
+												<> ({ bookingHeroDate })</>
+											) : null }{ ' ' }
+											 — every ticket in this order/session group.
+										</p>
+										{ relatedBulkMutation.isPending ? (
+											<div className="flex items-center gap-2 text-muted-foreground text-xs">
+												<Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+												Updating group…
+											</div>
+										) : null }
+									</div>
+								</>
+							) : null }
 						</CardContent>
 					</Card>
+
+					{ relatedBulkNumericIds.length >= 2 ? (
+						<Dialog
+							open={ cancelRelatedBulkOpen }
+							onOpenChange={ setCancelRelatedBulkOpen }
+						>
+							<DialogContent showCloseButton={ false } className="max-w-md">
+								<DialogHeader>
+									<DialogTitle>Cancel all tickets in this session?</DialogTitle>
+									<DialogDescription>
+										This cancels{' '}
+										<strong>{ relatedBulkNumericIds.length } ticket{ relatedBulkNumericIds.length === 1 ? '' : 's' }</strong>
+										{ ' ' }
+										for the same order and booking slot. This cannot be undone from the kiosk.
+									</DialogDescription>
+								</DialogHeader>
+								<DialogFooter className="gap-2 sm:flex-row sm:justify-end">
+									<Button
+										type="button"
+										variant="outline"
+										disabled={ relatedBulkMutation.isPending }
+										onClick={ () => setCancelRelatedBulkOpen( false ) }
+									>
+										Keep tickets
+									</Button>
+									<Button
+										type="button"
+										variant="destructive"
+										disabled={ relatedBulkMutation.isPending }
+										onClick={ () => applyRelatedBulkStatus( 'Canceled' ) }
+									>
+										Cancel entire group
+									</Button>
+								</DialogFooter>
+							</DialogContent>
+						</Dialog>
+					) : null }
+					</>
 				) }
 			</div>
 		);

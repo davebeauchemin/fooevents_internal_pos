@@ -284,6 +284,8 @@ export default function Checkout() {
 				paymentMethodLabel?: string;
 				checkedInCount?: number;
 				checkedInTicketIds?: number[];
+				ticketLookups?: string[];
+				primaryTicketLookup?: string;
 				nextPurchaseCoupon?: { code?: string; amountFormatted?: string } | null;
 			};
 			const q = res.totalQty ?? res.qty ?? 0;
@@ -311,7 +313,17 @@ export default function Checkout() {
 			setCouponInput( '' );
 			setQuickApplyCouponCodes( [] );
 			setCheckInNow( false );
-			navigate( '/' );
+			const redirectLookup =
+				( typeof res.primaryTicketLookup === 'string' && res.primaryTicketLookup.trim().length > 0
+					? res.primaryTicketLookup.trim()
+					: Array.isArray( res.ticketLookups )
+						? ( res.ticketLookups.map( ( s ) => String( s ).trim() ).find( Boolean ) ?? '' )
+						: '' );
+			if ( redirectLookup ) {
+				navigate( `/validate?ticket=${ encodeURIComponent( redirectLookup ) }` );
+			} else {
+				navigate( '/' );
+			}
 		} catch ( err: unknown ) {
 			const m = err instanceof Error ? err.message : String( err );
 			toast.error( m || 'Booking failed' );

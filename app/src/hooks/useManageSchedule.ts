@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -362,7 +362,16 @@ function todayYmdLocal(): string {
 
 export const SESSION_OPTIONS = [ 5, 10, 15, 20, 30, 60 ];
 
-export function useManageSchedule( eventId: string ) {
+export type UseManageScheduleOptions = {
+	/** Runs when the user dismisses the post-success confirmation dialog (e.g. strip `?manage=`). */
+	onMutationSuccess?: () => void;
+};
+
+export function useManageSchedule(
+	eventId: string,
+	options: UseManageScheduleOptions = {},
+) {
+	const { onMutationSuccess } = options;
 	const navigate = useNavigate();
 	const {
 		data: eventData,
@@ -421,9 +430,24 @@ export function useManageSchedule( eventId: string ) {
 	const [ capacity, setCapacity ] = useState( 12 );
 	const [ formInitialized, setFormInitialized ] = useState( false );
 	const [ confirmOpen, setConfirmOpen ] = useState( false );
-	const afterMutationSuccess = useCallback( () => {
+	const [ mutationSuccessAck, setMutationSuccessAck ] = useState< {
+		title: string;
+		description: string;
+	} | null >( null );
+	const dismissingSuccessAckRef = useRef( false );
+
+	const dismissMutationSuccessAck = useCallback( () => {
+		if ( dismissingSuccessAckRef.current ) {
+			return;
+		}
+		dismissingSuccessAckRef.current = true;
+		setMutationSuccessAck( null );
+		onMutationSuccess?.();
 		navigate( `/event/${ eventId }` );
-	}, [ navigate, eventId ] );
+		queueMicrotask( () => {
+			dismissingSuccessAckRef.current = false;
+		} );
+	}, [ navigate, eventId, onMutationSuccess ] );
 
 	useEffect( () => {
 		if ( ! apiWpSiteYmd || ! formInitialized ) {
@@ -647,8 +671,11 @@ export function useManageSchedule( eventId: string ) {
 					payload.label = lab;
 				}
 				await addManual.mutateAsync( payload );
-				toast.success( 'Session added to this product schedule.' );
-				afterMutationSuccess();
+				setMutationSuccessAck( {
+					title: 'Session added',
+					description:
+						'The new session was saved to this product schedule.',
+				} );
 			} catch ( e ) {
 				toast.error(
 					String( ( e as Error )?.message || e || 'Request failed' ),
@@ -667,7 +694,6 @@ export function useManageSchedule( eventId: string ) {
 			manualCapacity,
 			manualLabel,
 			addManual,
-			afterMutationSuccess,
 		],
 	);
 
@@ -683,11 +709,12 @@ export function useManageSchedule( eventId: string ) {
 				date: manualDate.trim(),
 				addSpots: manualAddSpotsDelta,
 			} );
-			toast.success(
-				`Added ${ manualAddSpotsDelta } ticket spot(s).`,
-			);
 			setManualStockConfirmOpen( false );
-			afterMutationSuccess();
+			setMutationSuccessAck( {
+				title: 'Ticket spots added',
+				description:
+					`Added ${ manualAddSpotsDelta } ticket spot(s) to the selected session.`,
+			} );
 		} catch ( e ) {
 			toast.error(
 				String( ( e as Error )?.message || e || 'Request failed' ),
@@ -698,7 +725,6 @@ export function useManageSchedule( eventId: string ) {
 		manualAddSpotsDelta,
 		addStock,
 		manualDate,
-		afterMutationSuccess,
 	] );
 
 	const runGenerate = useCallback( async () => {
@@ -727,10 +753,10 @@ export function useManageSchedule( eventId: string ) {
 					toast.message( w );
 				}
 			}
-			toast.success(
-				`Schedule saved: ${ res.slotsWritten ?? '?' } session times, ${ res.totalEntries ?? '?' } slot–date cells.`,
-			);
-			afterMutationSuccess();
+			setMutationSuccessAck( {
+				title: 'Schedule replaced',
+				description: `Saved ${ res.slotsWritten ?? '?' } session times and ${ res.totalEntries ?? '?' } slot–date cells.`,
+			} );
 		} catch ( e ) {
 			toast.error(
 				String( ( e as Error )?.message || e || 'Request failed' ),
@@ -741,7 +767,6 @@ export function useManageSchedule( eventId: string ) {
 		blocks,
 		sessionMinutes,
 		capacity,
-		afterMutationSuccess,
 	] );
 
 	const runFillEmpty = useCallback( async () => {
@@ -779,12 +804,13 @@ export function useManageSchedule( eventId: string ) {
 				}
 			}
 			const skipped = res.skippedDuplicates ?? 0;
-			toast.success(
-				skipped > 0
-					? `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s). ${ skipped } were skipped because those sessions already existed.`
-					: `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s).`,
-			);
-			afterMutationSuccess();
+			setMutationSuccessAck( {
+				title: 'Missing sessions added',
+				description:
+					skipped > 0
+						? `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s). ${ skipped } were skipped because those sessions already existed.`
+						: `Added ${ res.cellsAdded ?? '?' } new slot–date cell(s).`,
+			} );
 		} catch ( e ) {
 			toast.error(
 				String( ( e as Error )?.message || e || 'Request failed' ),
@@ -796,7 +822,6 @@ export function useManageSchedule( eventId: string ) {
 		fillEmptyEnvelope,
 		sessionMinutes,
 		capacity,
-		afterMutationSuccess,
 	] );
 
 	return {
@@ -849,6 +874,8 @@ export function useManageSchedule( eventId: string ) {
 		runFillEmpty,
 		addManual,
 		addStock,
+		mutationSuccessAck,
+		dismissMutationSuccessAck,
 	};
 }
 

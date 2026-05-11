@@ -258,6 +258,15 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/validate/ticket/(?P<ticketId>[^/]+)/related-status',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_validate_ticket_related_status' ),
+				'permission_callback' => array( $this, 'can_validate_tickets' ),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/validate/event/(?P<id>\\d+)',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -982,6 +991,98 @@ class Rest_API {
 			array(
 				'message'       => $result,
 				'appliedStatus' => $status,
+			)
+		);
+	}
+
+	/**
+	 * POST /validate/ticket/{ticketId}/related-status — body `{ "status": "Checked In" | "Canceled" }`.
+	 *
+	 * Applies FooEvents “related ticket” grouping (same order / event booking slot bucket) derived from {@see get_single_ticket()}.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_validate_ticket_related_status( WP_REST_Request $request ) {
+		if ( ! function_exists( 'get_single_ticket' ) || ! function_exists( 'update_ticket_status' ) ) {
+			return new WP_Error(
+				'rest_ticket_api_unavailable',
+				__( 'FooEvents ticket API is not available.', 'fooevents-internal-pos' ),
+				array( 'status' => 503 )
+			);
+		}
+
+		$ticket_id = isset( $request['ticketId'] ) ? sanitize_text_field( rawurldecode( (string) $request['ticketId'] ) ) : '';
+		if ( '' === $ticket_id ) {
+			return new WP_Error( 'rest_invalid_param', __( 'ticketId is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
+		$params = $request->get_json_params();
+		if ( ! is_array( $params ) ) {
+			$params = array();
+		}
+		$status = isset( $params['status'] ) ? trim( wp_strip_all_tags( (string) $params['status'] ) ) : '';
+		// Bulk POS actions: admit group or cancel group (narrower than single endpoint).
+		$allowed_bulk = array( 'Checked In', 'Canceled' );
+		if ( ! in_array( $status, $allowed_bulk, true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'Invalid status. Related bulk supports Checked In or Canceled.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$bundle = get_single_ticket( $ticket_id );
+		if ( ! empty( $bundle['status'] ) && 'error' === $bundle['status'] ) {
+			return new WP_Error( 'not_found', __( 'Ticket not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+		if ( empty( $bundle['data'] ) || ! is_array( $bundle['data'] ) ) {
+			return new WP_Error( 'not_found', __( 'Ticket not found.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
+		}
+
+		$data     = $bundle['data'];
+		$candidates = array();
+
+		if ( ! empty( $data['WooCommerceEventsOrderTickets'] ) && is_array( $data['WooCommerceEventsOrderTickets'] ) ) {
+			foreach ( $data['WooCommerceEventsOrderTickets'] as $row ) {
+				$t = trim( (string) $row );
+				if ( '' !== $t ) {
+					$candidates[] = $t;
+				}
+			}
+		}
+
+		$current_numeric = isset( $data['WooCommerceEventsTicketID'] ) ? trim( (string) $data['WooCommerceEventsTicketID'] ) : '';
+		if ( '' !== $current_numeric ) {
+			$candidates[] = $current_numeric;
+		}
+
+		$uniq = array();
+		$seen = array();
+		foreach ( $candidates as $c ) {
+			$key = strtolower( $c );
+			if ( isset( $seen[ $key ] ) ) {
+				continue;
+			}
+			$seen[ $key ] = true;
+			$uniq[] = $c;
+		}
+
+		if ( empty( $uniq ) ) {
+			$uniq = array( $ticket_id );
+		}
+
+		$messages = array();
+		foreach ( $uniq as $lookup_piece ) {
+			$messages[] = update_ticket_status( $lookup_piece, $status );
+		}
+
+		return rest_ensure_response(
+			array(
+				'appliedStatus'           => $status,
+				'updatedCount'            => count( $uniq ),
+				'affectedTicketLookups'   => $uniq,
+				'messages'                => $messages,
 			)
 		);
 	}

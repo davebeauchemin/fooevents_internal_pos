@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Plus, TriangleAlert } from 'lucide-react';
+import { CircleCheck, Plus, TriangleAlert } from 'lucide-react';
 import { encodeManualSlotDateRef } from '@/lib/slotHourGrouping';
 import type { ManageScheduleController } from '@/hooks/useManageSchedule';
 import { ScheduleBlockDatePicker } from '@/components/managed-schedule/schedule-block-datepicker';
@@ -86,6 +86,8 @@ export function ManagedEventScheduleDialogs( {
 		addStock,
 		confirmOpen,
 		setConfirmOpen,
+		mutationSuccessAck,
+		dismissMutationSuccessAck,
 	} = mgr;
 
 	useEffect( () => {
@@ -565,6 +567,35 @@ export function ManagedEventScheduleDialogs( {
 							disabled={ gen.isPending }
 						>
 							Replace and save
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={ mutationSuccessAck !== null }
+				onOpenChange={ ( open ) => {
+					if ( ! open ) {
+						dismissMutationSuccessAck();
+					}
+				} }
+			>
+				<DialogContent showCloseButton={ false }>
+					<DialogHeader>
+						<DialogTitle className="flex items-center gap-2">
+							<CircleCheck
+								className="text-emerald-600 size-6 shrink-0 dark:text-emerald-400"
+								aria-hidden
+							/>
+							{ mutationSuccessAck?.title ?? 'Success' }
+						</DialogTitle>
+						<DialogDescription className="text-left text-base">
+							{ mutationSuccessAck?.description }
+						</DialogDescription>
+					</DialogHeader>
+					<DialogFooter>
+						<Button type="button" onClick={ dismissMutationSuccessAck }>
+							OK
 						</Button>
 					</DialogFooter>
 				</DialogContent>
