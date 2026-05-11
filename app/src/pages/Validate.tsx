@@ -308,6 +308,7 @@ type FooTicketPayload = Record< string, unknown > & {
 	WooCommerceEventsTicketNumberFormatted?: string;
 	WooCommerceEventsOrderTickets?: string[];
 	WooCommerceEventsOrderTicketsData?: string[];
+	WooCommerceEventsOrderTicketsStatus?: string[];
 	WooCommerceEventsStatus?: string;
 	WooCommerceEventsAttendeeName?: string;
 	WooCommerceEventsAttendeeLastName?: string;
@@ -851,6 +852,7 @@ export default function Validate() {
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
 	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
 	const [ cancelRelatedBulkOpen, setCancelRelatedBulkOpen ] = useState( false );
+	const [ cancelSingleOpen, setCancelSingleOpen ] = useState( false );
 
 	const [ gateScheduleDay, setGateScheduleDay ] = useState< 'today' | 'tomorrow' >( 'today' );
 	const [ siteTodayYmd, setSiteTodayYmd ] = useState< string | null >( null );
@@ -872,6 +874,7 @@ export default function Validate() {
 		setJustCheckedInNumericId( null );
 		setLastScanPurpose( null );
 		setRescheduleOpen( false );
+		setCancelSingleOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( tid );
 		setScannerOpen( false );
@@ -1232,6 +1235,7 @@ export default function Validate() {
 		setLastScanPurpose( null );
 		setJustCheckedInNumericId( null );
 		setRescheduleOpen( false );
+		setCancelSingleOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 	};
 
@@ -1239,6 +1243,7 @@ export default function Validate() {
 		setJustCheckedInNumericId( null );
 		setLastScanPurpose( null );
 		setRescheduleOpen( false );
+		setCancelSingleOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( id.trim() );
 		setScannerOpen( false );
@@ -1263,6 +1268,9 @@ export default function Validate() {
 						|| status === 'Canceled'
 					) {
 						setJustCheckedInNumericId( null );
+					}
+					if ( status === 'Canceled' ) {
+						setCancelSingleOpen( false );
 					}
 					toast.success( `${ status } — ${ ticket.WooCommerceEventsTicketID ?? '' }` );
 				},
@@ -1490,7 +1498,7 @@ export default function Validate() {
 											statusMutation.isPending
 											|| ticket.WooCommerceEventsStatus === 'Canceled'
 										}
-										onClick={ () => applyStatus( 'Canceled' ) }
+										onClick={ () => setCancelSingleOpen( true ) }
 										aria-label="Cancel ticket"
 										title="Cancel ticket"
 									>
@@ -1671,6 +1679,7 @@ export default function Validate() {
 								currentNumericId={ String( ticket.WooCommerceEventsTicketID ?? '' ) }
 								rawIds={ ticket.WooCommerceEventsOrderTickets }
 								labels={ ticket.WooCommerceEventsOrderTicketsData }
+								statuses={ ticket.WooCommerceEventsOrderTicketsStatus }
 								onPick={ openTicketFromSearchOrSibling }
 							/>
 							{ relatedBulkNumericIds.length >= 2 && ! detailQuery.isError ? (
@@ -1728,6 +1737,42 @@ export default function Validate() {
 							) : null }
 						</CardContent>
 					</Card>
+
+					<Dialog open={ cancelSingleOpen } onOpenChange={ setCancelSingleOpen }>
+						<DialogContent showCloseButton={ false } className="max-w-md">
+							<DialogHeader>
+								<DialogTitle>Cancel this ticket?</DialogTitle>
+								<DialogDescription>
+									This marks ticket{' '}
+									<strong>{ numericIdDisp }</strong>
+									{ ' ' }
+									as canceled and releases its booking spot when capacity is limited.
+									You can use <strong>Reactivate ticket</strong> on this screen to restore it.
+								</DialogDescription>
+							</DialogHeader>
+							<DialogFooter className="gap-2 sm:flex-row sm:justify-end">
+								<Button
+									type="button"
+									variant="outline"
+									disabled={ statusMutation.isPending }
+									onClick={ () => setCancelSingleOpen( false ) }
+								>
+									Keep ticket
+								</Button>
+								<Button
+									type="button"
+									variant="destructive"
+									disabled={
+										statusMutation.isPending
+										|| ticket.WooCommerceEventsStatus === 'Canceled'
+									}
+									onClick={ () => applyStatus( 'Canceled' ) }
+								>
+									Cancel ticket
+								</Button>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
 
 					{ relatedBulkNumericIds.length >= 2 ? (
 						<Dialog
@@ -2188,17 +2233,23 @@ function SiblingTicketsBlock( props: {
 	currentNumericId: string;
 	rawIds: unknown;
 	labels: unknown;
+	statuses?: unknown;
 	onPick: ( id: string ) => void;
 } ) {
-	const rawIds = Array.isArray( props.rawIds )
-		? props.rawIds.filter( isNonEmptyStr )
+	const rawIdsFull = Array.isArray( props.rawIds )
+		? props.rawIds.map( ( x ) =>
+			typeof x === 'string' ? x.trim() : String( x ?? '' ).trim(),
+		)
 		: [];
-	const labelArr =
-		Array.isArray( props.labels )
-			? props.labels.filter( isNonEmptyStr )
-			: [];
-	const siblings = rawIds.filter(
-		( tid ) => tid.trim() !== props.currentNumericId.trim()
+	const labelsFull = Array.isArray( props.labels )
+		? props.labels.map( ( x ) =>
+			typeof x === 'string' ? x.trim() : String( x ?? '' ).trim(),
+		)
+		: [];
+	const statusArr = Array.isArray( props.statuses ) ? props.statuses : [];
+	const cur = props.currentNumericId.trim();
+	const siblings = rawIdsFull.filter(
+		( tid ) => tid !== '' && tid !== cur,
 	);
 
 	if ( siblings.length === 0 ) {
@@ -2214,28 +2265,45 @@ function SiblingTicketsBlock( props: {
 				</p>
 				<ul className="divide-y rounded-md border">
 					{ siblings.map( ( tid ) => {
-						const idx = rawIds.findIndex( ( id ) => id.trim() === tid.trim() );
+						const idxFull = rawIdsFull.findIndex( ( id ) => id === tid );
 						const friendly =
-							idx >= 0 && labelArr[ idx ]
-								? labelArr[ idx ]
+							idxFull >= 0 && labelsFull[ idxFull ] && labelsFull[ idxFull ] !== ''
+								? labelsFull[ idxFull ]
 								: tid;
 						const display =
 							isNonEmptyStr( friendly ) && friendly.includes( ' - ' )
 								? friendly.split( ' - ', 2 ).slice( 1 ).join( ' — ' ).trim()
 								|| friendly
 								: friendly;
+						const statusRaw =
+							idxFull >= 0 && idxFull < statusArr.length
+								? statusArr[ idxFull ]
+								: undefined;
+						const statusLabel =
+							typeof statusRaw === 'string' && statusRaw.trim() !== ''
+								? statusRaw.trim()
+								: '\u2014';
 
 						return (
 							<li key={ tid }>
 								<button
 									type="button"
 									onClick={ () => props.onPick( tid ) }
-									className="hover:bg-accent/75 flex w-full gap-3 px-3 py-2.5 text-left text-sm transition-colors"
+									className="hover:bg-accent/75 flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm transition-colors"
 								>
-									<Badge variant="outline" className="shrink-0 font-mono text-[11px]">
-										#{ tid }
+									<span className="flex min-w-0 flex-1 items-center gap-3">
+										<Badge variant="outline" className="shrink-0 font-mono text-[11px]">
+											#{ tid }
+										</Badge>
+										<span className="min-w-0 truncate">{ display }</span>
+									</span>
+									<Badge
+										className={ `h-fit shrink-0 ${ statusBadgeClass(
+											statusLabel === '\u2014' ? '' : statusLabel,
+										) }` }
+									>
+										{ statusLabel }
 									</Badge>
-									<span>{ display }</span>
 								</button>
 							</li>
 						);

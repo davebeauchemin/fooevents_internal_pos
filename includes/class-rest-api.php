@@ -775,6 +775,41 @@ class Rest_API {
 	}
 
 	/**
+	 * Parallel statuses for `WooCommerceEventsOrderTickets` (same indexes as FooEvents sibling lists).
+	 *
+	 * @param array<string,mixed> $data Ticket payload by reference.
+	 */
+	private function enrich_order_tickets_statuses( array &$data ) {
+		if ( empty( $data['WooCommerceEventsOrderTickets'] ) || ! is_array( $data['WooCommerceEventsOrderTickets'] ) ) {
+			return;
+		}
+
+		$current_numeric = isset( $data['WooCommerceEventsTicketID'] ) ? trim( (string) $data['WooCommerceEventsTicketID'] ) : '';
+		$current_status  = isset( $data['WooCommerceEventsStatus'] ) ? trim( (string) $data['WooCommerceEventsStatus'] ) : '';
+
+		$statuses = array();
+		foreach ( $data['WooCommerceEventsOrderTickets'] as $tid_raw ) {
+			$tid = trim( (string) $tid_raw );
+			if ( '' === $tid ) {
+				$statuses[] = '';
+				continue;
+			}
+			if ( $tid === $current_numeric && '' !== $current_status ) {
+				$statuses[] = $current_status;
+				continue;
+			}
+			$post_id = $this->resolve_ticket_post_id_for_lookup( $tid );
+			if ( $post_id <= 0 ) {
+				$statuses[] = '';
+				continue;
+			}
+			$statuses[] = trim( (string) get_post_meta( $post_id, 'WooCommerceEventsStatus', true ) );
+		}
+
+		$data['WooCommerceEventsOrderTicketsStatus'] = $statuses;
+	}
+
+	/**
 	 * Resolve `event_magic_tickets` post ID from the same lookup string as `get_single_ticket()`.
 	 *
 	 * @param string $ticket_lookup Ticket id or productId-formatted id.
@@ -954,6 +989,8 @@ class Rest_API {
 		} else {
 			$data['bookingSession'] = $this->bookings->get_validate_booking_session( 0, $data );
 		}
+
+		$this->enrich_order_tickets_statuses( $data );
 
 		return rest_ensure_response(
 			array_merge(
