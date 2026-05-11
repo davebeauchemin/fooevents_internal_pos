@@ -456,6 +456,10 @@ export function useUpdateTicketStatus() {
 		onSuccess: ( _data, variables ) => {
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', variables.ticketId ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateEvent' ] } );
+			qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
 		},
 	} );
 }
@@ -501,29 +505,54 @@ export function useUpdateRelatedTicketsStatus() {
 }
 
 /**
- * Same-event booking reschedule (ticket CPT + inventory); body `{ eventId, slotId, dateId }`.
+ * Same-event booking reschedule (ticket CPT + inventory); body `{ eventId, slotId, dateId, rescheduleOrderPeersSameBooking? }`.
  *
  * @returns {import('@tanstack/react-query').UseMutationResult<
  *   unknown,
  *   Error,
- *   { ticketId: string, eventId: number, slotId: string, dateId: string }
+ *   { ticketId: string, eventId: number, slotId: string, dateId: string, rescheduleOrderPeersSameBooking?: boolean }
  * >}
  */
 export function useRescheduleTicket() {
 	const qc = useQueryClient();
 	return useMutation( {
 		mutationKey: [ 'internalpos', 'rescheduleTicket' ],
-		mutationFn: ( { ticketId, eventId, slotId, dateId } ) =>
-			restFetch(
+		mutationFn: ( {
+			ticketId,
+			eventId,
+			slotId,
+			dateId,
+			rescheduleOrderPeersSameBooking,
+		} ) => {
+			const body = {
+				eventId,
+				slotId,
+				dateId,
+				...( rescheduleOrderPeersSameBooking ? { rescheduleOrderPeersSameBooking: true } : {} ),
+			};
+			return restFetch(
 				`${ prefix }/validate/ticket/${ encodeURIComponent( ticketId ) }/reschedule`,
 				{
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify( { eventId, slotId, dateId } ),
+					body: JSON.stringify( body ),
 				}
-			),
-		onSuccess: ( _data, variables ) => {
+			);
+		},
+		onSuccess: ( data, variables ) => {
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', variables.ticketId ] } );
+			if (
+				data
+				&& typeof data === 'object'
+				&& Array.isArray( data.affectedTicketLookups )
+			) {
+				for ( const lk of data.affectedTicketLookups ) {
+					const s = typeof lk === 'string' ? lk.trim() : '';
+					if ( s ) {
+						qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateTicket', s ] } );
+					}
+				}
+			}
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateSearch' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'event' ] } );
 			qc.invalidateQueries( { queryKey: [ 'internalpos', 'validateEvent', variables.eventId ] } );

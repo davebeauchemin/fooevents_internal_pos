@@ -43,13 +43,19 @@ class Rest_API {
 	private $ticket_reschedule;
 
 	/**
+	 * @var Ticket_Status_Stock_Service
+	 */
+	private $ticket_status_stock;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
-		$this->bookings         = new Bookings_Service();
-		$this->slot_generator   = new Slot_Generator_Service();
-		$this->booking_checkout = new Bookings_Checkout_Service( $this->bookings );
-		$this->ticket_reschedule = new Ticket_Reschedule_Service( $this->bookings );
+		$this->bookings            = new Bookings_Service();
+		$this->slot_generator      = new Slot_Generator_Service();
+		$this->booking_checkout    = new Bookings_Checkout_Service( $this->bookings );
+		$this->ticket_reschedule   = new Ticket_Reschedule_Service( $this->bookings );
+		$this->ticket_status_stock = new Ticket_Status_Stock_Service();
 	}
 
 	/**
@@ -985,7 +991,10 @@ class Rest_API {
 			);
 		}
 
-		$result = update_ticket_status( $ticket_id, $status );
+		$result = $this->ticket_status_stock->process_status_change( $ticket_id, $status );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
 
 		return rest_ensure_response(
 			array(
@@ -1074,7 +1083,11 @@ class Rest_API {
 
 		$messages = array();
 		foreach ( $uniq as $lookup_piece ) {
-			$messages[] = update_ticket_status( $lookup_piece, $status );
+			$r = $this->ticket_status_stock->process_status_change( $lookup_piece, $status );
+			if ( is_wp_error( $r ) ) {
+				return $r;
+			}
+			$messages[] = $r;
 		}
 
 		return rest_ensure_response(
@@ -1088,7 +1101,7 @@ class Rest_API {
 	}
 
 	/**
-	 * POST /validate/ticket/{ticketId}/reschedule — body `{ "eventId", "slotId", "dateId" }`.
+	 * POST /validate/ticket/{ticketId}/reschedule — body `{ "eventId", "slotId", "dateId", "rescheduleOrderPeersSameBooking"?: boolean }`.
 	 *
 	 * @param WP_REST_Request $request Request.
 	 * @return \WP_REST_Response|WP_Error
@@ -1107,13 +1120,33 @@ class Rest_API {
 		$slot_id  = isset( $params['slotId'] ) ? trim( (string) $params['slotId'] ) : '';
 		$date_id  = isset( $params['dateId'] ) ? trim( (string) $params['dateId'] ) : '';
 
-		$result = $this->ticket_reschedule->reschedule(
-			$ticket_id,
-			$event_id,
-			$slot_id,
-			$date_id,
-			(int) get_current_user_id()
-		);
+		$reschedule_peers = false;
+		if ( isset( $params['rescheduleOrderPeersSameBooking'] ) ) {
+			$b = filter_var( $params['rescheduleOrderPeersSameBooking'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
+			if ( null === $b ) {
+				$reschedule_peers = (bool) $params['rescheduleOrderPeersSameBooking'];
+			} else {
+				$reschedule_peers = (bool) $b;
+			}
+		}
+
+		if ( $reschedule_peers ) {
+			$result = $this->ticket_reschedule->reschedule_order_peers_same_booking(
+				$ticket_id,
+				$event_id,
+				$slot_id,
+				$date_id,
+				(int) get_current_user_id()
+			);
+		} else {
+			$result = $this->ticket_reschedule->reschedule(
+				$ticket_id,
+				$event_id,
+				$slot_id,
+				$date_id,
+				(int) get_current_user_id()
+			);
+		}
 
 		if ( is_wp_error( $result ) ) {
 			return $result;

@@ -38,11 +38,106 @@ class Ticket_Reschedule_Service {
 	}
 
 	/**
+	 * Reschedule every ticket on the same WooCommerce order that shares this ticket’s
+	 * booking slot/date (same session), moving all to the same destination slot/date.
+	 *
+	 * @param string $anchor_ticket_lookup Ticket id path segment (same as single reschedule).
+	 * @param int    $event_id             Product id from client.
+	 * @param string $slot_id              UI slot id.
+	 * @param string $date_id              UI date id.
+	 * @param int    $actor_user_id        WP user performing the action.
+	 * @return array<string,mixed>|WP_Error
+	 */
+	public function reschedule_order_peers_same_booking(
+		$anchor_ticket_lookup,
+		$event_id,
+		$slot_id,
+		$date_id,
+		$actor_user_id
+	) {
+		$collected = $this->collect_peers_same_booking_session( $anchor_ticket_lookup, $event_id );
+		if ( is_wp_error( $collected ) ) {
+			return $collected;
+		}
+		$lookups = $collected['lookups'];
+		if ( empty( $lookups ) ) {
+			return new WP_Error(
+				'no_peers',
+				__( 'No reschedulable tickets matched this order and booking session.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$n = count( $lookups );
+		$avail = $this->bookings->check_availability( $event_id, $slot_id, $date_id, $n );
+		if ( empty( $avail['available'] ) ) {
+			$reason = isset( $avail['reason'] ) ? (string) $avail['reason'] : '';
+			$msg    = __( 'That slot does not have enough space for all selected tickets.', 'fooevents-internal-pos' );
+			if ( 'past_date' === $reason ) {
+				$msg = __( 'Cannot reschedule to a past date.', 'fooevents-internal-pos' );
+			} elseif ( 'not_found' === $reason ) {
+				$msg = __( 'The selected date or slot was not found.', 'fooevents-internal-pos' );
+			}
+			return new WP_Error(
+				'booking_unavailable',
+				$msg,
+				array( 'status' => 400 )
+			);
+		}
+
+		$last_result = null;
+		foreach ( $lookups as $lk ) {
+			$r = $this->reschedule(
+				$lk,
+				$event_id,
+				$slot_id,
+				$date_id,
+				$actor_user_id,
+				array( 'skip_availability_check' => true )
+			);
+			if ( is_wp_error( $r ) ) {
+				return $r;
+			}
+			$last_result = $r;
+		}
+
+		if ( ! is_array( $last_result ) ) {
+			return new WP_Error(
+				'reschedule_failed',
+				__( 'Reschedule did not complete.', 'fooevents-internal-pos' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$anchor_fresh = get_single_ticket( $anchor_ticket_lookup );
+		$ticket_out   = array();
+		if ( ! empty( $anchor_fresh['data'] ) && is_array( $anchor_fresh['data'] ) ) {
+			$ticket_out = $anchor_fresh['data'];
+			$pid        = isset( $ticket_out['WooCommerceEventsProductID'] ) ? absint( $ticket_out['WooCommerceEventsProductID'] ) : 0;
+			if ( $pid > 0 && function_exists( 'wc_get_product' ) ) {
+				$pd = wc_get_product( $pid );
+				if ( $pd ) {
+					$ticket_out['eventDisplayName'] = $pd->get_name();
+				}
+			}
+		}
+
+		return array(
+			'ticket'                  => $ticket_out,
+			'updatedCount'            => $n,
+			'affectedTicketLookups'   => $lookups,
+			'previousBooking'         => $last_result['previousBooking'],
+			'newBooking'              => $last_result['newBooking'],
+		);
+	}
+
+	/**
 	 * @param string $ticket_lookup Ticket id string (numeric or productId-formatted).
 	 * @param int    $event_id      Product id from client (must match ticket).
 	 * @param string $slot_id       UI slot id.
 	 * @param string $date_id       UI date id / bucket / Y-m-d per Bookings_Service conventions.
 	 * @param int    $actor_user_id WP user performing the action.
+	 * @param array  $options       Optional. `skip_availability_check` bool when bulk flow already verified qty.
 	 * @return array<string,mixed>|WP_Error
 	 */
 	public function reschedule(
@@ -50,7 +145,8 @@ class Ticket_Reschedule_Service {
 		$event_id,
 		$slot_id,
 		$date_id,
-		$actor_user_id
+		$actor_user_id,
+		$options = array()
 	) {
 		if ( ! function_exists( 'get_single_ticket' ) ) {
 			return new WP_Error(
@@ -176,20 +272,23 @@ class Ticket_Reschedule_Service {
 			);
 		}
 
-		$avail = $this->bookings->check_availability( $event_id, $slot_id, $date_id, 1 );
-		if ( empty( $avail['available'] ) ) {
-			$reason = isset( $avail['reason'] ) ? (string) $avail['reason'] : '';
-			$msg    = __( 'That slot is not available.', 'fooevents-internal-pos' );
-			if ( 'past_date' === $reason ) {
-				$msg = __( 'Cannot reschedule to a past date.', 'fooevents-internal-pos' );
-			} elseif ( 'not_found' === $reason ) {
-				$msg = __( 'The selected date or slot was not found.', 'fooevents-internal-pos' );
+		$skip_avail = ! empty( $options['skip_availability_check'] );
+		if ( ! $skip_avail ) {
+			$avail = $this->bookings->check_availability( $event_id, $slot_id, $date_id, 1 );
+			if ( empty( $avail['available'] ) ) {
+				$reason = isset( $avail['reason'] ) ? (string) $avail['reason'] : '';
+				$msg    = __( 'That slot is not available.', 'fooevents-internal-pos' );
+				if ( 'past_date' === $reason ) {
+					$msg = __( 'Cannot reschedule to a past date.', 'fooevents-internal-pos' );
+				} elseif ( 'not_found' === $reason ) {
+					$msg = __( 'The selected date or slot was not found.', 'fooevents-internal-pos' );
+				}
+				return new WP_Error(
+					'booking_unavailable',
+					$msg,
+					array( 'status' => 400 )
+				);
 			}
-			return new WP_Error(
-				'booking_unavailable',
-				$msg,
-				array( 'status' => 400 )
-			);
 		}
 
 		$fb = new \FooEvents_Bookings();
@@ -313,6 +412,150 @@ class Ticket_Reschedule_Service {
 				'dateLabel' => (string) $captured['date'],
 			),
 		);
+	}
+
+	/**
+	 * Ticket lookups for same WooCommerce order + same booking slot/date as the anchor ticket.
+	 *
+	 * @param string $anchor_ticket_lookup Lookup for the ticket opened in Validate/POS.
+	 * @param int    $event_id             Expected event product id.
+	 * @return array{lookups:array<int,string>}|WP_Error
+	 */
+	private function collect_peers_same_booking_session( $anchor_ticket_lookup, $event_id ) {
+		$anchor_ticket_lookup = sanitize_text_field( (string) $anchor_ticket_lookup );
+		$event_id             = absint( $event_id );
+
+		if ( '' === $anchor_ticket_lookup || $event_id <= 0 ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'ticketId and eventId are required.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		if ( ! function_exists( 'get_single_ticket' ) ) {
+			return new WP_Error(
+				'fooevents_unavailable',
+				__( 'FooEvents ticket API is not available.', 'fooevents-internal-pos' ),
+				array( 'status' => 503 )
+			);
+		}
+
+		$ticket_post_id = $this->resolve_ticket_post_id( $anchor_ticket_lookup );
+		if ( $ticket_post_id <= 0 ) {
+			return new WP_Error(
+				'not_found',
+				__( 'Ticket post could not be resolved.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$anchor_order = absint( get_post_meta( $ticket_post_id, 'WooCommerceEventsOrderID', true ) );
+		$anchor_slot  = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingSlotID', true ) );
+		$anchor_date  = trim( (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsBookingDateID', true ) );
+
+		if ( '' === $anchor_slot || '' === $anchor_date ) {
+			return new WP_Error(
+				'not_booking_ticket',
+				__( 'This ticket has no booking slot/date to reschedule.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$pack = get_single_ticket( $anchor_ticket_lookup );
+		if ( ! empty( $pack['status'] ) && 'error' === $pack['status'] ) {
+			return new WP_Error(
+				'not_found',
+				__( 'Ticket not found.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+		if ( empty( $pack['data'] ) || ! is_array( $pack['data'] ) ) {
+			return new WP_Error(
+				'not_found',
+				__( 'Ticket not found.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$data = $pack['data'];
+
+		$ticket_event = isset( $data['WooCommerceEventsProductID'] ) ? absint( $data['WooCommerceEventsProductID'] ) : 0;
+		if ( $ticket_event !== $event_id ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'Ticket does not belong to this event.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$raw_candidates = array( $anchor_ticket_lookup );
+		if ( ! empty( $data['WooCommerceEventsOrderTickets'] ) && is_array( $data['WooCommerceEventsOrderTickets'] ) ) {
+			foreach ( $data['WooCommerceEventsOrderTickets'] as $row ) {
+				$t = trim( (string) $row );
+				if ( '' !== $t ) {
+					$raw_candidates[] = $t;
+				}
+			}
+		}
+		$numeric_tid = trim( (string) ( $data['WooCommerceEventsTicketID'] ?? '' ) );
+		if ( '' !== $numeric_tid ) {
+			$raw_candidates[] = $numeric_tid;
+		}
+
+		$seen_key = array();
+		$uniq     = array();
+		foreach ( $raw_candidates as $c ) {
+			$c = trim( (string) $c );
+			if ( '' === $c ) {
+				continue;
+			}
+			$k = strtolower( $c );
+			if ( isset( $seen_key[ $k ] ) ) {
+				continue;
+			}
+			$seen_key[ $k ] = true;
+			$uniq[]         = $c;
+		}
+
+		$eligible   = array();
+		$seen_posts = array();
+
+		foreach ( $uniq as $lk ) {
+			$pid = $this->resolve_ticket_post_id( $lk );
+			if ( $pid <= 0 ) {
+				continue;
+			}
+			if ( isset( $seen_posts[ $pid ] ) ) {
+				continue;
+			}
+
+			if ( absint( get_post_meta( $pid, 'WooCommerceEventsProductID', true ) ) !== $event_id ) {
+				continue;
+			}
+			if ( absint( get_post_meta( $pid, 'WooCommerceEventsOrderID', true ) ) !== $anchor_order ) {
+				continue;
+			}
+
+			$sl = trim( (string) get_post_meta( $pid, 'WooCommerceEventsBookingSlotID', true ) );
+			$di = trim( (string) get_post_meta( $pid, 'WooCommerceEventsBookingDateID', true ) );
+			if ( $sl !== $anchor_slot || $di !== $anchor_date ) {
+				continue;
+			}
+
+			$status = (string) get_post_meta( $pid, 'WooCommerceEventsStatus', true );
+			if ( 'Canceled' === $status ) {
+				continue;
+			}
+			if ( ! in_array( $status, array( 'Not Checked In', 'Checked In' ), true ) ) {
+				continue;
+			}
+
+			$seen_posts[ $pid ] = true;
+			$eligible[]         = $lk;
+		}
+
+		return array( 'lookups' => $eligible );
 	}
 
 	/**

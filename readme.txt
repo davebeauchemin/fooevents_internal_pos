@@ -4,7 +4,7 @@ Tags: fooevents, woocommerce, pos, bookings
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.1.2.12
+Stable tag: 0.1.2.35
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -36,6 +36,12 @@ Single product: enable **Show dynamic bundle pricing** under **Product data → 
 4. For Git Updater: set the GitHub Plugin URI in the main plugin file header, push public repo, install Git Updater on the site, bump Version on each release.
 
 == Changelog ==
+
+= 0.1.2.35 =
+* Validate: optional bulk reschedule — move every ticket on the same order that shares the current booking session (same slot/date) to the chosen destination together.
+
+= 0.1.2.34 =
+* Validate / REST: canceling a booking ticket releases its slot in serialized booking capacity; reactivating (Not Checked In) consumes the spot again when capacity is limited.
 
 = 0.1.2.12 =
 * Storefront: clicking a dynamic bundle chip sets the WooCommerce product quantity to that bundle size and keeps chip selected state in sync with manual quantity changes.

@@ -28,6 +28,7 @@ import {
 } from '@/api/queries.js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
 	Accordion,
 	AccordionContent,
@@ -404,9 +405,18 @@ function TicketRescheduleDialog( props: {
 	ticket: FooTicketPayload;
 	ticketLookup: string;
 	eventProductId: number;
+	orderPeersBulkOffered: boolean;
 } ) {
 	const datePickerId = useId();
-	const { open, onOpenChange, ticket, ticketLookup, eventProductId } = props;
+	const bulkPeersId = useId();
+	const {
+		open,
+		onOpenChange,
+		ticket,
+		ticketLookup,
+		eventProductId,
+		orderPeersBulkOffered,
+	} = props;
 	const eventQ = useValidateEvent( eventProductId, { enabled: open } );
 	const rescheduleMut = useRescheduleTicket();
 	const detail = eventQ.data as EventDetailForReschedule | undefined;
@@ -436,6 +446,7 @@ function TicketRescheduleDialog( props: {
 		dateParam: string;
 		internalDateId: string;
 	} | null >( null );
+	const [ includeOrderPeersSameBooking, setIncludeOrderPeersSameBooking ] = useState( false );
 
 	const bookingMethod = detail?.bookingMethod ?? 'slotdate';
 	const isDateSlot = bookingMethod === 'dateslot';
@@ -472,6 +483,12 @@ function TicketRescheduleDialog( props: {
 		}
 	}, [ open ] );
 
+	useEffect( () => {
+		if ( open ) {
+			setIncludeOrderPeersSameBooking( false );
+		}
+	}, [ open ] );
+
 	const selectedDay = dates.find( ( d ) => d.date === viewYmd );
 	const slots = selectedDay?.slots ?? [];
 
@@ -504,10 +521,32 @@ function TicketRescheduleDialog( props: {
 				eventId: eventProductId,
 				slotId: picked.slotId,
 				dateId: picked.dateParam,
+				...( orderPeersBulkOffered && includeOrderPeersSameBooking
+					? { rescheduleOrderPeersSameBooking: true as const }
+					: {} ),
 			},
 			{
-				onSuccess: () => {
-					toast.success( 'Ticket rescheduled.' );
+				onSuccess: ( data ) => {
+					let updatedCount = 1;
+					if (
+						data
+						&& typeof data === 'object'
+						&& 'updatedCount' in data
+					) {
+						const u = ( data as { updatedCount?: unknown } ).updatedCount;
+						if (
+							typeof u === 'number'
+							&& Number.isFinite( u )
+							&& u >= 1
+						) {
+							updatedCount = Math.trunc( u );
+						}
+					}
+					toast.success(
+						updatedCount > 1
+							? `Rescheduled ${ updatedCount } tickets.`
+							: 'Ticket rescheduled.',
+					);
 					onOpenChange( false );
 				},
 				onError: ( err: Error ) => {
@@ -541,6 +580,29 @@ function TicketRescheduleDialog( props: {
 						This ticket is already checked in. Rescheduling keeps the checked-in status.
 					</p>
 				) }
+
+				{ orderPeersBulkOffered ? (
+					<div className="flex items-start gap-3 rounded-lg border border-border/80 bg-muted/20 px-3 py-2.5">
+						<Checkbox
+							id={ bulkPeersId }
+							checked={ includeOrderPeersSameBooking }
+							onCheckedChange={ ( v ) =>
+								setIncludeOrderPeersSameBooking( v === true ) }
+							className="mt-0.5"
+						/>
+						<div className="min-w-0 flex-1 space-y-0.5">
+							<Label
+								htmlFor={ bulkPeersId }
+								className="cursor-pointer text-sm font-medium leading-snug"
+							>
+								Reschedule all tickets on this order with the same booking session
+							</Label>
+							<p className="text-muted-foreground text-xs leading-relaxed">
+								Only tickets sharing this date and time slot move together; canceled tickets are skipped.
+							</p>
+						</div>
+					</div>
+				) : null }
 
 				{ eventQ.isLoading && (
 					<div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
@@ -1543,6 +1605,16 @@ export default function Validate() {
 										>
 											Undo check-in
 										</Button>
+									) : ticket.WooCommerceEventsStatus === 'Canceled' ? (
+										<Button
+											type="button"
+											className="w-full min-h-11 border-transparent bg-emerald-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+											size="lg"
+											disabled={ statusMutation.isPending }
+											onClick={ () => applyStatus( 'Not Checked In' ) }
+										>
+											Reactivate ticket
+										</Button>
 									) : null }
 									{ ticket.WooCommerceEventsStatus === 'Not Checked In'
 										&& sessionDelta.offSession
@@ -1574,6 +1646,7 @@ export default function Validate() {
 											ticket={ ticket }
 											ticketLookup={ getLookupFromTicket( ticket ) }
 											eventProductId={ Number( ticket.WooCommerceEventsProductID ) }
+											orderPeersBulkOffered={ relatedBulkNumericIds.length >= 2 }
 										/>
 									) }
 									{ statusMutation.isPending && (
@@ -1584,7 +1657,7 @@ export default function Validate() {
 								</div>
 								{ ticket.WooCommerceEventsStatus === 'Canceled' ? (
 									<p className="text-muted-foreground mt-3 border-t border-border pt-3 text-xs leading-relaxed">
-										Canceled tickets cannot be rescheduled.
+										Use <strong className="text-foreground">Reactivate ticket</strong> to restore this booking as &quot;Not Checked In&quot;. That consumes one spot again if the session has a capacity limit. Reschedule stays disabled until the ticket is active.
 									</p>
 								) : ! ticketHasBookingSlotIds( ticket )
 									|| Number( ticket.WooCommerceEventsProductID ) <= 0 ? (
