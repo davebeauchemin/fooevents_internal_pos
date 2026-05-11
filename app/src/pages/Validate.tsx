@@ -852,6 +852,8 @@ export default function Validate() {
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
 	const [ rescheduleOpen, setRescheduleOpen ] = useState( false );
 	const [ cancelRelatedBulkOpen, setCancelRelatedBulkOpen ] = useState( false );
+	const [ checkInRelatedBulkOpen, setCheckInRelatedBulkOpen ] = useState( false );
+	const [ undoCheckInRelatedBulkOpen, setUndoCheckInRelatedBulkOpen ] = useState( false );
 	const [ cancelSingleOpen, setCancelSingleOpen ] = useState( false );
 
 	const [ gateScheduleDay, setGateScheduleDay ] = useState< 'today' | 'tomorrow' >( 'today' );
@@ -875,6 +877,9 @@ export default function Validate() {
 		setLastScanPurpose( null );
 		setRescheduleOpen( false );
 		setCancelSingleOpen( false );
+		setCancelRelatedBulkOpen( false );
+		setCheckInRelatedBulkOpen( false );
+		setUndoCheckInRelatedBulkOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( tid );
 		setScannerOpen( false );
@@ -1236,6 +1241,9 @@ export default function Validate() {
 		setJustCheckedInNumericId( null );
 		setRescheduleOpen( false );
 		setCancelSingleOpen( false );
+		setCancelRelatedBulkOpen( false );
+		setCheckInRelatedBulkOpen( false );
+		setUndoCheckInRelatedBulkOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 	};
 
@@ -1244,6 +1252,9 @@ export default function Validate() {
 		setLastScanPurpose( null );
 		setRescheduleOpen( false );
 		setCancelSingleOpen( false );
+		setCancelRelatedBulkOpen( false );
+		setCheckInRelatedBulkOpen( false );
+		setUndoCheckInRelatedBulkOpen( false );
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( id.trim() );
 		setScannerOpen( false );
@@ -1281,7 +1292,9 @@ export default function Validate() {
 		);
 	};
 
-	const applyRelatedBulkStatus = ( status: 'Checked In' | 'Canceled' ) => {
+	const applyRelatedBulkStatus = (
+		status: 'Checked In' | 'Not Checked In' | 'Canceled',
+	) => {
 		if ( ! ticket?.WooCommerceEventsTicketID ) {
 			return;
 		}
@@ -1298,6 +1311,8 @@ export default function Validate() {
 			{
 				onSuccess: ( dataRaw ) => {
 					setCancelRelatedBulkOpen( false );
+					setCheckInRelatedBulkOpen( false );
+					setUndoCheckInRelatedBulkOpen( false );
 					let ct = groupCountFallback;
 					if (
 						dataRaw !== null
@@ -1320,8 +1335,14 @@ export default function Validate() {
 						return;
 					}
 					setJustCheckedInNumericId( null );
+					if ( status === 'Canceled' ) {
+						toast.success(
+							`Canceled ${ String( ct ) } ticket${ ct === 1 ? '' : 's' } in this session.`,
+						);
+						return;
+					}
 					toast.success(
-						`Canceled ${ String( ct ) } ticket${ ct === 1 ? '' : 's' } in this session.`,
+						`Undo check-in for ${ String( ct ) } ticket${ ct === 1 ? '' : 's' } in this session.`,
 					);
 				},
 				onError: ( err: Error ) => {
@@ -1701,9 +1722,23 @@ export default function Validate() {
 												className={ cn(
 													'h-11 shrink-0 border-transparent bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 sm:min-w-[12rem]',
 												) }
-												onClick={ () => applyRelatedBulkStatus( 'Checked In' ) }
+												onClick={ () => setCheckInRelatedBulkOpen( true ) }
 											>
 												Check in all ({ relatedBulkNumericIds.length })
+											</Button>
+											<Button
+												type="button"
+												size="lg"
+												variant="outline"
+												disabled={
+													statusMutation.isPending
+													|| relatedBulkMutation.isPending
+													|| ticket.WooCommerceEventsStatus === 'Canceled'
+												}
+												className="sm:min-w-[12rem]"
+												onClick={ () => setUndoCheckInRelatedBulkOpen( true ) }
+											>
+												Undo check-in all ({ relatedBulkNumericIds.length })
 											</Button>
 											<Button
 												type="button"
@@ -1773,6 +1808,86 @@ export default function Validate() {
 							</DialogFooter>
 						</DialogContent>
 					</Dialog>
+
+					{ relatedBulkNumericIds.length >= 2 ? (
+						<Dialog
+							open={ checkInRelatedBulkOpen }
+							onOpenChange={ setCheckInRelatedBulkOpen }
+						>
+							<DialogContent showCloseButton={ false } className="max-w-md">
+								<DialogHeader>
+									<DialogTitle>Check in all tickets in this session?</DialogTitle>
+									<DialogDescription>
+										This marks{' '}
+										<strong>{ relatedBulkNumericIds.length } ticket{ relatedBulkNumericIds.length === 1 ? '' : 's' }</strong>
+										{ ' ' }
+										as checked in for the same order and booking slot.
+									</DialogDescription>
+								</DialogHeader>
+								<DialogFooter className="gap-2 sm:flex-row sm:justify-end">
+									<Button
+										type="button"
+										variant="outline"
+										disabled={ relatedBulkMutation.isPending }
+										onClick={ () => setCheckInRelatedBulkOpen( false ) }
+									>
+										Go back
+									</Button>
+									<Button
+										type="button"
+										disabled={
+											relatedBulkMutation.isPending
+											|| ticket.WooCommerceEventsStatus === 'Canceled'
+										}
+										className="border-transparent bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+										onClick={ () => applyRelatedBulkStatus( 'Checked In' ) }
+									>
+										Check in entire group
+									</Button>
+								</DialogFooter>
+							</DialogContent>
+						</Dialog>
+					) : null }
+
+					{ relatedBulkNumericIds.length >= 2 ? (
+						<Dialog
+							open={ undoCheckInRelatedBulkOpen }
+							onOpenChange={ setUndoCheckInRelatedBulkOpen }
+						>
+							<DialogContent showCloseButton={ false } className="max-w-md">
+								<DialogHeader>
+									<DialogTitle>Undo check-in for all tickets in this session?</DialogTitle>
+									<DialogDescription>
+										This sets{' '}
+										<strong>{ relatedBulkNumericIds.length } ticket{ relatedBulkNumericIds.length === 1 ? '' : 's' }</strong>
+										{ ' ' }
+										back to <strong>Not Checked In</strong> for the same order and booking slot.
+									</DialogDescription>
+								</DialogHeader>
+								<DialogFooter className="gap-2 sm:flex-row sm:justify-end">
+									<Button
+										type="button"
+										variant="outline"
+										disabled={ relatedBulkMutation.isPending }
+										onClick={ () => setUndoCheckInRelatedBulkOpen( false ) }
+									>
+										Go back
+									</Button>
+									<Button
+										type="button"
+										variant="secondary"
+										disabled={
+											relatedBulkMutation.isPending
+											|| ticket.WooCommerceEventsStatus === 'Canceled'
+										}
+										onClick={ () => applyRelatedBulkStatus( 'Not Checked In' ) }
+									>
+										Undo check-in entire group
+									</Button>
+								</DialogFooter>
+							</DialogContent>
+						</Dialog>
+					) : null }
 
 					{ relatedBulkNumericIds.length >= 2 ? (
 						<Dialog

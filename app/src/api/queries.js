@@ -465,7 +465,7 @@ export function useUpdateTicketStatus() {
 }
 
 /**
- * Body: `{ status: 'Checked In' | 'Canceled' }` — same FooEvents booking-slot group (`WooCommerceEventsOrderTickets`).
+ * Body: `{ status: 'Checked In' | 'Not Checked In' | 'Canceled' }` — same FooEvents booking-slot group (`WooCommerceEventsOrderTickets`).
  *
  * @returns {import('@tanstack/react-query').UseMutationResult<
  *   unknown,

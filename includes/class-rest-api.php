@@ -1042,7 +1042,7 @@ class Rest_API {
 	}
 
 	/**
-	 * POST /validate/ticket/{ticketId}/related-status — body `{ "status": "Checked In" | "Canceled" }`.
+	 * POST /validate/ticket/{ticketId}/related-status — body `{ "status": "Checked In" | "Not Checked In" | "Canceled" }`.
 	 *
 	 * Applies FooEvents “related ticket” grouping (same order / event booking slot bucket) derived from {@see get_single_ticket()}.
 	 *
@@ -1068,12 +1068,12 @@ class Rest_API {
 			$params = array();
 		}
 		$status = isset( $params['status'] ) ? trim( wp_strip_all_tags( (string) $params['status'] ) ) : '';
-		// Bulk POS actions: admit group or cancel group (narrower than single endpoint).
-		$allowed_bulk = array( 'Checked In', 'Canceled' );
+		// Bulk POS actions: admit group, undo check-in group, or cancel group (narrower than single endpoint).
+		$allowed_bulk = array( 'Checked In', 'Not Checked In', 'Canceled' );
 		if ( ! in_array( $status, $allowed_bulk, true ) ) {
 			return new WP_Error(
 				'rest_invalid_param',
-				__( 'Invalid status. Related bulk supports Checked In or Canceled.', 'fooevents-internal-pos' ),
+				__( 'Invalid status. Related bulk supports Checked In, Not Checked In, or Canceled.', 'fooevents-internal-pos' ),
 				array( 'status' => 400 )
 			);
 		}
