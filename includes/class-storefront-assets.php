@@ -231,6 +231,12 @@ class Storefront_Assets {
 				$ver
 			);
 			wp_enqueue_style(
+				'fipos-woocommerce',
+				$url . 'css/woocommerce.css',
+				array(),
+				$ver
+			);
+			wp_enqueue_style(
 				'fipos-date-slot-picker',
 				$url . 'css/date-slot-picker.css',
 				array(),

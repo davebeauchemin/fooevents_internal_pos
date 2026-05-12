@@ -27,3 +27,24 @@
   color: #fff !important;
   border-radius: var(--radius-m) !important;
 }
+
+/* Single product — price row full width on mobile (Woo + Bricks templates). */
+@media (max-width: 767px) {
+  .single-product div.product p.price,
+  .single-product .summary p.price,
+  .woocommerce div.product .summary p.price {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Bricks: e.g. .brxe-product-price.fr-woo-product-bravo__price in flex body */
+  .brxe-product-price,
+  .fr-woo-product-bravo__price {
+    width: 100% !important;
+    max-width: 100%;
+    box-sizing: border-box;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+}
