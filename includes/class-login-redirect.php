@@ -6,8 +6,8 @@
  * FooEvents POS uses priority 9999 on {@see 'woocommerce_login_redirect'} and 20 on
  * {@see 'woocommerce_prevent_admin_access'}; we override after login and before admin redirect.
  *
- * Bricks “User Login” forms submit via AJAX; add the Form “Custom” action after “User Login” so
- * {@see 'bricks/form/custom_action'} can return a role-based redirect response.
+ * Bricks “User Login” forms submit via AJAX; add the Form “POS Redirect” action after “User Login”
+ * so {@see Login_Redirect::handle_bricks_pos_redirect_action()} can return a role-based redirect response.
  *
  * @package FooEventsInternalPOS
  */
@@ -22,23 +22,43 @@ defined( 'ABSPATH' ) || exit;
 class Login_Redirect {
 
 	/**
+	 * Bricks Form action slug (registered under Actions → “POS Redirect”).
+	 */
+	private const BRICKS_FORM_ACTION_POS_REDIRECT = 'fooevents_internal_pos_redirect';
+
+	/**
 	 * Hooks.
 	 */
 	public function init(): void {
 		add_filter( 'woocommerce_login_redirect', array( $this, 'filter_woocommerce_login_redirect' ), 10000, 2 );
 		add_filter( 'login_redirect', array( $this, 'filter_wp_login_redirect' ), 10000, 3 );
 		add_filter( 'woocommerce_prevent_admin_access', array( $this, 'filter_prevent_admin_access' ), 19, 1 );
-		add_action( 'bricks/form/custom_action', array( $this, 'handle_bricks_custom_action' ), 10000, 1 );
+		add_filter( 'bricks/elements/form/controls', array( $this, 'register_bricks_pos_redirect_form_action' ) );
+		add_action( 'bricks/form/action/' . self::BRICKS_FORM_ACTION_POS_REDIRECT, array( $this, 'handle_bricks_pos_redirect_action' ), 10000, 1 );
+	}
+
+	/**
+	 * Add “POS Redirect” to the Bricks Form element action list.
+	 *
+	 * @param array<string, mixed> $controls Form element controls.
+	 * @return array<string, mixed>
+	 */
+	public function register_bricks_pos_redirect_form_action( $controls ) {
+		if ( ! is_array( $controls ) || ! isset( $controls['actions']['options'] ) || ! is_array( $controls['actions']['options'] ) ) {
+			return $controls;
+		}
+		$controls['actions']['options'][ self::BRICKS_FORM_ACTION_POS_REDIRECT ] = esc_html__( 'POS Redirect', 'fooevents-internal-pos' );
+		return $controls;
 	}
 
 	/**
 	 * Bricks Form: after “User Login” succeeds, send staff to Internal POS via AJAX redirect.
 	 *
-	 * Requires Form actions: User Login, then Custom (no competing Bricks “Redirect” action).
+	 * Requires Form actions: User Login, then POS Redirect (no competing Bricks “Redirect” action).
 	 *
 	 * @param object $form Bricks form handler (must expose get_settings, set_result).
 	 */
-	public function handle_bricks_custom_action( $form ): void {
+	public function handle_bricks_pos_redirect_action( $form ): void {
 		if ( ! is_object( $form ) || ! method_exists( $form, 'get_settings' ) || ! method_exists( $form, 'set_result' ) ) {
 			return;
 		}
