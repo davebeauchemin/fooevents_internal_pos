@@ -2,6 +2,40 @@ jQuery(document).ready(function ($) {
   // Set fipos_enable_custom_time_slot_picker to true in PHP (filter) to use pill grid; default is native <select>.
   var pickerCfg = window.fiposDateSlotPicker || {};
   var useCustomTimeSlots = !!(pickerCfg && pickerCfg.customTimeSlots);
+  var labels = pickerCfg.labels && typeof pickerCfg.labels === 'object' ? pickerCfg.labels : {};
+
+  function resolvePageLocale() {
+    if (pickerCfg.locale && typeof pickerCfg.locale === 'string' && pickerCfg.locale.trim()) {
+      return pickerCfg.locale.trim();
+    }
+    var h = document.documentElement && document.documentElement.getAttribute('lang');
+    if (h && String(h).trim()) {
+      return String(h).trim().replace(/_/g, '-');
+    }
+    return 'en-US';
+  }
+
+  var PAGE_LOCALE = resolvePageLocale();
+
+  function label(key, fallback) {
+    var v = labels[key];
+    return v !== undefined && v !== null && String(v).trim() !== '' ? String(v) : fallback;
+  }
+
+  /** Simple %s / %d replacement for localized PHP strings */
+  function formatLabel(tpl, val) {
+    if (!tpl) return '';
+    return String(tpl).replace(/%[sd]/g, function () { return String(val); });
+  }
+
+  function slotIsSoldOut(slotLabel) {
+    var low = String(slotLabel || '').toLowerCase();
+    if (low.indexOf('sold out') !== -1) return true;
+    var so = label('soldOut', 'Sold out');
+    if (so && low.indexOf(String(so).toLowerCase()) !== -1) return true;
+    if (low.indexOf('épuisé') !== -1 || low.indexOf('epuise') !== -1) return true;
+    return false;
+  }
 
   var DATE_SELECT_SEL = 'select[name="fooevents_bookings_date_val__trans"]';
   var SLOT_SELECT_SEL = 'select[name="fooevents_bookings_slot_val__trans"]';
@@ -134,7 +168,10 @@ jQuery(document).ready(function ($) {
 
   function makeArrow(direction) {
     var svg = direction === 'prev' ? SVG_PREV : SVG_NEXT;
-    return $('<button type="button" class="kbm-slider__arrow kbm-slider__arrow--' + direction + '" aria-label="' + (direction === 'prev' ? 'Previous' : 'Next') + '"></button>').append(svg);
+    var aria = direction === 'prev'
+      ? label('previous', 'Previous')
+      : label('next', 'Next');
+    return $('<button type="button" class="kbm-slider__arrow kbm-slider__arrow--' + direction + '" aria-label="' + String(aria).replace(/"/g, '&quot;') + '"></button>').append(svg);
   }
 
   // ─── Shared pager (translateX + drag) ────────────────────────────────────────
@@ -222,7 +259,11 @@ jQuery(document).ready(function ($) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
     var d = new Date(ymd + 'T12:00:00');
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { weekday: 'long' });
+    try {
+      return d.toLocaleDateString(PAGE_LOCALE, { weekday: 'long' });
+    } catch (e) {
+      return d.toLocaleDateString('en-US', { weekday: 'long' });
+    }
   }
 
   /** 24h HH:MM from minute-of-day (site-local semantics match PHP slot metadata). */
@@ -362,7 +403,7 @@ jQuery(document).ready(function ($) {
     });
 
     if (!pills.length) {
-      $dateFieldRow.after('<p class="kbm-no-dates">No upcoming dates available.</p>');
+      $dateFieldRow.after($('<p class="kbm-no-dates"></p>').text(label('noDates', 'No upcoming dates available.')));
       return;
     }
 
@@ -380,7 +421,7 @@ jQuery(document).ready(function ($) {
     }
 
     var $wrapper = $('<div class="kbm-slider"></div>');
-    var $label = $('<div class="kbm-slider__label">Select a date</div>');
+    var $label = $('<div class="kbm-slider__label"></div>').text(label('selectDate', 'Select a date'));
     var $prev = makeArrow('prev');
     var $next = makeArrow('next');
     var $viewport = $('<div class="kbm-slot-viewport"></div>');
@@ -390,7 +431,14 @@ jQuery(document).ready(function ($) {
       var $slide = $('<div class="kbm-slot-slide kbm-date-slide"></div>');
       page.forEach(function (pill) {
         var ymdForDay = resolveDateYmd(pill.value, pill.label);
-        var dayName = ymdLocalNoonWeekday(ymdForDay) || new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
+        var dayName = ymdLocalNoonWeekday(ymdForDay);
+        if (!dayName) {
+          try {
+            dayName = new Date(pill.label).toLocaleDateString(PAGE_LOCALE, { weekday: 'long' });
+          } catch (e) {
+            dayName = new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
+          }
+        }
         var $pill = $('<button type="button" class="kbm-pill"><span class="kbm-pill__date">' + pill.label + '</span><span class="kbm-pill__day">' + dayName + '</span></button>');
         if (pill.value === initialDateValue || (!initialDateValue && pill === defaultPill)) {
           $pill.addClass('active');
@@ -444,7 +492,7 @@ jQuery(document).ready(function ($) {
         val: val,
         label: label,
         parsed: parseSlotRow(val, label),
-        soldOut: label.toLowerCase().indexOf('sold out') !== -1
+        soldOut: slotIsSoldOut(label)
       });
     });
 
@@ -484,12 +532,14 @@ jQuery(document).ready(function ($) {
     removeLoading($slotAreaMount);
 
     if (!hourOrder.length) {
-      $slotAreaMount.html('<p class="kbm-no-slots">No upcoming time slots remain for this date.</p>');
+      $slotAreaMount.empty().append(
+        $('<p class="kbm-no-slots"></p>').text(label('noSlots', 'No upcoming time slots remain for this date.'))
+      );
       return;
     }
 
     var $wrapper = $('<div class="kbm-slot-slider"></div>');
-    var $label = $('<div class="kbm-slider__label">Select a time</div>');
+    var $label = $('<div class="kbm-slider__label"></div>').text(label('selectTime', 'Select a time'));
     var $prev = makeArrow('prev');
     var $next = makeArrow('next');
     var $hourNav = $('<div class="kbm-slot-hour-nav" aria-live="polite"></div>');
@@ -510,7 +560,9 @@ jQuery(document).ready(function ($) {
       group.slots.forEach(function (slot) {
         var $pill = $('<button type="button" class="kbm-pill"></button>');
         $pill.text(slot.pillText);
-        if (slot.disabled) $pill.addClass('disabled').prop('disabled', true).attr('title', 'Sold out');
+        if (slot.disabled) {
+          $pill.addClass('disabled').prop('disabled', true).attr('title', label('soldOut', 'Sold out'));
+        }
         $pill.on('click', function () {
           $wrapper.find('.kbm-pill').removeClass('active');
           $pill.addClass('active');
@@ -549,13 +601,23 @@ jQuery(document).ready(function ($) {
       $prevHour
         .text(prevTitle ? '\u2039 ' + prevTitle : '')
         .prop('disabled', !prevTitle)
-        .attr('aria-label', prevTitle ? 'Show ' + prevTitle + ' times' : 'No earlier hour')
+        .attr(
+          'aria-label',
+          prevTitle
+            ? formatLabel(label('showHourTimes', 'Show %s times'), prevTitle)
+            : label('noEarlierHour', 'No earlier hour')
+        )
         .toggleClass('is-hidden', !prevTitle);
       $currentHour.text(currentTitle || '');
       $nextHour
         .text(nextTitle ? nextTitle + ' \u203a' : '')
         .prop('disabled', !nextTitle)
-        .attr('aria-label', nextTitle ? 'Show ' + nextTitle + ' times' : 'No later hour')
+        .attr(
+          'aria-label',
+          nextTitle
+            ? formatLabel(label('showHourTimes', 'Show %s times'), nextTitle)
+            : label('noLaterHour', 'No later hour')
+        )
         .toggleClass('is-hidden', !nextTitle);
     }
 
@@ -569,7 +631,8 @@ jQuery(document).ready(function ($) {
   // ─── Loading helpers ──────────────────────────────────────────────────────────
 
   function showLoading($target) {
-    $target.html('<div class="kbm-slot-loading">Loading available times&hellip;</div>');
+    var $loading = $('<div class="kbm-slot-loading"></div>').text(label('loadingTimes', 'Loading available times…'));
+    $target.html('').append($loading);
   }
 
   function removeLoading($target) {
@@ -593,7 +656,9 @@ jQuery(document).ready(function ($) {
 
   // ─── Init ────────────────────────────────────────────────────────────────────
 
-  $('div.quantity').before('<div class="kbm-qte__label">Tickets Number</div>');
+  $('div.quantity').before(
+    $('<div class="kbm-qte__label"></div>').text(label('ticketsNumber', 'Tickets Number'))
+  );
 
   buildDateSlider();
 
@@ -608,8 +673,10 @@ jQuery(document).ready(function ($) {
     new MutationObserver(function () {
       var text = $availability.text().trim();
       var match = text.match(/\d+/);
-      if (match && text !== 'Only ' + match[0] + ' tickets left') {
-        $availability.text('Only ' + match[0] + ' tickets left');
+      var tpl = label('onlyTicketsLeft', 'Only %s tickets left');
+      var localized = match ? formatLabel(tpl, match[0]) : '';
+      if (match && localized && text !== localized) {
+        $availability.text(localized);
       }
     }).observe($availability[0], { childList: true, subtree: true, characterData: true });
   }

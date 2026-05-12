@@ -15,6 +15,54 @@ defined( 'ABSPATH' ) || exit;
 class Storefront_Assets {
 
 	/**
+	 * BCP 47 locale for JS (e.g. fr-CA) from WordPress locale (fr_CA).
+	 *
+	 * @return string
+	 */
+	private function locale_for_js() {
+		$wp_locale = '';
+		if ( function_exists( 'determine_locale' ) ) {
+			$wp_locale = (string) determine_locale();
+		} else {
+			$wp_locale = (string) get_locale();
+		}
+		$wp_locale = '' !== $wp_locale ? $wp_locale : 'en_US';
+		return str_replace( '_', '-', $wp_locale );
+	}
+
+	/**
+	 * Localized strings for date/slot picker UI (pass-through for JS).
+	 *
+	 * @return array<string, string>
+	 */
+	private function get_storefront_picker_labels() {
+		$labels = array(
+			'selectDate'        => __( 'Select a date', 'fooevents-internal-pos' ),
+			'selectTime'        => __( 'Select a time', 'fooevents-internal-pos' ),
+			'previous'          => __( 'Previous', 'fooevents-internal-pos' ),
+			'next'              => __( 'Next', 'fooevents-internal-pos' ),
+			'loadingTimes'      => __( 'Loading available times…', 'fooevents-internal-pos' ),
+			'noDates'           => __( 'No upcoming dates available.', 'fooevents-internal-pos' ),
+			'noSlots'           => __( 'No upcoming time slots remain for this date.', 'fooevents-internal-pos' ),
+			'soldOut'           => __( 'Sold out', 'fooevents-internal-pos' ),
+			/* translators: %s: ticket count */
+			'onlyTicketsLeft'   => __( 'Only %s tickets left', 'fooevents-internal-pos' ),
+			'ticketsNumber'     => __( 'Tickets Number', 'fooevents-internal-pos' ),
+			/* translators: %s: hour label, e.g. 22:00 */
+			'showHourTimes'     => __( 'Show %s times', 'fooevents-internal-pos' ),
+			'noEarlierHour'     => __( 'No earlier hour', 'fooevents-internal-pos' ),
+			'noLaterHour'       => __( 'No later hour', 'fooevents-internal-pos' ),
+		);
+
+		/**
+		 * Filter storefront date/slot picker label strings passed to JS.
+		 *
+		 * @param array<string, string> $labels Label map.
+		 */
+		return apply_filters( 'fipos_storefront_picker_labels', $labels );
+	}
+
+	/**
 	 * Hooks.
 	 */
 	public function init() {
@@ -139,6 +187,13 @@ class Storefront_Assets {
 				$ver,
 				true
 			);
+			wp_localize_script(
+				'fipos-cart-format',
+				'fiposCartFormat',
+				array(
+					'locale' => $this->locale_for_js(),
+				)
+			);
 		}
 
 		if ( function_exists( 'is_product' ) && is_product() ) {
@@ -192,6 +247,8 @@ class Storefront_Assets {
 				'fipos-date-slot-picker',
 				'fiposDateSlotPicker',
 				array(
+					'locale'          => $this->locale_for_js(),
+					'labels'          => $this->get_storefront_picker_labels(),
 					'customTimeSlots' => (bool) apply_filters( 'fipos_enable_custom_time_slot_picker', true ),
 					'siteTodayYmd'    => isset( $site_time['siteTodayYmd'] ) ? (string) $site_time['siteTodayYmd'] : '',
 					'siteTodayLabel'  => $site_label,
