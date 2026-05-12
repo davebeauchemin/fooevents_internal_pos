@@ -61,10 +61,10 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   font-weight: 700;
   transform: translateY(-1px);
   text-align: center;
-  border: 3px solid #ffffff !important;
+  border: 3px solid #8a0000 !important;
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.15),
-    0 4px 14px rgba(0, 0, 0, 0.2) !important;
+    0 0 0 1px rgba(90, 0, 0, 0.35),
+    0 4px 14px rgba(60, 0, 0, 0.25) !important;
   outline: none;
   filter: brightness(1.06);
 }
