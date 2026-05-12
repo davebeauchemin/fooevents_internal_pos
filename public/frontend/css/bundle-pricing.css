@@ -55,16 +55,16 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   outline-offset: 3px;
 }
 
-/* Selected tier: visible border + centered label (overrides theme .btn align). */
+/* Selected tier: border matches primary button red (same as storefront CTAs). */
 .fipos-dynamic-bundle-pricing__badge.is-selected {
   z-index: 1;
   font-weight: 700;
   transform: translateY(-1px);
   text-align: center;
-  border: 3px solid #8a0000 !important;
+  border: 3px solid #cc0000 !important;
   box-shadow:
-    0 0 0 1px rgba(90, 0, 0, 0.35),
-    0 4px 14px rgba(60, 0, 0, 0.25) !important;
+    0 0 0 1px rgba(204, 0, 0, 0.35),
+    0 4px 14px rgba(204, 0, 0, 0.2) !important;
   outline: none;
   filter: brightness(1.06);
 }
