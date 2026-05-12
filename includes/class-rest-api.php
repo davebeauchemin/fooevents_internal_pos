@@ -172,6 +172,18 @@ class Rest_API {
 							return is_numeric( $p ) && (int) $p > 0;
 						},
 					),
+					'includePast' => array(
+						'description'       => __( 'Include past calendar days in dates[] (management).', 'fooevents-internal-pos' ),
+						'type'              => array( 'string', 'boolean' ),
+						'default'           => false,
+						'sanitize_callback' => function( $value ) {
+							if ( is_bool( $value ) ) {
+								return $value;
+							}
+							$s = strtolower( trim( (string) $value ) );
+							return in_array( $s, array( '1', 'true', 'yes' ), true );
+						},
+					),
 				),
 			)
 		);
@@ -509,8 +521,9 @@ class Rest_API {
 	 * @param WP_REST_Request $request Request.
 	 */
 	public function get_event( WP_REST_Request $request ) {
-		$id  = (int) $request['id'];
-		$out = $this->bookings->get_event_detail( $id );
+		$id           = (int) $request['id'];
+		$include_past = (bool) $request->get_param( 'includePast' );
+		$out          = $this->bookings->get_event_detail( $id, $include_past );
 		if ( ! empty( $out['error'] ) && 'not_booking_event' === $out['error'] ) {
 			return new WP_Error( 'not_found', __( 'Event not found or not a booking product.', 'fooevents-internal-pos' ), array( 'status' => 404 ) );
 		}

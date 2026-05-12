@@ -17,7 +17,7 @@ import {
 	formatSlotTime,
 	manualSlotWouldDuplicateExisting,
 	normalizeTimeInputToHhmm,
-	slotMatchesScheduleBlockRemovalCandidate,
+	slotMatchesBulkRemoveTimeOnly,
 	type SlotLike,
 } from '@/lib/slotHourGrouping';
 import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
@@ -462,7 +462,6 @@ function computeBulkRemoveTargets(
 		if ( openM === null || closeM === null || openM + sessionM > closeM ) {
 			continue;
 		}
-		const name = ( b.name || '' ).trim();
 		const rawEffStart = ymdMin( b.startDate, ff );
 		const rawEffEnd = ymdMax( b.endDate, ft );
 		const enumerStart = rawEffStart;
@@ -488,7 +487,7 @@ function computeBulkRemoveTargets(
 					if ( ! sid || ! did ) {
 						continue;
 					}
-					if ( ! slotMatchesScheduleBlockRemovalCandidate( slot, name, timeKey ) ) {
+					if ( ! slotMatchesBulkRemoveTimeOnly( slot, timeKey ) ) {
 						continue;
 					}
 					const k = encodeManualSlotDateRef( { id: sid, dateId: did } );
@@ -533,26 +532,26 @@ export function useManageSchedule(
 ) {
 	const { onMutationSuccess } = options;
 	const navigate = useNavigate();
-	const {
-		data: eventData,
-		isLoading,
-		isError,
-		error,
-	} = useEvent( eventId ) as {
-		data:
-			| {
-				title?: string;
-				dates?: unknown[];
-				id?: number;
-				bookingMethod?: string;
-				siteTodayYmd?: string;
-				siteNowLocal?: string;
-			}
-			| undefined;
-		isLoading: boolean;
-		isError: boolean;
-		error: Error | null;
+	const upcomingEventQuery = useEvent( eventId );
+	const pastInclusiveEventQuery = useEvent( eventId, { includePast: true } );
+
+	type EventApiPayload = {
+		title?: string;
+		dates?: unknown[];
+		id?: number;
+		bookingMethod?: string;
+		siteTodayYmd?: string;
+		siteNowLocal?: string;
 	};
+
+	const eventData = upcomingEventQuery.data as EventApiPayload | undefined;
+	const eventDetailWithPast = pastInclusiveEventQuery.data as EventApiPayload | undefined;
+
+	const isLoading =
+		upcomingEventQuery.isLoading || pastInclusiveEventQuery.isLoading;
+	const isError = upcomingEventQuery.isError || pastInclusiveEventQuery.isError;
+	const error =
+		upcomingEventQuery.error ?? pastInclusiveEventQuery.error ?? null;
 	const queryClient = useQueryClient();
 	const gen = useGenerateSlots( eventId );
 	const addManual = useAddManualSlot( eventId );
@@ -740,14 +739,17 @@ export function useManageSchedule(
 		if ( bulkRemoveEnvelope.invalid ) {
 			return [];
 		}
+		const datesForBulkRemove =
+			eventDetailWithPast?.dates ?? eventData?.dates;
 		return computeBulkRemoveTargets(
-			eventData?.dates,
+			datesForBulkRemove,
 			blocks,
 			sessionMinutes,
 			bulkRemoveEnvelope.removeFrom,
 			bulkRemoveEnvelope.removeTo,
 		);
 	}, [
+		eventDetailWithPast?.dates,
 		eventData?.dates,
 		blocks,
 		sessionMinutes,
@@ -940,7 +942,7 @@ export function useManageSchedule(
 		}
 		if ( bulkRemoveTargets.length === 0 ) {
 			toast.message(
-				'No matching slot–date cells on this product for the blocks above (or session length / labels don’t line up).',
+				'No matching slot–date cells on this product for the blocks above (check weekdays, date span, and session length / times).',
 			);
 			return;
 		}

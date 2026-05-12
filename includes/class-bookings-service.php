@@ -239,10 +239,11 @@ class Bookings_Service {
 	/**
 	 * Full event detail for API (read-only).
 	 *
-	 * @param int $product_id Product ID.
+	 * @param int  $product_id   Product ID.
+	 * @param bool $include_past When true, include past calendar days in `dates` (for management such as bulk remove).
 	 * @return array
 	 */
-	public function get_event_detail( $product_id ) {
+	public function get_event_detail( $product_id, $include_past = false ) {
 		$product_id = absint( $product_id );
 		$product    = wc_get_product( $product_id );
 		if ( ! $product || 'Event' !== $product->get_meta( 'WooCommerceEventsEvent', true ) || 'bookings' !== $product->get_meta( 'WooCommerceEventsType', true ) ) {
@@ -278,7 +279,10 @@ class Bookings_Service {
 					continue;
 				}
 				$ymd = $this->date_string_to_ymd( (string) $date_display );
-				if ( null === $ymd || ! $this->is_date_not_past( $ymd ) ) {
+				if ( null === $ymd ) {
+					continue;
+				}
+				if ( ! $include_past && ! $this->is_date_not_past( $ymd ) ) {
 					continue;
 				}
 				$slot_rows = array();
@@ -332,7 +336,10 @@ class Bookings_Service {
 						continue;
 					}
 					$ymd = $this->date_string_to_ymd( (string) $drow['date'] );
-					if ( null === $ymd || ! $this->is_date_not_past( $ymd ) ) {
+					if ( null === $ymd ) {
+						continue;
+					}
+					if ( ! $include_past && ! $this->is_date_not_past( $ymd ) ) {
 						continue;
 					}
 					$stock  = $drow['stock'] ?? '';

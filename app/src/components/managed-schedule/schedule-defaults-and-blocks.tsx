@@ -30,6 +30,8 @@ type Props = {
 	disableDefaultsWhileBusy?: boolean;
 	/** When true, hides “Tickets per session” — irrelevant for flows that don’t allocate capacity (e.g. bulk remove). */
 	hideCapacityDefaults?: boolean;
+	/** Bulk remove ignores schedule-name text when locating rows — only weekdays + stepping times matter. */
+	bulkRemoveSemantics?: boolean;
 };
 
 export function ScheduleDefaultsAndBlocksForm( {
@@ -37,6 +39,7 @@ export function ScheduleDefaultsAndBlocksForm( {
 	formIdPrefix,
 	disableDefaultsWhileBusy = false,
 	hideCapacityDefaults = false,
+	bulkRemoveSemantics = false,
 }: Props ) {
 	const {
 		sessionMinutes,
@@ -81,8 +84,9 @@ export function ScheduleDefaultsAndBlocksForm( {
 							</Select>
 							{ hideCapacityDefaults ? (
 								<p className="text-muted-foreground max-w-md text-xs leading-snug">
-									Which start-times inside each Open/Close window match for removal mirrors Fill empty /
-									schedule generation stepping.
+									{ bulkRemoveSemantics
+										? 'Cells are matched by calendar weekday + stepping start times vs existing slots — not by schedule-name text.'
+										: 'Which start-times inside each Open/Close window match for removal mirrors Fill empty / schedule generation stepping.' }
 								</p>
 							) : null }
 						</div>
@@ -105,8 +109,18 @@ export function ScheduleDefaultsAndBlocksForm( {
 						) }
 					</div>
 					<p className="text-muted-foreground text-xs">
-						Block <strong>schedule name</strong> is the FooEvents label prefix (e.g. Regular, Late).
-						Leave empty to use time only.
+						{ bulkRemoveSemantics ? (
+							<>
+								Block <strong>schedule name</strong> is only used to group rows in the pattern preview —
+								actual removal matches{' '}
+								<strong>Open/Close stepping</strong>, <strong>weekdays</strong>, and <strong>stored slot start times</strong>.
+							</>
+						) : (
+							<>
+								Block <strong>schedule name</strong> is the FooEvents label prefix (e.g. Regular, Late).
+								Leave empty to use time only.
+							</>
+						) }
 					</p>
 				</CardContent>
 			</Card>

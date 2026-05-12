@@ -120,11 +120,14 @@ export function useEvents() {
 /**
  * @param {number|string|undefined} id
  */
-export function useEvent( id ) {
+export function useEvent( id, options = {} ) {
+	const { includePast = false, enabled, ...rest } = options;
+	const suffix = includePast ? '?includePast=1' : '';
 	return useQuery( {
-		queryKey: [ 'internalpos', 'event', id ],
-		enabled: Boolean( id ),
-		queryFn: () => restFetch( `${ prefix }/events/${ id }` ),
+		queryKey: [ 'internalpos', 'event', id, includePast ? 1 : 0 ],
+		enabled: enabled !== undefined ? enabled && Boolean( id ) : Boolean( id ),
+		queryFn: () => restFetch( `${ prefix }/events/${ id }${ suffix }` ),
+		...rest,
 	} );
 }
 

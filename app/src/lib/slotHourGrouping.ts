@@ -171,6 +171,21 @@ export function slotMatchesScheduleBlockRemovalCandidate(
 	return false;
 }
 
+/**
+ * Bulk remove: match existing slot rows by start time only (ignore schedule/block labels).
+ */
+export function slotMatchesBulkRemoveTimeOnly(
+	slot: SlotLike,
+	candidateTimeHhmm: string,
+): boolean {
+	const mh = normHhmm( candidateTimeHhmm.trim() );
+	if ( ! mh ) {
+		return false;
+	}
+	const sh = slotNormHhmm( slot );
+	return Boolean( sh && sh === mh );
+}
+
 /** Stable Select value for a slot + date cell (manual stock UI). */
 export function encodeManualSlotDateRef( slot: Pick< SlotLike, 'id' > & { dateId?: string } ): string {
 	return JSON.stringify( [

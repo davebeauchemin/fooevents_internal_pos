@@ -338,14 +338,18 @@ export function ManagedEventScheduleDialogs( {
 								aria-hidden
 							/>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								Cells that resolve to this pattern are permanently removed from FooEvents scheduling for
-								this product (except booked cells, which are left in place).
+								Removal matches{ ' ' }
+								<strong className="text-foreground font-medium">weekdays + session start times </strong>
+								stepped from Open/Close (same as Fill empty stepping). Stored FooEvents{ ' ' }
+								<strong className="text-foreground font-medium">labels are ignored </strong>
+								— all slot rows on a day whose resolved time aligns are candidates.
 							</p>
 						</div>
 						<ScheduleDefaultsAndBlocksForm
 							mgr={ mgr }
 							formIdPrefix="rmv"
 							hideCapacityDefaults
+							bulkRemoveSemantics
 						/>
 						<section
 							className="border-border bg-muted/25 space-y-4 rounded-lg border p-4 sm:p-5"
@@ -383,9 +387,14 @@ export function ManagedEventScheduleDialogs( {
 							</div>
 							<Card className="border-border/80 bg-background/80">
 								<CardHeader className="pb-2">
-									<CardTitle className="text-base">Pattern preview (would match new cells)</CardTitle>
+									<CardTitle className="text-base">
+										Pattern preview (candidate times &amp; weekdays)
+									</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-2 text-sm">
+									<p className="text-muted-foreground text-xs">
+										Block names below only<strong className="text-foreground font-medium"> group preview rows </strong>; they don’t filter what gets deleted — times do.
+									</p>
 									<p>
 										<span className="text-muted-foreground">
 											Candidate slot–date positions in merge window:
@@ -394,7 +403,7 @@ export function ManagedEventScheduleDialogs( {
 									</p>
 									{ bulkRemovePatternPreview.categories.length > 0 && (
 										<div className="text-muted-foreground space-y-1 border-t border-border/60 pt-2 text-xs">
-											<p className="font-medium text-foreground">By schedule label</p>
+											<p className="font-medium text-foreground">By block schedule name (preview only)</p>
 											<ul className="list-inside list-disc space-y-1">
 												{ bulkRemovePatternPreview.categories.map( ( c ) => (
 													<li key={ c.displayName }>
@@ -454,8 +463,7 @@ export function ManagedEventScheduleDialogs( {
 										</ul>
 									) : (
 										<p className="text-muted-foreground text-xs">
-											Adjust blocks, weekdays, labels, session length, or widen dates — nothing on
-											this schedule lines up yet.
+											Adjust weekdays, Open/Close, session length, or date span — nothing on this schedule shares those start times yet.
 										</p>
 									) }
 								</CardContent>
@@ -590,7 +598,7 @@ export function ManagedEventScheduleDialogs( {
 							) : (
 								'invalid'
 							) }
-							) and labels before confirming.
+							) and start times/weekdays before confirming.
 						</p>
 					</div>
 					<DialogFooter>
