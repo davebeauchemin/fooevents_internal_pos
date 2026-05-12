@@ -12,6 +12,7 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/context/AuthContext"
 import {
@@ -25,7 +26,18 @@ import {
 /** Collapsible icon sidebar — nav matches Internal POS routes. */
 export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> ) {
   const { pathname } = useLocation()
+  const { isMobile, setOpenMobile, setOpen } = useSidebar()
   const { canManageEvents, canUsePos, canValidateTickets, currentUser, site } = useAuth()
+  const prevPathnameRef = React.useRef<string | null>( null )
+
+  React.useEffect( () => {
+    if ( isMobile ) {
+      setOpenMobile( false )
+    } else if ( prevPathnameRef.current !== null && prevPathnameRef.current !== pathname ) {
+      setOpen( false )
+    }
+    prevPathnameRef.current = pathname
+  }, [ pathname, isMobile, setOpenMobile, setOpen ] )
 
   const calendarNavActive = pathname === "/" || pathname === "/calendar"
   const checkoutActive = pathname === "/checkout"
