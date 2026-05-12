@@ -43,7 +43,7 @@ class Bookings_Service {
 		$tz     = $this->get_wp_timezone();
 		$wp_fmt = trim( (string) get_option( 'date_format' ) );
 		if ( '' !== $wp_fmt ) {
-			$parsed = DateTime::createFromFormat( $wp_fmt, $date_str, $tz );
+			$parsed = DateTime::createFromFormat( '!' . $wp_fmt, $date_str, $tz );
 			if ( $parsed instanceof DateTime ) {
 				$errs = DateTime::getLastErrors();
 				if ( false === $errs || ( empty( $errs['warning_count'] ) && empty( $errs['error_count'] ) ) ) {
@@ -52,17 +52,60 @@ class Bookings_Service {
 			}
 		}
 
-		$dt   = new DateTime( 'now', $tz );
-		$ts   = strtotime( $date_str, $dt->getTimestamp() );
-		if ( false === $ts ) {
-			$ts = strtotime( $date_str );
+		try {
+			$parsed = new DateTime( $date_str, $tz );
+			return $parsed->format( 'Y-m-d' );
+		} catch ( \Throwable $e ) {
+			// Fall through to translated month fallback.
 		}
-		if ( false === $ts ) {
-			return null;
+
+		$english = $this->localized_months_to_english( $date_str );
+		if ( $english !== $date_str ) {
+			if ( '' !== $wp_fmt ) {
+				$parsed = DateTime::createFromFormat( '!' . $wp_fmt, $english, $tz );
+				if ( $parsed instanceof DateTime ) {
+					$errs = DateTime::getLastErrors();
+					if ( false === $errs || ( empty( $errs['warning_count'] ) && empty( $errs['error_count'] ) ) ) {
+						return $parsed->format( 'Y-m-d' );
+					}
+				}
+			}
+			try {
+				$parsed = new DateTime( $english, $tz );
+				return $parsed->format( 'Y-m-d' );
+			} catch ( \Throwable $e ) {
+				return null;
+			}
 		}
-		$d = new DateTime( '@' . $ts );
-		$d->setTimezone( $tz );
-		return $d->format( 'Y-m-d' );
+		return null;
+	}
+
+	/**
+	 * Normalize French month names to English for DateTime parsing.
+	 *
+	 * @param string $date_str Date string.
+	 * @return string
+	 */
+	private function localized_months_to_english( $date_str ) {
+		$map = array(
+			'janvier'   => 'January',
+			'février'   => 'February',
+			'fevrier'   => 'February',
+			'mars'      => 'March',
+			'avril'     => 'April',
+			'mai'       => 'May',
+			'juin'      => 'June',
+			'juillet'   => 'July',
+			'août'      => 'August',
+			'aout'      => 'August',
+			'septembre' => 'September',
+			'octobre'   => 'October',
+			'novembre'  => 'November',
+			'décembre'  => 'December',
+			'decembre'  => 'December',
+		);
+
+		return str_ireplace( array_keys( $map ), array_values( $map ), (string) $date_str );
 	}
 
 	/**

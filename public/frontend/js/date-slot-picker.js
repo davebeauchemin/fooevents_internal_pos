@@ -242,6 +242,9 @@ jQuery(document).ready(function ($) {
   function dateLikeToYmd(raw) {
     raw = String(raw || '').trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    // Avoid browser-dependent parsing of localized labels like "14 mai 2026".
+    // The PHP slotMaps object is the source of truth for those.
+    if (!/^[A-Za-z]+\s+\d{1,2},\s+\d{4}$/.test(raw)) return '';
     var d = new Date(raw);
     if (Number.isNaN(d.getTime())) return '';
     var y = d.getFullYear();
