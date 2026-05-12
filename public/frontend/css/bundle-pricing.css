@@ -25,7 +25,8 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
 .fipos-dynamic-bundle-pricing__badges {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: center !important;
+  justify-content: center;
   gap: 0.75rem 0.75rem;
 }
 
@@ -54,15 +55,23 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   outline-offset: 3px;
 }
 
-/* Selected tier: no ring/border — contrast via weight + brightness only. */
+/* Selected tier: visible border + centered label (overrides theme .btn align). */
 .fipos-dynamic-bundle-pricing__badge.is-selected {
   z-index: 1;
   font-weight: 700;
   transform: translateY(-1px);
-  box-shadow: none !important;
-  border: none !important;
+  text-align: center;
+  border: 3px solid #ffffff !important;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.15),
+    0 4px 14px rgba(0, 0, 0, 0.2) !important;
   outline: none;
   filter: brightness(1.06);
+}
+
+.fipos-dynamic-bundle-pricing__badge.is-selected.btn {
+  align-items: center;
+  justify-content: center;
 }
 
 /* When one tier is chosen, others read as secondary options. */
@@ -78,7 +87,7 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
 @media (max-width: 767px) {
   .fipos-dynamic-bundle-pricing__badges {
     flex-direction: column;
-    align-items: stretch;
+    align-items: stretch !important;
     width: 100%;
     max-width: 100%;
     gap: 0.875rem;
