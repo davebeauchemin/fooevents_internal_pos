@@ -33,6 +33,11 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
 .fipos-dynamic-bundle-pricing__badge {
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease,
+    filter 0.15s ease;
 }
 
 .fipos-dynamic-bundle-pricing__badge.btn {
@@ -45,6 +50,22 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   outline-offset: 3px;
 }
 
+/* Selected bundle tier: high-contrast ring (works on red/primary theme buttons, EN/FR copy). */
 .fipos-dynamic-bundle-pricing__badge.is-selected {
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
+  z-index: 1;
+  font-weight: 700;
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 3px #ffffff,
+    0 0 0 6px rgba(0, 0, 0, 0.2),
+    0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+/* When one tier is chosen, others read as secondary options. */
+.fipos-dynamic-bundle-pricing__badges:has(.fipos-dynamic-bundle-pricing__badge.is-selected)
+  .fipos-dynamic-bundle-pricing__badge:not(.is-selected) {
+  opacity: 0.75;
+  transform: none;
+  font-weight: inherit;
+  filter: brightness(0.96);
 }

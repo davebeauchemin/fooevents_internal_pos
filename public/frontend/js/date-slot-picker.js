@@ -93,14 +93,20 @@ jQuery(document).ready(function ($) {
     return Math.round(val * 1000000) / 1000000;
   }
 
+  /** Loose match for float qty vs chip tier (avoids 1 vs 1.000001 misses). */
+  function qtyMatchesTier(current, tierQty) {
+    if (!Number.isFinite(current) || !Number.isFinite(tierQty)) return false;
+    return Math.abs(current - tierQty) < 0.0001;
+  }
+
   function syncBundleChipState() {
     var $qty = getQuantityInput();
     var current = $qty.length ? parseFloat($qty.val()) : NaN;
 
     $('.fipos-dynamic-bundle-pricing__badge[data-fipos-bundle-qty]').each(function () {
       var $chip = $(this);
-      var qty = parseFloat($chip.attr('data-fipos-bundle-qty'));
-      var active = Number.isFinite(current) && Number.isFinite(qty) && current === qty;
+      var tierQty = parseFloat($chip.attr('data-fipos-bundle-qty'));
+      var active = qtyMatchesTier(current, tierQty);
 
       $chip
         .attr({ role: 'button', tabindex: '0', 'aria-pressed': active ? 'true' : 'false' })
@@ -130,6 +136,9 @@ jQuery(document).ready(function ($) {
 
   $(document).on('input change', 'form.cart input.qty, input[name="quantity"]', syncBundleChipState);
   syncBundleChipState();
+  $(window).on('load', syncBundleChipState);
+  setTimeout(syncBundleChipState, 100);
+  setTimeout(syncBundleChipState, 400);
 
   if (!$dateSelect.length) return;
 
