@@ -6,6 +6,9 @@
  * FooEvents POS uses priority 9999 on {@see 'woocommerce_login_redirect'} and 20 on
  * {@see 'woocommerce_prevent_admin_access'}; we override after login and before admin redirect.
  *
+ * Bricks “User Login” forms submit via AJAX; add the Form “Custom” action after “User Login” so
+ * {@see 'bricks/form/custom_action'} can return a role-based redirect response.
+ *
  * @package FooEventsInternalPOS
  */
 
@@ -25,6 +28,49 @@ class Login_Redirect {
 		add_filter( 'woocommerce_login_redirect', array( $this, 'filter_woocommerce_login_redirect' ), 10000, 2 );
 		add_filter( 'login_redirect', array( $this, 'filter_wp_login_redirect' ), 10000, 3 );
 		add_filter( 'woocommerce_prevent_admin_access', array( $this, 'filter_prevent_admin_access' ), 19, 1 );
+		add_action( 'bricks/form/custom_action', array( $this, 'handle_bricks_custom_action' ), 10000, 1 );
+	}
+
+	/**
+	 * Bricks Form: after “User Login” succeeds, send staff to Internal POS via AJAX redirect.
+	 *
+	 * Requires Form actions: User Login, then Custom (no competing Bricks “Redirect” action).
+	 *
+	 * @param object $form Bricks form handler (must expose get_settings, set_result).
+	 */
+	public function handle_bricks_custom_action( $form ): void {
+		if ( ! is_object( $form ) || ! method_exists( $form, 'get_settings' ) || ! method_exists( $form, 'set_result' ) ) {
+			return;
+		}
+
+		$settings = $form->get_settings();
+		$actions  = isset( $settings['actions'] ) ? (array) $settings['actions'] : array();
+		if ( ! in_array( 'login', $actions, true ) ) {
+			return;
+		}
+
+		if ( ! is_user_logged_in() ) {
+			return;
+		}
+
+		$user = wp_get_current_user();
+		if ( ! $user instanceof \WP_User || 0 === (int) $user->ID ) {
+			return;
+		}
+
+		$dest = $this->destination_for_user( $user, false );
+		if ( null === $dest || '' === $dest ) {
+			return;
+		}
+
+		$form->set_result(
+			array(
+				'action'          => 'fooevents_internal_pos_role_redirect',
+				'type'            => 'redirect',
+				'redirectTo'      => $dest,
+				'redirectTimeout' => 0,
+			)
+		);
 	}
 
 	/**
