@@ -1,7 +1,16 @@
-import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ChangeEventHandler } from 'react';
+import {
+	useCallback,
+	useDeferredValue,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDays, format, parseISO } from 'date-fns';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import {
 	ArrowLeft,
 	CalendarClock,
@@ -12,6 +21,7 @@ import {
 	Loader2,
 	ScanBarcode,
 	Trash2,
+	Upload,
 	UserSearch,
 	X,
 	XCircle,
@@ -88,9 +98,14 @@ import {
 	siteYmdPrefixFromWpNowLocal,
 } from '@/lib/wpSiteClock';
 import { cn } from '@/lib/utils';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 const SCAN_REGION_VALIDATE = 'fooevents-validate-scan-region';
 const SCAN_REGION_CHECKIN = 'fooevents-checkin-scan-region';
+
+/** Remembered `deviceId` for desktop `Html5Qrcode` live camera. */
+const HTML5QRCODE_CAMERA_STORAGE_KEY =
+	'fooevents_internal_pos_html5qrcode_camera_id';
 
 /** @param {unknown} s */
 function isNonEmptyStr( s: unknown ): s is string {
@@ -847,6 +862,9 @@ export default function Validate() {
 	const [ selectedTicketId, setSelectedTicketId ] = useState< string | null >( null );
 	const [ scannerKind, setScannerKind ] = useState< ScanPurpose | null >( null );
 	const [ scannerOpen, setScannerOpen ] = useState( false );
+	/** Live camera viewfinder is active (after Start Scanning). */
+	const [ scannerLiveStarted, setScannerLiveStarted ] = useState( false );
+	const isMobile = useIsMobile();
 
 	const [ lastScanPurpose, setLastScanPurpose ] = useState< ScanPurpose | null >( null );
 	const [ justCheckedInNumericId, setJustCheckedInNumericId ] = useState< string | null >( null );
@@ -861,6 +879,7 @@ export default function Validate() {
 	const [ selectedValidateSession, setSelectedValidateSession ] =
 		useState< ValidateSessionPick | null >( null );
 	const gateSlotsScrollRef = useRef< HTMLDivElement | null >( null );
+	const scanFileInputRef = useRef< HTMLInputElement | null >( null );
 	const autoCheckInHandledKeyRef = useRef< string >( '' );
 
 	const navigate = useNavigate();
@@ -883,6 +902,7 @@ export default function Validate() {
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( tid );
 		setScannerOpen( false );
+		setScannerLiveStarted( false );
 	}, [ navigate, searchParams ] );
 
 	const dashboardYmdParam = useMemo( () => {
@@ -931,6 +951,68 @@ export default function Validate() {
 
 	const scanRegionId =
 		scannerKind === 'checkin' ? SCAN_REGION_CHECKIN : SCAN_REGION_VALIDATE;
+
+	const processDecodedScan = useCallback( ( decodedText: string ) => {
+		const t = decodedText.trim();
+		if ( ! t ) {
+			return;
+		}
+		const purpose = scannerKind ?? 'validate';
+		if ( purpose === 'checkin' ) {
+			toast.message( 'Ticket scanned — checking in…' );
+		} else {
+			toast.message( 'Ticket scanned — loading result…' );
+		}
+		setLastScanPurpose( purpose );
+		setSelectedTicketId( t );
+		setScannerOpen( false );
+		setScannerLiveStarted( false );
+		autoCheckInHandledKeyRef.current = '';
+	}, [ scannerKind ] );
+
+	const onScanImageFileChange: ChangeEventHandler< HTMLInputElement > =
+		useCallback(
+			async ( event ) => {
+				const file = event.target.files?.[ 0 ];
+				event.target.value = '';
+				if ( ! file ) {
+					return;
+				}
+				const runScan = async () => {
+					const qr = new Html5Qrcode( scanRegionId, false );
+					try {
+						const text = await qr.scanFile( file, true );
+						processDecodedScan( text );
+					} catch ( err ) {
+						toast.error(
+							err instanceof Error
+								? err.message
+								: 'Could not read a code from that image.'
+						);
+					} finally {
+						try {
+							qr.clear();
+						} catch {
+							/* ignore */
+						}
+					}
+				};
+
+				if ( scannerLiveStarted ) {
+					setScannerLiveStarted( false );
+					window.setTimeout( () => {
+						void runScan();
+					}, 150 );
+				} else {
+					await runScan();
+				}
+			},
+			[
+				scanRegionId,
+				processDecodedScan,
+				scannerLiveStarted,
+			]
+		);
 
 	const searchQuery = useTicketSearch( deferredSearch );
 	const detailQuery = useTicketDetail( selectedTicketId );
@@ -1111,47 +1193,198 @@ export default function Validate() {
 		} );
 	}, [ selectedGateSessionKey, dashboardData?.date ] );
 
+	/** Desktop: live camera after Start Scanning (device from storage or best guess). */
 	useEffect( () => {
-		if ( ! scannerOpen ) {
+		if ( ! scannerOpen || isMobile || ! scannerLiveStarted ) {
 			return;
 		}
-		const scanner = new Html5QrcodeScanner(
-			scanRegionId,
-			{
-				fps: 10,
-				qrbox: { width: 280, height: 280 },
-				rememberLastUsedCamera: true,
-			},
-			false
-		);
+		const html5QrCode = new Html5Qrcode( scanRegionId, false );
 		let ended = false;
-		scanner.render(
-			( decodedText ) => {
-				if ( ended ) {
+		const config = {
+			fps: 10,
+			qrbox: { width: 280, height: 280 },
+		};
+		const onSuccess = ( decodedText: string ) => {
+			if ( ended ) {
+				return;
+			}
+			const trimmed = decodedText.trim();
+			if ( ! trimmed ) {
+				return;
+			}
+			ended = true;
+			void html5QrCode
+				.stop()
+				.catch( () => {} )
+				.finally( () => {
+					processDecodedScan( decodedText );
+				} );
+		};
+
+		const start = async () => {
+			try {
+				const devices = await Html5Qrcode.getCameras();
+				if ( ! devices?.length ) {
+					toast.error( 'No camera found.' );
+					setScannerLiveStarted( false );
 					return;
 				}
-				const t = decodedText.trim();
-				if ( ! t ) {
+
+				let cameraId: string | null = null;
+				try {
+					const remembered = localStorage.getItem(
+						HTML5QRCODE_CAMERA_STORAGE_KEY
+					);
+					if (
+						remembered
+						&& devices.some( ( d ) => d.id === remembered )
+					) {
+						cameraId = remembered;
+					}
+				} catch {
+					/* ignore */
+				}
+
+				if ( ! cameraId ) {
+					const back = devices.find( ( d ) =>
+						/back|rear|environment|wide/i.test( d.label )
+					);
+					cameraId = back?.id ?? devices[ 0 ]?.id ?? null;
+				}
+
+				if ( ! cameraId ) {
+					toast.error( 'No camera found.' );
+					setScannerLiveStarted( false );
 					return;
 				}
-				const purpose = scannerKind ?? 'validate';
-				if ( purpose === 'checkin' ) {
-					toast.message( 'Ticket scanned — checking in…' );
-				} else {
-					toast.message( 'Ticket scanned — loading result…' );
+
+				try {
+					await html5QrCode.start(
+						{ deviceId: { exact: cameraId } },
+						config,
+						onSuccess,
+						() => {}
+					);
+				} catch {
+					await html5QrCode.start(
+						{ deviceId: cameraId },
+						config,
+						onSuccess,
+						() => {}
+					);
 				}
-				setLastScanPurpose( purpose );
-				setSelectedTicketId( t );
-				setScannerOpen( false );
-				autoCheckInHandledKeyRef.current = '';
-			},
-			() => {}
-		);
+
+				try {
+					localStorage.setItem(
+						HTML5QRCODE_CAMERA_STORAGE_KEY,
+						cameraId
+					);
+				} catch {
+					/* ignore */
+				}
+			} catch ( err ) {
+				const msg =
+					err instanceof Error ? err.message : 'Could not start camera.';
+				toast.error( msg );
+				setScannerLiveStarted( false );
+			}
+		};
+
+		void start();
+
 		return () => {
 			ended = true;
-			void scanner.clear().catch( () => {} );
+			void html5QrCode
+				.stop()
+				.catch( () => {} )
+				.finally( () => {
+					try {
+						html5QrCode.clear();
+					} catch {
+						/* ignore */
+					}
+				} );
 		};
-	}, [ scannerOpen, scanRegionId, scannerKind ] );
+	}, [
+		scannerOpen,
+		isMobile,
+		scannerLiveStarted,
+		scanRegionId,
+		processDecodedScan,
+	] );
+
+	/** Mobile: rear camera only after Start Scanning. */
+	useEffect( () => {
+		if ( ! scannerOpen || ! isMobile || ! scannerLiveStarted ) {
+			return;
+		}
+		const html5QrCode = new Html5Qrcode( scanRegionId, false );
+		let ended = false;
+		const config = {
+			fps: 10,
+			qrbox: { width: 280, height: 280 },
+		};
+		const onSuccess = ( decodedText: string ) => {
+			if ( ended ) {
+				return;
+			}
+			const trimmed = decodedText.trim();
+			if ( ! trimmed ) {
+				return;
+			}
+			ended = true;
+			void html5QrCode
+				.stop()
+				.catch( () => {} )
+				.finally( () => {
+					processDecodedScan( decodedText );
+				} );
+		};
+		const start = async () => {
+			try {
+				await html5QrCode.start(
+					{ facingMode: { exact: 'environment' } },
+					config,
+					onSuccess,
+					() => {}
+				);
+			} catch {
+				try {
+					await html5QrCode.start(
+						{ facingMode: 'environment' },
+						config,
+						onSuccess,
+						() => {}
+					);
+				} catch ( err ) {
+					const msg =
+						err instanceof Error ? err.message : 'Could not start camera.';
+					toast.error( msg );
+					setScannerLiveStarted( false );
+				}
+			}
+		};
+		void start();
+		return () => {
+			ended = true;
+			void html5QrCode
+				.stop()
+				.catch( () => {} )
+				.finally( () => {
+					try {
+						html5QrCode.clear();
+					} catch {
+						/* ignore */
+					}
+				} );
+		};
+	}, [
+		scannerOpen,
+		isMobile,
+		scannerLiveStarted,
+		scanRegionId,
+		processDecodedScan,
+	] );
 
 	/** Auto check-in once per scan+detail resolve when scan was check-in purpose. */
 	useEffect( () => {
@@ -1258,6 +1491,7 @@ export default function Validate() {
 		autoCheckInHandledKeyRef.current = '';
 		setSelectedTicketId( id.trim() );
 		setScannerOpen( false );
+		setScannerLiveStarted( false );
 	};
 
 	const applyStatus = ( status: string ) => {
@@ -2071,7 +2305,10 @@ export default function Validate() {
 										variant="outline"
 										size="sm"
 										className="gap-1"
-										onClick={ () => setScannerOpen( false ) }
+										onClick={ () => {
+											setScannerOpen( false );
+											setScannerLiveStarted( false );
+										} }
 									>
 										<X className="size-4" aria-hidden />
 										Close
@@ -2080,17 +2317,96 @@ export default function Validate() {
 							</div>
 							{ scannerOpen ? (
 								<>
-									<div className="bg-muted overflow-hidden rounded-lg">
-										<div id={ scanRegionId } />
+									<div
+										className={ cn(
+											'border-border bg-muted relative min-h-[220px] overflow-hidden rounded-lg border outline-none transition-[box-shadow,transform]',
+											! scannerLiveStarted
+												? 'cursor-pointer hover:shadow-md hover:ring-2 hover:ring-primary/25 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995]'
+												: 'cursor-default'
+										) }
+										role={ scannerLiveStarted ? undefined : 'button' }
+										tabIndex={ scannerLiveStarted ? undefined : 0 }
+										aria-label={
+											scannerLiveStarted
+												? undefined
+												: 'Start scanning with the camera'
+										}
+										onClick={
+											scannerLiveStarted
+												? undefined
+												: () => setScannerLiveStarted( true )
+										}
+										onKeyDown={
+											scannerLiveStarted
+												? undefined
+												: ( e ) => {
+													if (
+														e.key === 'Enter'
+														|| e.key === ' '
+													) {
+														e.preventDefault();
+														setScannerLiveStarted( true );
+													}
+												}
+										}
+									>
+										<div
+											id={ scanRegionId }
+											className={ cn(
+												'w-full',
+												scannerLiveStarted ? '' : 'min-h-[220px]'
+											) }
+										/>
+										{ ! scannerLiveStarted ? (
+											<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/95 p-5">
+												<div className="bg-primary text-primary-foreground inline-flex items-center justify-center gap-3 rounded-lg px-8 py-4 text-base font-semibold shadow-sm ring-1 ring-primary/15">
+													<Camera
+														className="size-7 shrink-0"
+														aria-hidden
+													/>
+													<span>Start Scanning</span>
+												</div>
+											</div>
+										) : null }
+									</div>
+									<div className="w-full space-y-1">
+										<input
+											ref={ scanFileInputRef }
+											type="file"
+											accept="image/*"
+											className="sr-only"
+											onChange={ onScanImageFileChange }
+										/>
+										<Button
+											type="button"
+											variant="outline"
+											size="lg"
+											className="min-h-14 w-full touch-manipulation justify-center gap-2 px-4 py-3.5 text-base font-semibold shadow-xs"
+											onClick={ () =>
+												scanFileInputRef.current?.click()
+											}
+										>
+											<Upload
+												className="size-6 shrink-0"
+												aria-hidden
+											/>
+											Scan an Image File
+										</Button>
 									</div>
 									<p
-										className="text-muted-foreground text-xs leading-relaxed"
+										className="text-muted-foreground text-sm leading-relaxed"
 										role="status"
 										aria-live="polite"
 									>
-										{ scannerKind === 'checkin'
-											? 'Grant camera access if prompted; unused tickets that align with admitting time check in automatically after the read.'
-											: 'Grant camera access if prompted; ticket details load after a successful read.' }
+										{ ! scannerLiveStarted
+											? 'Click or tap the scanner card to use the live camera, or use Scan an Image File below. Grant camera access if the browser asks.'
+											: isMobile
+												? scannerKind === 'checkin'
+													? 'Using the rear camera: unused tickets that align with admitting time check in automatically after a successful read.'
+													: 'Using the rear camera: ticket details load after a successful read.'
+												: scannerKind === 'checkin'
+													? 'Unused tickets that align with admitting time check in automatically after a successful read.'
+													: 'Ticket details load after a successful read.' }
 									</p>
 								</>
 							) : (
@@ -2101,6 +2417,7 @@ export default function Validate() {
 										className="min-h-12 w-full justify-center gap-2 text-base font-semibold"
 										onClick={ () => {
 											setScannerKind( 'validate' );
+											setScannerLiveStarted( false );
 											setScannerOpen( true );
 										} }
 									>
@@ -2113,6 +2430,7 @@ export default function Validate() {
 										className="min-h-12 w-full justify-center gap-2 bg-amber-600 text-base font-semibold text-white hover:bg-amber-600/90 dark:bg-amber-700 dark:hover:bg-amber-700/90"
 										onClick={ () => {
 											setScannerKind( 'checkin' );
+											setScannerLiveStarted( false );
 											setScannerOpen( true );
 										} }
 									>
@@ -2280,6 +2598,9 @@ export default function Validate() {
 															<AccordionContent>
 																<div className="grid grid-cols-1 gap-1.5 pt-1 sm:grid-cols-2">
 																	{ g.slots.map( ( s ) => {
+																		const startsAtLocal =
+																			( s as { startsAtLocal?: string | null } )
+																				.startsAtLocal ?? null;
 																		const pick: ValidateSessionPick = {
 																			viewDateYmd: dashboardData.date,
 																			eventId: ev.eventId,
@@ -2288,7 +2609,7 @@ export default function Validate() {
 																			dateId: s.dateId,
 																			slotLabel: s.label,
 																			slotTime: formatSlotTime( s ),
-																			startsAtLocal: s.startsAtLocal ?? null,
+																			startsAtLocal,
 																		};
 																		const selected =
 																			selectedValidateSession

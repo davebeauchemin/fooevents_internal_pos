@@ -189,7 +189,14 @@ class Frontend_Page {
 			$js_files = glob( $dir . 'index-*.js' );
 			$css_files = glob( $dir . 'index-*.css' );
 			$i = 0;
-			if ( is_array( $js_files ) ) {
+			if ( is_array( $js_files ) && ! empty( $js_files ) ) {
+				usort(
+					$js_files,
+					static function ( $a, $b ) {
+						return filemtime( $b ) <=> filemtime( $a );
+					}
+				);
+				$js_files = array_slice( $js_files, 0, 1 );
 				foreach ( $js_files as $path ) {
 					$name = basename( $path );
 					wp_enqueue_script(
@@ -204,7 +211,14 @@ class Frontend_Page {
 				}
 			}
 			$j = 0;
-			if ( is_array( $css_files ) ) {
+			if ( is_array( $css_files ) && ! empty( $css_files ) ) {
+				usort(
+					$css_files,
+					static function ( $a, $b ) {
+						return filemtime( $b ) <=> filemtime( $a );
+					}
+				);
+				$css_files = array_slice( $css_files, 0, 1 );
 				foreach ( $css_files as $path ) {
 					$name = basename( $path );
 					wp_enqueue_style(
