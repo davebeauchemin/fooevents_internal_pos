@@ -2,18 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import {
 	useAddManualSlot,
 	useAddSlotStock,
 	useEvent,
 	useGenerateSlots,
+	invalidateInternalPosAfterSlotWrites,
 } from '@/api/queries.js';
+import { restFetch } from '@/api/client.js';
 import {
 	decodeManualSlotDateRef,
 	encodeManualSlotDateRef,
 	formatSlotTime,
 	manualSlotWouldDuplicateExisting,
 	normalizeTimeInputToHhmm,
+	slotMatchesScheduleBlockRemovalCandidate,
 	type SlotLike,
 } from '@/lib/slotHourGrouping';
 import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
@@ -37,6 +41,13 @@ export type ScheduleBlock = {
 	weekdays: number[];
 	openTime: string;
 	closeTime: string;
+};
+
+/** One slot–date cell identified for bulk removal. */
+export type BulkRemoveTarget = {
+	slotId: string;
+	dateId: string;
+	ymd: string;
 };
 
 function newId() {
@@ -280,13 +291,46 @@ function computedFillEnvelopeForBlocks(
 	return { fillFrom, fillTo, invalid: false };
 }
 
+/**
+ * Union of all block calendars (canonical Y-m-d bounds). Unlike {@link computedFillEnvelopeForBlocks},
+ * start is NOT lifted to site today — needed so bulk-remove can target historical dates.
+ */
+function computedBulkRemoveEnvelopeForBlocks(
+	blocks: ScheduleBlock[],
+): { removeFrom: string; removeTo: string; invalid: boolean } {
+	if ( blocks.length === 0 ) {
+		return { removeFrom: '', removeTo: '', invalid: true };
+	}
+	let minStart = '';
+	let maxEnd = '';
+	for ( const b of blocks ) {
+		const sd = b.startDate.trim();
+		const ed = b.endDate.trim();
+		if ( ! isCanonicalYmd( sd ) || ! isCanonicalYmd( ed ) || sd > ed ) {
+			return { removeFrom: '', removeTo: '', invalid: true };
+		}
+		if ( minStart === '' || sd < minStart ) {
+			minStart = sd;
+		}
+		if ( maxEnd === '' || ed > maxEnd ) {
+			maxEnd = ed;
+		}
+	}
+	return { removeFrom: minStart, removeTo: maxEnd, invalid: false };
+}
+
 function previewStatsFillEmpty(
 	blocks: ScheduleBlock[],
 	sessionM: number,
 	fillFrom: string,
 	fillTo: string,
 	todayYmd: string,
+	opts?: {
+		/** Default true: enumeration never starts before site today (safe for Fill empty). */
+		enumerateFromSiteToday?: boolean;
+	},
 ) {
+	const enumerateFromSiteToday = opts?.enumerateFromSiteToday !== false;
 	const ff = fillFrom.trim();
 	const ft = fillTo.trim();
 	const byNameTime = new Map<string, { name: string; time: string; dates: Set<string> }>();
@@ -299,7 +343,9 @@ function previewStatsFillEmpty(
 		const name = ( b.name || '' ).trim();
 		const rawEffStart = ymdMin( b.startDate, ff );
 		const rawEffEnd = ymdMax( b.endDate, ft );
-		const enumerStart = ymdMax( todayYmd, rawEffStart );
+		const enumerStart = enumerateFromSiteToday
+			? ymdMax( todayYmd, rawEffStart )
+			: rawEffStart;
 		const enumerEnd = rawEffEnd;
 		if ( enumerStart > enumerEnd ) {
 			continue;
@@ -356,6 +402,120 @@ function previewStatsFillEmpty(
 	};
 }
 
+function isWpSlotHasBookingsError( e: unknown ): boolean {
+	const err = e as { status?: number; wp?: { code?: string } };
+	if ( typeof err.status === 'number' && err.status === 409 ) {
+		return true;
+	}
+	return err.wp?.code === 'slot_has_bookings';
+}
+
+function buildEventDaySlotsLookup(
+	eventDatesUnknown: unknown,
+): Map<string, SlotLike[]> {
+	const out = new Map<string, SlotLike[]>();
+	const raw = eventDatesUnknown as
+	| Array<{ date?: string; slots?: SlotLike[] }>
+	| undefined;
+	if ( ! Array.isArray( raw ) ) {
+		return out;
+	}
+	for ( const d of raw ) {
+		const y = String( d?.date ?? '' ).trim();
+		if ( ! /^\d{4}-\d{2}-\d{2}$/.test( y ) ) {
+			continue;
+		}
+		const slotsRaw = d?.slots;
+		const slots: SlotLike[] = Array.isArray( slotsRaw )
+			? slotsRaw.map( ( s ) => ( {
+				id: String( ( s as SlotLike )?.id ?? '' ),
+				label: String( ( s as SlotLike )?.label ?? '' ),
+				time: ( s as SlotLike )?.time,
+				stock: ( s as SlotLike )?.stock ?? null,
+				dateId: ( s as SlotLike )?.dateId,
+			} ) )
+			: [];
+		out.set( y, slots );
+	}
+	return out;
+}
+
+/**
+ * Resolve slot–date rows on this product that match configured blocks + session stepping (Fill-empty shape).
+ */
+function computeBulkRemoveTargets(
+	eventDatesUnknown: unknown,
+	blocks: ScheduleBlock[],
+	sessionM: number,
+	fillFrom: string,
+	fillTo: string,
+): BulkRemoveTarget[] {
+	const ff = fillFrom.trim();
+	const ft = fillTo.trim();
+	const dayMap = buildEventDaySlotsLookup( eventDatesUnknown );
+	const dedupe = new Set<string>();
+	const out: BulkRemoveTarget[] = [];
+
+	for ( const b of blocks ) {
+		const openM = parseHHMM( b.openTime );
+		const closeM = parseHHMM( b.closeTime );
+		if ( openM === null || closeM === null || openM + sessionM > closeM ) {
+			continue;
+		}
+		const name = ( b.name || '' ).trim();
+		const rawEffStart = ymdMin( b.startDate, ff );
+		const rawEffEnd = ymdMax( b.endDate, ft );
+		const enumerStart = rawEffStart;
+		const enumerEnd = rawEffEnd;
+		if ( enumerStart > enumerEnd ) {
+			continue;
+		}
+		const dates = listDates( enumerStart, enumerEnd, b.weekdays );
+		const starts = sessionStarts( openM, closeM, sessionM );
+		for ( const st of starts ) {
+			const timeKey = toHHMM( st );
+			for ( const ymd of dates ) {
+				if ( ymd < ff || ymd > ft ) {
+					continue;
+				}
+				const slots = dayMap.get( ymd );
+				if ( ! slots?.length ) {
+					continue;
+				}
+				for ( const slot of slots ) {
+					const sid = String( slot.id ?? '' ).trim();
+					const did = String( slot.dateId ?? '' ).trim();
+					if ( ! sid || ! did ) {
+						continue;
+					}
+					if ( ! slotMatchesScheduleBlockRemovalCandidate( slot, name, timeKey ) ) {
+						continue;
+					}
+					const k = encodeManualSlotDateRef( { id: sid, dateId: did } );
+					if ( dedupe.has( k ) ) {
+						continue;
+					}
+					dedupe.add( k );
+					out.push( { slotId: sid, dateId: did, ymd } );
+				}
+			}
+		}
+	}
+	return out;
+}
+
+async function deleteSlotDateViaRest(
+	eventIdStr: string,
+	target: BulkRemoveTarget,
+): Promise<void> {
+	const y = /^\d{4}-\d{2}-\d{2}$/.test( target.ymd.trim() )
+		? `?ymd=${ encodeURIComponent( target.ymd.trim() ) }`
+		: '';
+	const path =
+		`internalpos/v1/events/${ encodeURIComponent( eventIdStr ) }/slots/${ encodeURIComponent( target.slotId ) }/dates/${ encodeURIComponent( target.dateId ) }${ y }`;
+	await restFetch( path, { method: 'DELETE' } );
+}
+
 function todayYmdLocal(): string {
 	return dateToLocalYmd( new Date() );
 }
@@ -393,6 +553,7 @@ export function useManageSchedule(
 		isError: boolean;
 		error: Error | null;
 	};
+	const queryClient = useQueryClient();
 	const gen = useGenerateSlots( eventId );
 	const addManual = useAddManualSlot( eventId );
 	const addStock = useAddSlotStock( eventId );
@@ -425,6 +586,11 @@ export function useManageSchedule(
 	const [ manualAddSpotsDelta, setManualAddSpotsDelta ] = useState( 1 );
 	const [ manualStockConfirmOpen, setManualStockConfirmOpen ] =
 		useState( false );
+	const [ bulkRemoveConfirmOpen, setBulkRemoveConfirmOpen ] = useState( false );
+	const [ bulkRemoveRunList, setBulkRemoveRunList ] = useState<
+		BulkRemoveTarget[]
+	>( [] );
+	const [ bulkRemoving, setBulkRemoving ] = useState( false );
 	const [ blocks, setBlocks ] = useState< ScheduleBlock[] >( [ emptyBlock( 0 ) ] );
 	const [ sessionMinutes, setSessionMinutes ] = useState( 10 );
 	const [ capacity, setCapacity ] = useState( 12 );
@@ -460,15 +626,6 @@ export function useManageSchedule(
 			}
 			return p < apiWpSiteYmd ? apiWpSiteYmd : p;
 		} );
-		setBlocks( ( prev ) =>
-			prev.map( ( b ) => ( {
-				...b,
-				startDate:
-					b.startDate.trim() < apiWpSiteYmd ? apiWpSiteYmd : b.startDate,
-				endDate:
-					b.endDate.trim() < apiWpSiteYmd ? apiWpSiteYmd : b.endDate,
-			} ) ),
-		);
 	}, [ apiWpSiteYmd, formInitialized ] );
 
 
@@ -497,6 +654,11 @@ export function useManageSchedule(
 		[ blocks, siteTodayYmd ],
 	);
 
+	const bulkRemoveEnvelope = useMemo(
+		() => computedBulkRemoveEnvelopeForBlocks( blocks ),
+		[ blocks ],
+	);
+
 	const fillPreview = useMemo(
 		() => {
 			if ( fillEmptyEnvelope.invalid ) {
@@ -517,6 +679,29 @@ export function useManageSchedule(
 			);
 		},
 		[ blocks, sessionMinutes, fillEmptyEnvelope, siteTodayYmd ],
+	);
+
+	const bulkRemovePatternPreview = useMemo(
+		() => {
+			if ( bulkRemoveEnvelope.invalid ) {
+				return {
+					slotCount: 0,
+					dateCount: 0,
+					fillRangeInclusiveDays: 0,
+					totalEntries: 0,
+					categories: [] as CategoryPreview[],
+				};
+			}
+			return previewStatsFillEmpty(
+				blocks,
+				sessionMinutes,
+				bulkRemoveEnvelope.removeFrom,
+				bulkRemoveEnvelope.removeTo,
+				siteTodayYmd,
+				{ enumerateFromSiteToday: false },
+			);
+		},
+		[ blocks, sessionMinutes, bulkRemoveEnvelope, siteTodayYmd ],
 	);
 	const slotsOnManualDate = useMemo( (): SlotLike[] => {
 		const raw = eventData?.dates as
@@ -551,6 +736,24 @@ export function useManageSchedule(
 		[ slotsOnManualDate ],
 	);
 
+	const bulkRemoveTargets = useMemo( () => {
+		if ( bulkRemoveEnvelope.invalid ) {
+			return [];
+		}
+		return computeBulkRemoveTargets(
+			eventData?.dates,
+			blocks,
+			sessionMinutes,
+			bulkRemoveEnvelope.removeFrom,
+			bulkRemoveEnvelope.removeTo,
+		);
+	}, [
+		eventData?.dates,
+		blocks,
+		sessionMinutes,
+		bulkRemoveEnvelope,
+	] );
+
 	useEffect( () => {
 		if ( manualAddMode !== 'extraSpots' ) {
 			return;
@@ -581,7 +784,8 @@ export function useManageSchedule(
 		);
 	}, [ spotsEligibleSchedule, manualSpotSelectValue ] );
 
-	const scheduleManualBusy = addManual.isPending || addStock.isPending;
+	const scheduleManualBusy =
+		addManual.isPending || addStock.isPending || bulkRemoving;
 
 	const manualDuplicateMessage =
 		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
@@ -727,6 +931,64 @@ export function useManageSchedule(
 		manualDate,
 	] );
 
+	const requestBulkRemoveConfirm = useCallback( () => {
+		if ( bulkRemoveEnvelope.invalid ) {
+			toast.error(
+				'Fix every block’s start and end dates (Y-m-d), with start on or before end, before removing cells.',
+			);
+			return;
+		}
+		if ( bulkRemoveTargets.length === 0 ) {
+			toast.message(
+				'No matching slot–date cells on this product for the blocks above (or session length / labels don’t line up).',
+			);
+			return;
+		}
+		setBulkRemoveRunList( bulkRemoveTargets );
+		setBulkRemoveConfirmOpen( true );
+	}, [ bulkRemoveEnvelope.invalid, bulkRemoveTargets ] );
+
+	const runBulkRemoveBlocks = useCallback( async () => {
+		const targets = bulkRemoveRunList;
+		if ( targets.length === 0 ) {
+			return;
+		}
+		let removed = 0;
+		let skippedBooked = 0;
+		setBulkRemoving( true );
+		try {
+			for ( const t of targets ) {
+				try {
+					await deleteSlotDateViaRest( eventId, t );
+					removed += 1;
+				} catch ( e ) {
+					if ( isWpSlotHasBookingsError( e ) ) {
+						skippedBooked += 1;
+						continue;
+					}
+					throw e;
+				}
+			}
+			await invalidateInternalPosAfterSlotWrites( queryClient, eventId );
+			setBulkRemoveConfirmOpen( false );
+			const skipPart =
+				skippedBooked > 0
+					? ` ${ skippedBooked } skipped because bookings already exist.`
+					: '';
+			setMutationSuccessAck( {
+				title: 'Time blocks removed',
+				description:
+					`Removed ${ removed } slot–date cell${ removed === 1 ? '' : 's' }.${ skipPart }`,
+			} );
+		} catch ( e ) {
+			toast.error(
+				String( ( e as Error )?.message || e || 'Request failed' ),
+			);
+		} finally {
+			setBulkRemoving( false );
+		}
+	}, [ bulkRemoveRunList, eventId, queryClient ] );
+
 	const runGenerate = useCallback( async () => {
 		setConfirmOpen( false );
 		try {
@@ -846,6 +1108,8 @@ export function useManageSchedule(
 		setManualAddSpotsDelta,
 		manualStockConfirmOpen,
 		setManualStockConfirmOpen,
+		bulkRemoveConfirmOpen,
+		setBulkRemoveConfirmOpen,
 		blocks,
 		setBlocks,
 		sessionMinutes,
@@ -855,10 +1119,15 @@ export function useManageSchedule(
 		confirmOpen,
 		setConfirmOpen,
 		fillEmptyEnvelope,
+		bulkRemoveEnvelope,
+		bulkRemovePatternPreview,
 		siteTodayYmd,
 		siteTodayWeekday,
 		preview,
 		fillPreview,
+		bulkRemoveTargets,
+		bulkRemoveRunList,
+		bulkRemoving,
 		slotsOnManualDate,
 		manualAddWouldDuplicate,
 		spotsEligibleSchedule,
@@ -870,6 +1139,8 @@ export function useManageSchedule(
 		toggleWeekday,
 		submitManualSlot,
 		commitManualStockAdd,
+		requestBulkRemoveConfirm,
+		runBulkRemoveBlocks,
 		runGenerate,
 		runFillEmpty,
 		addManual,

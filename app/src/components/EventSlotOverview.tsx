@@ -342,8 +342,9 @@ export default function EventSlotOverview( {
 							</span>
 							{ manageSlotsUi && (
 								<span className="text-muted-foreground mt-2 block font-normal leading-relaxed">
-									Use <strong>Add new session</strong>, <strong>Add ticket spots</strong>, or{' '}
-									<strong>Manage schedule</strong> above for new rows and bulk changes; use the +/- and
+									Use <strong>Add new session</strong>, <strong>Add ticket spots</strong>,{' ' }
+									<strong>Remove time block</strong>, or <strong>Manage schedule</strong> above for focused
+									updates and bulk changes; use the +/- and
 									trash actions on each slot for { ' ' }
 									<span className="font-mono text-xs">{ selectedDay?.date }</span>.
 								</span>

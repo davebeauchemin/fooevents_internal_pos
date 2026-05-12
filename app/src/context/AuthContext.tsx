@@ -12,11 +12,19 @@ export type POSBootstrapUser = {
 	avatarUrl: string;
 };
 
+export type POSBackendUrls = {
+	products: string;
+	coupons: string;
+	admin: string;
+};
+
 export type POSAccessBootstrap = {
 	canUsePos: boolean;
 	canManageEvents: boolean;
 	canReplaceEventSchedules: boolean;
 	canValidateTickets: boolean;
+	showWpBackendMenu?: boolean;
+	backendUrls?: POSBackendUrls | null;
 	currentUser?: POSBootstrapUser | null;
 	site?: { name: string };
 	logoutUrl?: string;
@@ -29,6 +37,20 @@ declare global {
 	}
 }
 
+function parseBackendUrls( raw: unknown ): POSBackendUrls | undefined {
+	if ( raw === null || raw === undefined || typeof raw !== 'object' ) {
+		return undefined;
+	}
+	const o = raw as Record< string, unknown >;
+	const products = String( o.products ?? '' ).trim();
+	const coupons = String( o.coupons ?? '' ).trim();
+	const admin = String( o.admin ?? '' ).trim();
+	if ( products === '' || coupons === '' || admin === '' ) {
+		return undefined;
+	}
+	return { products, coupons, admin };
+}
+
 /** Vite dev when WordPress does not inject bootstrap — full UI for local dev. */
 function defaultDevAccess(): POSAccessBootstrap {
 	return {
@@ -36,6 +58,8 @@ function defaultDevAccess(): POSAccessBootstrap {
 		canManageEvents: true,
 		canReplaceEventSchedules: true,
 		canValidateTickets: true,
+		showWpBackendMenu: false,
+		backendUrls: undefined,
 		currentUser: {
 			name: 'Dev User',
 			email: 'dev@example.com',
@@ -61,6 +85,8 @@ function readBootstrap(): POSAccessBootstrap {
 			canManageEvents: false,
 			canReplaceEventSchedules: false,
 			canValidateTickets: false,
+			showWpBackendMenu: false,
+			backendUrls: undefined,
 			currentUser: null,
 			site: undefined,
 			logoutUrl: undefined,
@@ -69,6 +95,10 @@ function readBootstrap(): POSAccessBootstrap {
 	}
 	const userRaw = ( raw as POSAccessBootstrap ).currentUser;
 	const siteRaw = ( raw as POSAccessBootstrap ).site;
+	const rawBackend = parseBackendUrls( ( raw as POSAccessBootstrap ).backendUrls );
+	const rawShowWpBackend = Boolean(
+		( raw as POSAccessBootstrap ).showWpBackendMenu,
+	);
 	return {
 		canUsePos: Boolean( ( raw as POSAccessBootstrap ).canUsePos ),
 		canManageEvents: Boolean( ( raw as POSAccessBootstrap ).canManageEvents ),
@@ -76,6 +106,8 @@ function readBootstrap(): POSAccessBootstrap {
 			( raw as POSAccessBootstrap ).canReplaceEventSchedules,
 		),
 		canValidateTickets: Boolean( ( raw as POSAccessBootstrap ).canValidateTickets ),
+		showWpBackendMenu: rawShowWpBackend,
+		backendUrls: rawShowWpBackend ? rawBackend : undefined,
 		currentUser:
 			userRaw && typeof userRaw === 'object'
 				? {

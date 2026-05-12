@@ -28,12 +28,15 @@ type Props = {
 	/** Separate HTML ids when defaults/blocks render in multiple dialogs at once (e.g. `mgmt`, `repl`). */
 	formIdPrefix: string;
 	disableDefaultsWhileBusy?: boolean;
+	/** When true, hides “Tickets per session” — irrelevant for flows that don’t allocate capacity (e.g. bulk remove). */
+	hideCapacityDefaults?: boolean;
 };
 
 export function ScheduleDefaultsAndBlocksForm( {
 	mgr,
 	formIdPrefix,
 	disableDefaultsWhileBusy = false,
+	hideCapacityDefaults = false,
 }: Props ) {
 	const {
 		sessionMinutes,
@@ -76,22 +79,30 @@ export function ScheduleDefaultsAndBlocksForm( {
 									) ) }
 								</SelectContent>
 							</Select>
+							{ hideCapacityDefaults ? (
+								<p className="text-muted-foreground max-w-md text-xs leading-snug">
+									Which start-times inside each Open/Close window match for removal mirrors Fill empty /
+									schedule generation stepping.
+								</p>
+							) : null }
 						</div>
-						<div className="space-y-2">
-							<Label htmlFor={ `${ formIdPrefix }-capacity` }>Tickets per session</Label>
-							<p className="text-muted-foreground text-xs">0 = unlimited</p>
-							<Input
-								id={ `${ formIdPrefix }-capacity` }
-								type="number"
-								min={ 0 }
-								className="w-32"
-								value={ capacity }
-								onChange={ ( e ) =>
-									setCapacity( parseInt( e.target.value, 10 ) || 0 )
-								}
-								disabled={ busyInputs }
-							/>
-						</div>
+						{ hideCapacityDefaults ? null : (
+							<div className="space-y-2">
+								<Label htmlFor={ `${ formIdPrefix }-capacity` }>Tickets per session</Label>
+								<p className="text-muted-foreground text-xs">0 = unlimited</p>
+								<Input
+									id={ `${ formIdPrefix }-capacity` }
+									type="number"
+									min={ 0 }
+									className="w-32"
+									value={ capacity }
+									onChange={ ( e ) =>
+										setCapacity( parseInt( e.target.value, 10 ) || 0 )
+									}
+									disabled={ busyInputs }
+								/>
+							</div>
+						) }
 					</div>
 					<p className="text-muted-foreground text-xs">
 						Block <strong>schedule name</strong> is the FooEvents label prefix (e.g. Regular, Late).

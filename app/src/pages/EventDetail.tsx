@@ -13,13 +13,18 @@ import { WorkspaceScheduleBlockingOverlay } from '@/components/WorkspaceSchedule
 import { useManageSchedule } from '@/hooks/useManageSchedule';
 import { useEventScheduleMutationsBusy } from '@/hooks/useEventScheduleMutationsBusy';
 
-type ManageTab = 'session' | 'spots' | 'schedule' | 'replace';
+type ManageTab = 'session' | 'spots' | 'remove' | 'schedule' | 'replace';
 
 function parseManageParam(
 	raw: string | null,
 	canReplace: boolean,
 ): ManageTab | null {
-	if ( raw === 'session' || raw === 'spots' || raw === 'schedule' ) {
+	if (
+		raw === 'session'
+		|| raw === 'spots'
+		|| raw === 'remove'
+		|| raw === 'schedule'
+	) {
 		return raw;
 	}
 	if ( raw === 'replace' && canReplace ) {
@@ -124,6 +129,14 @@ export default function EventDetail() {
 				<Button type="button" variant="secondary" onClick={ () => openTab( 'spots' ) }>
 					Add ticket spots
 				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					className="border-destructive/40 text-destructive hover:bg-destructive/10"
+					onClick={ () => openTab( 'remove' ) }
+				>
+					Remove time block
+				</Button>
 				<Button type="button" variant="outline" onClick={ () => openTab( 'schedule' ) }>
 					Manage schedule
 				</Button>
@@ -145,6 +158,7 @@ export default function EventDetail() {
 				mgr={ mgr }
 				sessionOpen={ manageTab === 'session' }
 				spotsOpen={ manageTab === 'spots' }
+				removeOpen={ manageTab === 'remove' }
 				scheduleOpen={ manageTab === 'schedule' }
 				replaceOpen={
 					canReplaceEventSchedules && manageTab === 'replace'
@@ -155,6 +169,11 @@ export default function EventDetail() {
 					}
 				} }
 				onSpotsOpenChange={ ( open ) => {
+					if ( ! open ) {
+						closeManagedDialogs();
+					}
+				} }
+				onRemoveOpenChange={ ( open ) => {
 					if ( ! open ) {
 						closeManagedDialogs();
 					}
@@ -170,7 +189,9 @@ export default function EventDetail() {
 					}
 				} }
 			/>
-			<WorkspaceScheduleBlockingOverlay open={ scheduleMutationsBusy } />
+			<WorkspaceScheduleBlockingOverlay
+				open={ scheduleMutationsBusy || mgr.bulkRemoving }
+			/>
 		</div>
 	);
 }

@@ -129,6 +129,48 @@ export function manualSlotWouldDuplicateExisting(
 	return false;
 }
 
+/**
+ * Single-slot equivalent of {@link manualSlotWouldDuplicateExisting} time + schedule-name semantics.
+ * Used when bulk-removing slots that correspond to configured schedule blocks (labelled vs time-only).
+ */
+export function slotMatchesScheduleBlockRemovalCandidate(
+	slot: SlotLike,
+	blockScheduleNameTrim: string,
+	candidateTimeHhmm: string,
+): boolean {
+	const mh = normHhmm( candidateTimeHhmm.trim() );
+	if ( ! mh ) {
+		return false;
+	}
+	const sh = slotNormHhmm( slot );
+	if ( ! sh || sh !== mh ) {
+		return false;
+	}
+	const manualName = blockScheduleNameTrim.trim().toLowerCase();
+	if ( manualName === '' ) {
+		return true;
+	}
+	const manualEff = manualName || mh.toLowerCase();
+	const sLab = ( slot.label ?? '' ).trim();
+	if ( ! sLab ) {
+		return manualEff === mh.toLowerCase();
+	}
+	const sEff = sLab.toLowerCase();
+	if ( manualEff === sEff ) {
+		return true;
+	}
+	if ( manualEff === mh.toLowerCase() ) {
+		if ( sEff.startsWith( mh.toLowerCase() ) ) {
+			return true;
+		}
+		const lead = primaryHhmmFromSlotLabel( sLab );
+		if ( lead === mh ) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** Stable Select value for a slot + date cell (manual stock UI). */
 export function encodeManualSlotDateRef( slot: Pick< SlotLike, 'id' > & { dateId?: string } ): string {
 	return JSON.stringify( [

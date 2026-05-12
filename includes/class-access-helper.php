@@ -147,6 +147,7 @@ final class Access_Helper {
 			'canManageEvents'            => self::can_manage_shop_events(),
 			'canReplaceEventSchedules'   => self::can_replace_event_schedules(),
 			'canValidateTickets'         => self::can_validate_fooevents_tickets(),
+			'showWpBackendMenu'           => false,
 		);
 
 		if ( is_user_logged_in() ) {
@@ -164,6 +165,18 @@ final class Access_Helper {
 			);
 			$out['logoutUrl']  = html_entity_decode( wp_logout_url( $redirect ), ENT_QUOTES, 'UTF-8' );
 			$out['profileUrl'] = admin_url( 'profile.php' );
+
+			$roles                = (array) $user->roles;
+			$show_wp_backend_menu = in_array( 'shop_manager', $roles, true )
+				|| in_array( 'administrator', $roles, true );
+			$out['showWpBackendMenu'] = $show_wp_backend_menu;
+			if ( $show_wp_backend_menu ) {
+				$out['backendUrls'] = array(
+					'products' => admin_url( 'edit.php?post_type=product' ),
+					'coupons'  => admin_url( 'edit.php?post_type=shop_coupon' ),
+					'admin'    => admin_url(),
+				);
+			}
 		}
 
 		return $out;

@@ -19,7 +19,14 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/context/AuthContext"
-import { ChevronsUpDownIcon, BadgeCheckIcon, LogOutIcon } from "lucide-react"
+import {
+  BadgeCheckIcon,
+  BadgePercentIcon,
+  ChevronsUpDownIcon,
+  LayoutDashboardIcon,
+  LogOutIcon,
+  PackageIcon,
+} from "lucide-react"
 
 function initialsFromName( name: string ) {
   const parts = name.trim().split( /\s+/ ).filter( Boolean )
@@ -42,8 +49,11 @@ export function NavUser({
   }
 }) {
   const { isMobile } = useSidebar()
-  const { logoutUrl, profileUrl } = useAuth()
+  const { logoutUrl, profileUrl, showWpBackendMenu, backendUrls } = useAuth()
   const initials = initialsFromName( user.name )
+  const showShopBackendLinks = Boolean(
+    showWpBackendMenu && backendUrls?.products && backendUrls?.coupons && backendUrls?.admin
+  )
 
   return (
     <SidebarMenu>
@@ -101,6 +111,31 @@ export function NavUser({
                 </DropdownMenuItem>
               ) }
             </DropdownMenuGroup>
+            { showShopBackendLinks && backendUrls ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem asChild>
+                    <a href={ backendUrls.products }>
+                      <PackageIcon />
+                      Manage products
+                    </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a href={ backendUrls.coupons }>
+                      <BadgePercentIcon />
+                      Manage coupons
+                    </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a href={ backendUrls.admin }>
+                      <LayoutDashboardIcon />
+                      Access WordPress backend
+                    </a>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </>
+            ) : null }
             <DropdownMenuSeparator />
             { logoutUrl ? (
               <DropdownMenuItem asChild>

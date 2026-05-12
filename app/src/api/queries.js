@@ -28,6 +28,20 @@ async function invalidateAndRefetchEvent( qc, eventId ) {
 	await qc.invalidateQueries( { predicate: validateEventQuery } );
 }
 
+/**
+ * After multiple slot/date writes outside `useMutation` (e.g. bulk DELETE loop), refresh the same caches
+ * as `useDeleteManualSlot` once at the end.
+ *
+ * @param {import('@tanstack/react-query').QueryClient} qc
+ * @param {number|string|undefined} eventId
+ */
+export async function invalidateInternalPosAfterSlotWrites( qc, eventId ) {
+	await invalidateAndRefetchEvent( qc, eventId );
+	qc.invalidateQueries( { queryKey: [ 'internalpos', 'dashboard' ] } );
+	qc.invalidateQueries( { queryKey: [ 'internalpos', 'events' ] } );
+	qc.invalidateQueries( { queryKey: [ 'internalpos', 'checkoutPreview' ] } );
+}
+
 function sameId( a, b ) {
 	return String( a ?? '' ).trim() === String( b ?? '' ).trim();
 }

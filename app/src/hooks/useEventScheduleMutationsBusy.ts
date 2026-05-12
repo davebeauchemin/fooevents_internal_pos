@@ -3,6 +3,7 @@ import { useIsMutating } from '@tanstack/react-query';
 const SLOT_MUT_KINDS = new Set<string>( [
 	'generateSlots',
 	'manualSlotAdd',
+	'manualSlotDel',
 	'slotStockAdd',
 ] );
 

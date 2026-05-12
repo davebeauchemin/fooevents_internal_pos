@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { CircleCheck, Plus, TriangleAlert } from 'lucide-react';
 import { encodeManualSlotDateRef } from '@/lib/slotHourGrouping';
 import type { ManageScheduleController } from '@/hooks/useManageSchedule';
@@ -30,10 +30,12 @@ type Props = {
 	mgr: ManageScheduleController;
 	sessionOpen: boolean;
 	spotsOpen: boolean;
+	removeOpen: boolean;
 	scheduleOpen: boolean;
 	replaceOpen: boolean;
 	onSessionOpenChange: ( open: boolean ) => void;
 	onSpotsOpenChange: ( open: boolean ) => void;
+	onRemoveOpenChange: ( open: boolean ) => void;
 	onScheduleOpenChange: ( open: boolean ) => void;
 	onReplaceOpenChange: ( open: boolean ) => void;
 };
@@ -42,10 +44,12 @@ export function ManagedEventScheduleDialogs( {
 	mgr,
 	sessionOpen,
 	spotsOpen,
+	removeOpen,
 	scheduleOpen,
 	replaceOpen,
 	onSessionOpenChange,
 	onSpotsOpenChange,
+	onRemoveOpenChange,
 	onScheduleOpenChange,
 	onReplaceOpenChange,
 }: Props ) {
@@ -62,14 +66,21 @@ export function ManagedEventScheduleDialogs( {
 		setManualAddMode,
 		manualSpotSelectValue,
 		setManualSpotSelectValue,
+		bulkRemoveConfirmOpen,
+		setBulkRemoveConfirmOpen,
+		bulkRemoving,
 		manualAddSpotsDelta,
 		setManualAddSpotsDelta,
 		manualStockConfirmOpen,
 		setManualStockConfirmOpen,
 		fillEmptyEnvelope,
+		bulkRemoveEnvelope,
+		bulkRemovePatternPreview,
 		siteTodayYmd,
 		siteTodayWeekday,
 		fillPreview,
+		bulkRemoveTargets,
+		bulkRemoveRunList,
 		spotsEligibleSchedule,
 		selectedSpotSchedule,
 		scheduleManualBusy,
@@ -77,6 +88,8 @@ export function ManagedEventScheduleDialogs( {
 		scheduleSlotPickerLabel,
 		submitManualSlot,
 		commitManualStockAdd,
+		requestBulkRemoveConfirm,
+		runBulkRemoveBlocks,
 		runFillEmpty,
 		runGenerate,
 		gen,
@@ -101,6 +114,18 @@ export function ManagedEventScheduleDialogs( {
 			setManualAddMode( 'extraSpots' );
 		}
 	}, [ spotsOpen, setManualAddMode ] );
+
+	useEffect( () => {
+		if ( ! removeOpen ) {
+			setBulkRemoveConfirmOpen( false );
+		}
+	}, [ removeOpen, setBulkRemoveConfirmOpen ] );
+
+	const matchedRemoveDayCount = useMemo(
+		() =>
+			new Set( bulkRemoveTargets.map( ( t ) => t.ymd.trim() ) ).size,
+		[ bulkRemoveTargets ],
+	);
 
 	return (
 		<>
@@ -290,6 +315,180 @@ export function ManagedEventScheduleDialogs( {
 				</DialogContent>
 			</Dialog>
 
+			<Dialog open={ removeOpen } onOpenChange={ onRemoveOpenChange }>
+				<DialogContent className="flex max-h-[90vh] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+					<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-10 pt-6">
+						<DialogHeader className="shrink-0">
+							<DialogTitle>Remove time blocks</DialogTitle>
+							<DialogDescription className="text-left leading-relaxed">
+								Use the same blocks, weekdays, open/close times, and session length as Manage schedule,
+								then bulk-remove matching slot–date cells that{ ' ' }
+								<strong className="text-foreground font-medium">already exist</strong> on this product —
+								including{ ' ' }
+								<strong className="text-foreground font-medium">historical days before today</strong>
+								{ ' ' }
+								on the site calendar (unlike Fill empty). The server skips cells that already have
+								bookings (409 <span className="font-mono">slot_has_bookings</span>
+								).
+							</DialogDescription>
+						</DialogHeader>
+						<div className="bg-destructive/[0.06] flex shrink-0 gap-3 rounded-lg border border-destructive/35 p-4 dark:bg-destructive/10">
+							<TriangleAlert
+								className="text-destructive mt-0.5 size-5 shrink-0"
+								aria-hidden
+							/>
+							<p className="text-muted-foreground text-sm leading-relaxed">
+								Cells that resolve to this pattern are permanently removed from FooEvents scheduling for
+								this product (except booked cells, which are left in place).
+							</p>
+						</div>
+						<ScheduleDefaultsAndBlocksForm
+							mgr={ mgr }
+							formIdPrefix="rmv"
+							hideCapacityDefaults
+						/>
+						<section
+							className="border-border bg-muted/25 space-y-4 rounded-lg border p-4 sm:p-5"
+							aria-labelledby="dlg-remove-bulk"
+						>
+							<div className="space-y-2">
+								<h2 id="dlg-remove-bulk" className="text-lg font-semibold tracking-tight">
+									Removal window & preview
+								</h2>
+								<p className="text-muted-foreground text-sm leading-relaxed">
+									Removal spans the{' '}
+									<strong className="text-foreground font-medium">configured block calendars</strong>{ ' ' }
+									as Y-m-d bounds (each block clipped to those dates plus weekdays/times/slot length).
+									Use site today only as orientation — removal is{' '}
+									<strong className="text-foreground font-medium">not</strong> clipped to dates on or
+									after today.
+								</p>
+								<p className="text-muted-foreground text-xs leading-snug">
+									Site calendar today:{ ' ' }
+									<span className="font-mono text-foreground">{ siteTodayYmd }</span>
+									{ siteTodayWeekday ? ` · ${ siteTodayWeekday }` : '' }
+								</p>
+								{ ! bulkRemoveEnvelope.invalid ? (
+									<p className="text-muted-foreground border-border/80 bg-muted/40 rounded-md border px-3 py-2 text-xs leading-snug">
+										Block calendar span (union of start/end dates):{ ' ' }
+										<span className="font-mono text-foreground">{ bulkRemoveEnvelope.removeFrom }</span>
+										{ ' → ' }
+										<span className="font-mono text-foreground">{ bulkRemoveEnvelope.removeTo }</span>
+									</p>
+								) : (
+									<p className="text-destructive text-sm">
+										Add at least one block with valid start and end dates (Y-m-d) before bulk removal.
+									</p>
+								) }
+							</div>
+							<Card className="border-border/80 bg-background/80">
+								<CardHeader className="pb-2">
+									<CardTitle className="text-base">Pattern preview (would match new cells)</CardTitle>
+								</CardHeader>
+								<CardContent className="space-y-2 text-sm">
+									<p>
+										<span className="text-muted-foreground">
+											Candidate slot–date positions in merge window:
+										</span>{ ' ' }
+										<Badge>{ bulkRemovePatternPreview.totalEntries }</Badge>
+									</p>
+									{ bulkRemovePatternPreview.categories.length > 0 && (
+										<div className="text-muted-foreground space-y-1 border-t border-border/60 pt-2 text-xs">
+											<p className="font-medium text-foreground">By schedule label</p>
+											<ul className="list-inside list-disc space-y-1">
+												{ bulkRemovePatternPreview.categories.map( ( c ) => (
+													<li key={ c.displayName }>
+														<span className="text-foreground font-medium">
+															{ c.displayName }
+														</span>
+														{ ': ' }
+														{ c.slotDateCells } cell{ c.slotDateCells === 1 ? '' : 's' },{ ' ' }
+														{ c.sessionTimeCount } start time{ c.sessionTimeCount === 1 ? '' : 's' }
+													</li>
+												) ) }
+											</ul>
+										</div>
+									) }
+								</CardContent>
+							</Card>
+							<Card className="border-border/80 bg-background/80">
+								<CardHeader className="pb-2">
+									<CardTitle className="text-base">
+										Matched rows on this product (will be attempted)
+									</CardTitle>
+								</CardHeader>
+								<CardContent className="space-y-3 text-sm">
+									<p>
+										<span className="text-muted-foreground">Slot–date cells that match:</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkRemoveTargets.length }</strong>
+									</p>
+									<p>
+										<span className="text-muted-foreground">Distinct calendar days touched:</span>{ ' ' }
+										<strong className="tabular-nums">{ matchedRemoveDayCount }</strong>
+									</p>
+									{ bulkRemoveTargets.length > 0 ? (
+										<ul className="max-h-[10rem] list-inside list-decimal overflow-y-auto border-t border-border/60 pt-2 text-muted-foreground text-xs">
+											{ bulkRemoveTargets.slice( 0, 40 ).map( ( t ) => (
+												<li
+													key={
+														t.ymd
+														+ '\t'
+														+ encodeManualSlotDateRef( {
+															id: t.slotId,
+															dateId: t.dateId,
+														} )
+													}
+												>
+													<span className="font-mono text-foreground">{ t.ymd }</span>
+													{ ' · ids ' }
+													<span className="font-mono">{ t.slotId }</span>
+													<span className="text-muted-foreground/80">/</span>
+													<span className="font-mono">{ t.dateId }</span>
+												</li>
+											) ) }
+											{ bulkRemoveTargets.length > 40 ? (
+												<li className="list-none pl-5 text-muted-foreground">
+													…plus { bulkRemoveTargets.length - 40 } more
+												</li>
+											) : null }
+										</ul>
+									) : (
+										<p className="text-muted-foreground text-xs">
+											Adjust blocks, weekdays, labels, session length, or widen dates — nothing on
+											this schedule lines up yet.
+										</p>
+									) }
+								</CardContent>
+							</Card>
+							<DialogFooter className="shrink-0 sm:justify-between">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={ () => onRemoveOpenChange( false ) }
+									disabled={ bulkRemoving }
+								>
+									Cancel
+								</Button>
+								<Button
+									type="button"
+									variant="destructive"
+									disabled={
+										scheduleManualBusy
+										|| gen.isPending
+										|| bulkRemoveEnvelope.invalid
+										|| bulkRemoveTargets.length === 0
+										|| bulkRemoving
+									}
+									onClick={ requestBulkRemoveConfirm }
+								>
+									Continue to confirm removal…
+								</Button>
+							</DialogFooter>
+						</section>
+					</div>
+				</DialogContent>
+			</Dialog>
+
 			<Dialog
 				open={ manualStockConfirmOpen }
 				onOpenChange={ ( open ) => {
@@ -353,6 +552,63 @@ export function ManagedEventScheduleDialogs( {
 							disabled={ scheduleManualBusy }
 						>
 							{ addStock.isPending ? 'Saving…' : 'Confirm add spots' }
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={ bulkRemoveConfirmOpen }
+				onOpenChange={ ( open ) => {
+					if ( ! bulkRemoving ) {
+						setBulkRemoveConfirmOpen( open );
+					}
+				} }
+			>
+				<DialogContent showCloseButton={ ! bulkRemoving }>
+					<DialogHeader>
+						<DialogTitle>Remove matched time blocks?</DialogTitle>
+						<DialogDescription className="text-left">
+							Start bulk deletion for{ ' ' }
+							<strong className="text-foreground">
+								{ bulkRemoveRunList.length }
+							</strong>{ ' ' }
+							slot–date cell(s) that matched your blocks.{ ' ' }
+							Ticketed cells remain and are counted as skips (no hard stop).
+						</DialogDescription>
+					</DialogHeader>
+					<div className="bg-destructive/[0.06] flex gap-3 rounded-lg border border-destructive/35 p-4 text-sm dark:bg-destructive/10">
+						<TriangleAlert className="text-destructive size-5 shrink-0" aria-hidden />
+						<p className="text-muted-foreground leading-relaxed">
+							This cannot be undone from the POS. Double-check weekdays, merge window ({ ' ' }
+							{ ! bulkRemoveEnvelope.invalid ? (
+								<>
+									<span className="font-mono text-foreground">{ bulkRemoveEnvelope.removeFrom }</span>
+									{ ' → ' }
+									<span className="font-mono text-foreground">{ bulkRemoveEnvelope.removeTo }</span>
+								</>
+							) : (
+								'invalid'
+							) }
+							) and labels before confirming.
+						</p>
+					</div>
+					<DialogFooter>
+						<Button
+							type="button"
+							variant="outline"
+							onClick={ () => setBulkRemoveConfirmOpen( false ) }
+							disabled={ bulkRemoving }
+						>
+							Cancel
+						</Button>
+						<Button
+							type="button"
+							variant="destructive"
+							onClick={ () => void runBulkRemoveBlocks() }
+							disabled={ bulkRemoving }
+						>
+							{ bulkRemoving ? 'Removing…' : 'Remove now' }
 						</Button>
 					</DialogFooter>
 				</DialogContent>
