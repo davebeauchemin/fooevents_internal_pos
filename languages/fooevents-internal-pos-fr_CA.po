@@ -1,0 +1,60 @@
+# French (Canada) — FooEvents Internal POS storefront + bundle strings.
+msgid ""
+msgstr ""
+"Project-Id-Version: FooEvents Internal POS\n"
+"Language: fr_CA\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "Select a date"
+msgstr "Choisir une date"
+
+msgid "Select a time"
+msgstr "Choisir une heure"
+
+msgid "Previous"
+msgstr "Précédent"
+
+msgid "Next"
+msgstr "Suivant"
+
+msgid "Loading available times…"
+msgstr "Chargement des horaires disponibles…"
+
+msgid "No upcoming dates available."
+msgstr "Aucune date à venir."
+
+msgid "No upcoming time slots remain for this date."
+msgstr "Plus aucun créneau horaire disponible pour cette date."
+
+msgid "Sold out"
+msgstr "Complet"
+
+msgid "Only %s tickets left"
+msgstr "Il ne reste que %s billet(s)"
+
+msgid "Tickets Number"
+msgstr "Nombre de billets"
+
+msgid "Show %s times"
+msgstr "Afficher les créneaux %s"
+
+msgid "No earlier hour"
+msgstr "Pas d’heure précédente"
+
+msgid "No later hour"
+msgstr "Pas d’heure suivante"
+
+msgid "1 ticket for %s"
+msgstr "1 billet pour %s"
+
+msgid "%1$d tickets for %2$s"
+msgstr "%1$d billets pour %2$s"
+
+msgid "%s / person"
+msgstr "%s / personne"
+
+msgid "Bundle pricing options"
+msgstr "Options de tarifs groupés"

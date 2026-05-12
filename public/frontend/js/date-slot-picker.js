@@ -266,6 +266,22 @@ jQuery(document).ready(function ($) {
     }
   }
 
+  /** Localized calendar date (month/day/year) from Y-m-d; replaces English month from FooEvents option labels. */
+  function formatYmdLocaleLong(ymd) {
+    if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return '';
+    var d = new Date(ymd + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleDateString(PAGE_LOCALE, { month: 'long', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+      try {
+        return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      } catch (e2) {
+        return '';
+      }
+    }
+  }
+
   /** 24h HH:MM from minute-of-day (site-local semantics match PHP slot metadata). */
   function minuteOfDayToHhMm(mod) {
     if (typeof mod !== 'number' || mod < 0 || mod >= 1440) return '';
@@ -439,7 +455,10 @@ jQuery(document).ready(function ($) {
             dayName = new Date(pill.label).toLocaleDateString('en-US', { weekday: 'long' });
           }
         }
-        var $pill = $('<button type="button" class="kbm-pill"><span class="kbm-pill__date">' + pill.label + '</span><span class="kbm-pill__day">' + dayName + '</span></button>');
+        var dateLine = formatYmdLocaleLong(ymdForDay) || pill.label;
+        var $pill = $('<button type="button" class="kbm-pill"></button>')
+          .append($('<span class="kbm-pill__date"></span>').text(dateLine))
+          .append($('<span class="kbm-pill__day"></span>').text(dayName));
         if (pill.value === initialDateValue || (!initialDateValue && pill === defaultPill)) {
           $pill.addClass('active');
         }
@@ -447,7 +466,7 @@ jQuery(document).ready(function ($) {
           $track.find('.kbm-pill').removeClass('active');
           $pill.addClass('active');
           currentSelectedDateYmd = resolveDateYmd(pill.value, pill.label);
-          currentSelectedDateLabel = pill.label;
+          currentSelectedDateLabel = dateLine;
           $dateSelect.val(pill.value).trigger('change');
           if (useCustomTimeSlots) {
             var $area = kbmSlotAreaEl();
