@@ -26,13 +26,17 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 0.625rem;
+  gap: 0.75rem 0.75rem;
 }
 
 /* Layout only — colors/spacing come from ACSS `btn btn--primary` */
 .fipos-dynamic-bundle-pricing__badge {
   cursor: pointer;
   white-space: nowrap;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition:
     transform 0.15s ease,
     box-shadow 0.15s ease,
@@ -50,15 +54,15 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   outline-offset: 3px;
 }
 
-/* Selected bundle tier: high-contrast ring (works on red/primary theme buttons, EN/FR copy). */
+/* Selected tier: no ring/border — contrast via weight + brightness only. */
 .fipos-dynamic-bundle-pricing__badge.is-selected {
   z-index: 1;
   font-weight: 700;
   transform: translateY(-1px);
-  box-shadow:
-    0 0 0 3px #ffffff,
-    0 0 0 6px rgba(0, 0, 0, 0.2),
-    0 4px 14px rgba(0, 0, 0, 0.22);
+  box-shadow: none !important;
+  border: none !important;
+  outline: none;
+  filter: brightness(1.06);
 }
 
 /* When one tier is chosen, others read as secondary options. */
@@ -68,4 +72,22 @@ p.price:has(.fipos-dynamic-bundle-pricing--below-price) .fipos-dynamic-bundle-pr
   transform: none;
   font-weight: inherit;
   filter: brightness(0.96);
+}
+
+/* Mobile: stack with clear spacing, buttons span full content width. */
+@media (max-width: 767px) {
+  .fipos-dynamic-bundle-pricing__badges {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    max-width: 100%;
+    gap: 0.875rem;
+  }
+
+  .fipos-dynamic-bundle-pricing__badge {
+    width: 100%;
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
 }
