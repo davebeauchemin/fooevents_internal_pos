@@ -8,7 +8,7 @@ import {
 	useRef,
 	useState,
 } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { addDays, format, parseISO } from 'date-fns';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
@@ -1642,6 +1642,18 @@ export default function Validate() {
 					>
 						<ArrowLeft className="size-4" aria-hidden />
 						Back to search
+					</Button>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="gap-1"
+						asChild
+					>
+						<Link to="/calendar">
+							<CalendarIcon className="size-4" aria-hidden />
+							Calendar
+						</Link>
 					</Button>
 				</div>
 

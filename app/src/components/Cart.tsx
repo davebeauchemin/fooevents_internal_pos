@@ -339,7 +339,7 @@ export function CartLineRow( {
 					<p className="font-medium leading-snug">{ htmlToPlainText( line.eventTitle ) }</p>
 					<p className="text-muted-foreground text-xs">{ line.dateLabel }</p>
 					{ line.slotTime ? (
-						<Badge variant="outline" className="mt-1 font-mono tabular-nums">
+						<Badge className="mt-1 border-emerald-600/20 bg-emerald-600 text-white font-mono tabular-nums dark:border-emerald-500/30 dark:bg-emerald-500 dark:text-white">
 							{ line.slotTime }
 						</Badge>
 					) : null }
