@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Minus, Plus, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -338,7 +339,9 @@ export function CartLineRow( {
 					<p className="font-medium leading-snug">{ htmlToPlainText( line.eventTitle ) }</p>
 					<p className="text-muted-foreground text-xs">{ line.dateLabel }</p>
 					{ line.slotTime ? (
-						<p className="font-mono text-xs tabular-nums">{ line.slotTime }</p>
+						<Badge variant="outline" className="mt-1 font-mono tabular-nums">
+							{ line.slotTime }
+						</Badge>
 					) : null }
 					{ priceEach ? (
 						<p className="text-muted-foreground mt-1 text-xs">{ priceEach } each</p>
