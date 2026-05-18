@@ -1274,6 +1274,9 @@ class Rest_API {
 			$booking_args['qty']      = $qty;
 		}
 
+		if ( '' === $fn || '' === $ln ) {
+			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
 		if ( mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}

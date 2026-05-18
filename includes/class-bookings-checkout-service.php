@@ -700,6 +700,13 @@ class Bookings_Checkout_Service {
 			$check_in_now = false;
 		}
 
+		if ( '' === $af || '' === $al ) {
+			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+		if ( mb_strlen( $af ) > 100 || mb_strlen( $al ) > 100 ) {
+			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		}
+
 		if ( '' === $postal_pc ) {
 			return new WP_Error( 'rest_invalid_param', __( 'A billing postal code is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
@@ -898,7 +905,7 @@ class Bookings_Checkout_Service {
 			$order = wc_create_order(
 				array(
 					'created_via' => 'fooevents_internal_pos',
-					'customer_id' => get_current_user_id(),
+					'customer_id' => 0,
 					'status'      => 'pending',
 				)
 			);

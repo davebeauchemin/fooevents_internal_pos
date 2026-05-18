@@ -260,6 +260,8 @@ export default function Checkout() {
 		|| mutation.isPending
 		|| paymentMethodsLoading
 		|| ! effectivePaymentKey
+		|| ! first.trim()
+		|| ! last.trim()
 		|| ! postalCode.trim()
 		|| couponBlocking;
 
@@ -436,26 +438,24 @@ export default function Checkout() {
 									</div>
 									<div className="grid gap-3 sm:grid-cols-2">
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-first` }>
-												First name <span className="text-muted-foreground font-normal">(optional)</span>
-											</Label>
+											<Label htmlFor={ `${ formId }-first` }>First name</Label>
 											<Input
 												id={ `${ formId }-first` }
 												value={ first }
 												onChange={ ( e ) => setFirst( e.target.value ) }
+												required
 												maxLength={ 100 }
 												autoComplete="given-name"
 												disabled={ mutation.isPending }
 											/>
 										</div>
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-last` }>
-												Last name <span className="text-muted-foreground font-normal">(optional)</span>
-											</Label>
+											<Label htmlFor={ `${ formId }-last` }>Last name</Label>
 											<Input
 												id={ `${ formId }-last` }
 												value={ last }
 												onChange={ ( e ) => setLast( e.target.value ) }
+												required
 												maxLength={ 100 }
 												autoComplete="family-name"
 												disabled={ mutation.isPending }

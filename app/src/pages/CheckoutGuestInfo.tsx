@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +39,14 @@ export default function CheckoutGuestInfo() {
 	}, [ items.length, navigate ] );
 
 	const beginStaffHandoff = () => {
+		if ( ! first.trim() || ! last.trim() ) {
+			toast.error( 'First name and last name are required.' );
+			return;
+		}
+		if ( ! postalCode.trim() ) {
+			toast.error( 'Postal code is required.' );
+			return;
+		}
 		setPhase( 'waiting' );
 		setTakeoverError( '' );
 		setTakeoverCode( '' );
@@ -88,27 +97,23 @@ export default function CheckoutGuestInfo() {
 									<div className="grid gap-4 text-left sm:max-w-lg">
 										<div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
 											<div className="grid gap-2">
-												<Label htmlFor={ `${ formId }-guest-first` }>
-													First name{ ' ' }
-													<span className="text-muted-foreground font-normal">(optional)</span>
-												</Label>
+												<Label htmlFor={ `${ formId }-guest-first` }>First name</Label>
 												<Input
 													id={ `${ formId }-guest-first` }
 													value={ first }
 													onChange={ ( e ) => setFirst( e.target.value ) }
+													required
 													maxLength={ 100 }
 													autoComplete="given-name"
 												/>
 											</div>
 											<div className="grid gap-2">
-												<Label htmlFor={ `${ formId }-guest-last` }>
-													Last name{ ' ' }
-													<span className="text-muted-foreground font-normal">(optional)</span>
-												</Label>
+												<Label htmlFor={ `${ formId }-guest-last` }>Last name</Label>
 												<Input
 													id={ `${ formId }-guest-last` }
 													value={ last }
 													onChange={ ( e ) => setLast( e.target.value ) }
+													required
 													maxLength={ 100 }
 													autoComplete="family-name"
 												/>
