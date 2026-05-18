@@ -9,9 +9,7 @@ import { Label } from '@/components/ui/label';
 import { useCheckoutDraft } from '@/context/CheckoutDraftContext';
 import { useCart } from '@/context/CartContext';
 
-const STAFF_TAKEOVER_CODE = 'kkk';
-
-type HandoffPhase = 'entry' | 'waiting' | 'code';
+type HandoffPhase = 'entry' | 'waiting';
 
 export default function CheckoutGuestInfo() {
 	const formId = useId();
@@ -29,14 +27,16 @@ export default function CheckoutGuestInfo() {
 	} = useCheckoutDraft();
 
 	const [ phase, setPhase ] = useState<HandoffPhase>( 'entry' );
-	const [ takeoverCode, setTakeoverCode ] = useState( '' );
-	const [ takeoverError, setTakeoverError ] = useState( '' );
 
 	useEffect( () => {
 		if ( items.length === 0 ) {
 			navigate( '/checkout', { replace: true } );
 		}
 	}, [ items.length, navigate ] );
+
+	const goBackToCheckout = () => {
+		navigate( '/checkout', { replace: true } );
+	};
 
 	const beginStaffHandoff = () => {
 		if ( ! first.trim() || ! last.trim() ) {
@@ -48,26 +48,10 @@ export default function CheckoutGuestInfo() {
 			return;
 		}
 		setPhase( 'waiting' );
-		setTakeoverError( '' );
-		setTakeoverCode( '' );
 	};
 
-	const revealTakeoverCode = () => {
-		setPhase( 'code' );
-		setTakeoverError( '' );
-		setTakeoverCode( '' );
-	};
-
-	const attemptTakeoverSubmit = () => {
-		setTakeoverError( '' );
-		if ( takeoverCode.trim() !== STAFF_TAKEOVER_CODE ) {
-			setTakeoverError( 'Incorrect staff code.' );
-			setTakeoverCode( '' );
-			return;
-		}
-		setPhase( 'entry' );
-		setTakeoverCode( '' );
-		navigate( '/checkout', { replace: true } );
+	const completeStaffTakeover = () => {
+		goBackToCheckout();
 	};
 
 	if ( items.length === 0 ) {
@@ -154,7 +138,7 @@ export default function CheckoutGuestInfo() {
 										type="button"
 										variant="outline"
 										className="w-full sm:w-auto"
-										onClick={ beginStaffHandoff }
+										onClick={ goBackToCheckout }
 									>
 										Back
 									</Button>
@@ -167,7 +151,7 @@ export default function CheckoutGuestInfo() {
 									</Button>
 								</CardFooter>
 							</Card>
-						) : phase === 'waiting' ? (
+						) : (
 							<Card className="border-border shadow-md">
 								<CardContent className="flex flex-col gap-4 pt-6 text-left">
 									<div className="flex min-w-0 flex-row items-center gap-3">
@@ -176,12 +160,12 @@ export default function CheckoutGuestInfo() {
 											aria-hidden
 										/>
 										<h2 className="font-heading min-w-0 text-2xl font-semibold tracking-tight">
-											Waiting for staff
+											Loading Staff
 										</h2>
 									</div>
 									<p className="text-muted-foreground text-base leading-relaxed">
 										Hold the tablet or device steady and return it to a staff member—they will
-										unlock checkout next.
+										continue checkout on the staff screen.
 									</p>
 								</CardContent>
 								<CardFooter className={ cardFooterClassName }>
@@ -189,79 +173,16 @@ export default function CheckoutGuestInfo() {
 										type="button"
 										variant="outline"
 										className="w-full sm:w-auto"
-										onClick={ () => {
-											setPhase( 'entry' );
-											setTakeoverError( '' );
-										} }
-									>
-										Back
-									</Button>
-									<Button type="button" className="w-full sm:ml-auto sm:w-auto" onClick={ revealTakeoverCode }>
-										Take over
-									</Button>
-								</CardFooter>
-							</Card>
-						) : (
-							<Card className="border-border shadow-md">
-								<CardHeader className="text-left">
-									<CardTitle className="font-heading text-2xl font-semibold tracking-tight">
-										Staff takeover
-									</CardTitle>
-									<CardDescription className="text-base leading-relaxed">
-										Enter the staff takeover code to return to checkout.
-									</CardDescription>
-								</CardHeader>
-								<CardContent>
-									<div className="grid w-full max-w-xs gap-2 text-left">
-										<Label htmlFor={ `${ formId }-staff-code` } className="sr-only">
-											Staff code
-										</Label>
-										<Input
-											id={ `${ formId }-staff-code` }
-											type="password"
-											autoComplete="off"
-											value={ takeoverCode }
-											onChange={ ( e ) => {
-												setTakeoverCode( e.target.value );
-												if ( takeoverError ) {
-													setTakeoverError( '' );
-												}
-											} }
-											onKeyDown={ ( e ) => {
-												if ( e.key === 'Enter' ) {
-													e.preventDefault();
-													attemptTakeoverSubmit();
-												}
-											} }
-											placeholder="Staff code"
-											aria-invalid={ Boolean( takeoverError ) }
-										/>
-										{ takeoverError ? (
-											<p role="alert" className="text-destructive text-sm">
-												{ takeoverError }
-											</p>
-										) : null }
-									</div>
-								</CardContent>
-								<CardFooter className={ cardFooterClassName }>
-									<Button
-										type="button"
-										variant="outline"
-										className="w-full sm:w-auto"
-										onClick={ () => {
-											setPhase( 'waiting' );
-											setTakeoverError( '' );
-											setTakeoverCode( '' );
-										} }
+										onClick={ () => setPhase( 'entry' ) }
 									>
 										Back
 									</Button>
 									<Button
 										type="button"
 										className="w-full sm:ml-auto sm:w-auto"
-										onClick={ attemptTakeoverSubmit }
+										onClick={ completeStaffTakeover }
 									>
-										Unlock checkout
+										Take over
 									</Button>
 								</CardFooter>
 							</Card>
