@@ -54,6 +54,10 @@ export default function CheckoutGuestInfo() {
 		goBackToCheckout();
 	};
 
+	const showStaffLoadingScreen = () => {
+		setPhase( 'waiting' );
+	};
+
 	if ( items.length === 0 ) {
 		return null;
 	}
@@ -138,7 +142,7 @@ export default function CheckoutGuestInfo() {
 										type="button"
 										variant="outline"
 										className="w-full sm:w-auto"
-										onClick={ goBackToCheckout }
+										onClick={ showStaffLoadingScreen }
 									>
 										Back
 									</Button>
