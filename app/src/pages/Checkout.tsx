@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
@@ -97,6 +97,25 @@ function appendQuickApplyCouponCode( couponInputRaw: string, prevQuick: string[]
 	}
 
 	return [ ...prevQuick, trimmed ];
+}
+
+/**
+ * Drop a code from quick-apply list and from manual coupon input (case-insensitive).
+ */
+function removeRequestedCouponCode(
+	targetRaw: string,
+	couponInputRaw: string,
+	prevQuick: string[],
+): { nextInput: string; nextQuick: string[] } {
+	const targetKey = normalizeCouponCodeKey( targetRaw );
+	if ( ! targetKey ) {
+		return { nextInput: couponInputRaw, nextQuick: prevQuick };
+	}
+	const nextQuick = prevQuick.filter( ( c ) => normalizeCouponCodeKey( c ) !== targetKey );
+	const manual = parseCouponCodesInput( couponInputRaw );
+	const nextManual = manual.filter( ( c ) => normalizeCouponCodeKey( c ) !== targetKey );
+	const nextInput = nextManual.join( ', ' );
+	return { nextInput, nextQuick };
 }
 
 type PreviewTaxRow = {
@@ -203,7 +222,8 @@ export default function Checkout() {
 
 	const { data: posVisibleCouponsRaw } = usePosVisibleCoupons( items.length > 0 );
 
-	const appliedCouponKeysNormalized = useMemo( () => {
+	/** Codes the cashier typed or picked via POS promos — these can be removed. */
+	const requestedCouponKeysNormalized = useMemo( () => {
 		const set = new Set<string>();
 		for ( const c of couponCodesForApi ) {
 			const k = normalizeCouponCodeKey( String( c ) );
@@ -211,6 +231,12 @@ export default function Checkout() {
 				set.add( k );
 			}
 		}
+		return set;
+	}, [ couponCodesForApi ] );
+
+	/** Coupons WooCommerce applied on the simulated cart (includes auto-apply). */
+	const serverAppliedCouponKeysNormalized = useMemo( () => {
+		const set = new Set<string>();
 		for ( const a of preview?.appliedCoupons ?? [] ) {
 			const k = normalizeCouponCodeKey( htmlToPlainText( String( a.code ?? '' ) ) );
 			if ( k ) {
@@ -218,7 +244,20 @@ export default function Checkout() {
 			}
 		}
 		return set;
-	}, [ couponCodesForApi, preview?.appliedCoupons ] );
+	}, [ preview?.appliedCoupons ] );
+
+	const removeRequestedCoupon = useCallback(
+		( codeRaw: string ) => {
+			const { nextInput, nextQuick } = removeRequestedCouponCode(
+				codeRaw,
+				couponInput,
+				quickApplyCouponCodes,
+			);
+			setCouponInput( nextInput );
+			setQuickApplyCouponCodes( nextQuick );
+		},
+		[ couponInput, quickApplyCouponCodes ],
+	);
 
 	const posPromoCoupons: PosPromoCoupon[] = useMemo(
 		() =>
@@ -511,7 +550,13 @@ export default function Checkout() {
 												{ posPromoCoupons.map( ( row, promoIdx ) => {
 													const apiCode = String( row.code ?? '' ).trim();
 													const keyed = normalizeCouponCodeKey( apiCode );
-													const inactive = ! keyed || appliedCouponKeysNormalized.has( keyed );
+													const hasKey = Boolean( keyed );
+													const promoRequested = Boolean( keyed && requestedCouponKeysNormalized.has( keyed ) );
+													const autoOnlyApplied =
+														Boolean( keyed )
+														&& serverAppliedCouponKeysNormalized.has( keyed )
+														&& ! promoRequested;
+													const inactive = ! hasKey || autoOnlyApplied;
 
 													const valueLabel =
 														htmlToPlainText( String( row.label ?? '' ) ).trim()
@@ -526,22 +571,41 @@ export default function Checkout() {
 																	: `promo-${ keyed || promoIdx }`
 															}
 															type="button"
-															variant={ inactive ? 'secondary' : 'outline' }
+															variant={ promoRequested ? 'outline' : 'secondary' }
 															size="sm"
 															className={ cn(
 																'h-auto min-h-9 shrink-0 px-4 py-2 text-sm font-semibold tabular-nums',
+																promoRequested &&
+																	'border-primary bg-primary/[0.08] hover:bg-primary/15 dark:bg-primary/20 dark:hover:bg-primary/30',
 																inactive && 'opacity-80',
 															) }
 															disabled={ mutation.isPending || inactive }
-															aria-label={ `Apply promo ${ valueLabel }` }
-															title={ row.description ? row.description : undefined }
-															onClick={ () =>
-																setQuickApplyCouponCodes( ( prev ) =>
-																	appendQuickApplyCouponCode( couponInput, prev, apiCode ),
-																)
+															aria-pressed={ promoRequested }
+															aria-label={
+																promoRequested
+																	? `Remove promo ${ valueLabel }`
+																	: `Apply promo ${ valueLabel }`
 															}
+															title={
+																promoRequested
+																	? 'Click to remove this promotion'
+																	: ( row.description ? row.description : 'Click to apply' )
+															}
+															onClick={ () => {
+																if ( promoRequested ) {
+																	removeRequestedCoupon( apiCode );
+																} else {
+																	setQuickApplyCouponCodes( ( prev ) =>
+																		appendQuickApplyCouponCode(
+																			couponInput,
+																			prev,
+																			apiCode,
+																		),
+																	);
+																}
+															} }
 														>
-															{ valueLabel }
+															{ promoRequested ? `${ valueLabel } · remove` : valueLabel }
 														</Button>
 													);
 												} ) }
@@ -612,16 +676,39 @@ export default function Checkout() {
 												Coupons
 											</h3>
 											<ul className="text-muted-foreground space-y-1 text-xs">
-												{ preview.appliedCoupons.map( ( c ) => (
-													<li key={ c.code } className="flex justify-between gap-2 tabular-nums">
-														<span>
-															<span className="font-mono">{ htmlToPlainText( c.code ?? '' ) }</span>
-														</span>
-														<span className="text-emerald-700 dark:text-emerald-400">
-															−{ htmlToPlainText( c.discountExTaxFormatted ?? '' ) }
-														</span>
-													</li>
-												) ) }
+												{ preview.appliedCoupons.map( ( c, couponIdx ) => {
+													const plainCode = htmlToPlainText( c.code ?? '' );
+													const couponKeyNorm = normalizeCouponCodeKey( plainCode );
+													const cashierRemovable =
+														Boolean( couponKeyNorm )
+														&& requestedCouponKeysNormalized.has( couponKeyNorm );
+													return (
+														<li
+															key={ `${ plainCode || 'coupon' }-${ couponIdx }` }
+															className="flex flex-wrap items-center justify-between gap-2 gap-y-1 tabular-nums"
+														>
+															<span className="min-w-0 flex flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
+																<span className="font-mono">{ plainCode }</span>
+																<span className="text-emerald-700 dark:text-emerald-400">
+																	−{ htmlToPlainText( c.discountExTaxFormatted ?? '' ) }
+																</span>
+															</span>
+															{ cashierRemovable ? (
+																<Button
+																	type="button"
+																	variant="ghost"
+																	size="xs"
+																	className="h-7 shrink-0 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+																	disabled={ mutation.isPending }
+																	onClick={ () => removeRequestedCoupon( plainCode ) }
+																	aria-label={ `Remove coupon ${ plainCode }` }
+																>
+																	Remove
+																</Button>
+															) : null }
+														</li>
+													);
+												} ) }
 											</ul>
 										</section>
 									) }
