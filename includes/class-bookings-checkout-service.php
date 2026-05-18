@@ -227,6 +227,7 @@ class Bookings_Checkout_Service {
 			);
 		}
 
+		$coupon_id = function_exists( 'wc_get_coupon_id_by_code' ) ? (int) wc_get_coupon_id_by_code( $coupon_code ) : 0;
 		if ( $coupon_id > 0 ) {
 			$coupon_obj = new \WC_Coupon( $coupon_id );
 			if ( $coupon_obj->get_id() > 0 && ! Coupon_Rules::coupon_allowed_for_channel( $coupon_obj, 'pos' ) ) {
@@ -301,19 +302,24 @@ class Bookings_Checkout_Service {
 	 * @param \WC_Cart $cart Cart.
 	 * @param array    $cashier_manual_sanitized Sanitized cashier coupon codes only.
 	 * @param string   $billing_email POS checkout attendee/billing email for coupon email checks (optional).
-	 * @return array{coupon_errors:array<int,array{code:string,manual:bool,message:string}>}
+	 * @return array{coupon_errors:array<int,array{code:string,manual:bool,message:string}>,bundle_lines:array<int,array<string,mixed>>}
 	 */
 	private function attempt_pos_cart_discounts_for_session( $cart, array $cashier_manual_sanitized, $billing_email = '' ) {
 		Coupon_Rules::set_pos_internal_session( true );
+		$bundle_fee_callback = null;
 		try {
 			$coupon_errors = array();
+			$bundle_lines  = array();
 			$manual_map    = array();
 			foreach ( $cashier_manual_sanitized as $m ) {
 				$manual_map[ strtolower( (string) $m ) ] = true;
 			}
 
 			if ( ! $cart instanceof \WC_Cart ) {
-				return array( 'coupon_errors' => $coupon_errors );
+				return array(
+					'coupon_errors' => $coupon_errors,
+					'bundle_lines'  => $bundle_lines,
+				);
 			}
 
 			$this->apply_pos_checkout_billing_email_to_wc_session( $billing_email );
@@ -326,11 +332,19 @@ class Bookings_Checkout_Service {
 			}
 
 			$booking_qty = Coupon_Rules::total_booking_ticket_qty_in_cart( $cart );
-
-			$bi = 0;
-			foreach ( Coupon_Rules::compute_bundle_fee_lines( $booking_qty, 'pos', $cart ) as $bundle_line ) {
-				Coupon_Rules::add_bundle_discount_fee_to_cart( $cart, $bundle_line, $bi );
-				++$bi;
+			$bundle_lines = Coupon_Rules::compute_bundle_fee_lines( $booking_qty, 'pos', $cart );
+			if ( ! empty( $bundle_lines ) ) {
+				$bundle_fee_callback = static function ( $fees_cart ) use ( $cart, $bundle_lines ) {
+					if ( $fees_cart !== $cart || ! $fees_cart instanceof \WC_Cart ) {
+						return;
+					}
+					$bi = 0;
+					foreach ( $bundle_lines as $bundle_line ) {
+						Coupon_Rules::add_bundle_discount_fee_to_cart( $fees_cart, $bundle_line, $bi );
+						++$bi;
+					}
+				};
+				add_action( 'woocommerce_cart_calculate_fees', $bundle_fee_callback, 20, 1 );
 			}
 
 			if ( method_exists( $cart, 'calculate_totals' ) ) {
@@ -365,8 +379,14 @@ class Bookings_Checkout_Service {
 				$cart->calculate_totals();
 			}
 
-			return array( 'coupon_errors' => $coupon_errors );
+			return array(
+				'coupon_errors' => $coupon_errors,
+				'bundle_lines'  => $bundle_lines,
+			);
 		} finally {
+			if ( null !== $bundle_fee_callback ) {
+				remove_action( 'woocommerce_cart_calculate_fees', $bundle_fee_callback, 20 );
+			}
 			Coupon_Rules::set_pos_internal_session( false );
 		}
 	}
@@ -539,14 +559,13 @@ class Bookings_Checkout_Service {
 
 			$coupon_apply = $this->attempt_pos_cart_discounts_for_session( WC()->cart, $manual_sanitized, $billing_email );
 			$coupon_extra = $this->build_rest_coupon_payload_from_cart( WC()->cart, $coupon_apply['coupon_errors'] );
-			$bundle_lines_rest = Coupon_Rules::compute_bundle_fee_lines(
-				Coupon_Rules::total_booking_ticket_qty_in_cart( WC()->cart ),
-				'pos',
-				WC()->cart
-			);
 			$coupon_extra = array_merge(
 				$coupon_extra,
-				self::build_bundle_discount_rest_payload( $bundle_lines_rest )
+				self::build_bundle_discount_rest_payload(
+					isset( $coupon_apply['bundle_lines'] ) && is_array( $coupon_apply['bundle_lines'] )
+						? $coupon_apply['bundle_lines']
+						: array()
+				)
 			);
 
 			$cart       = WC()->cart;
