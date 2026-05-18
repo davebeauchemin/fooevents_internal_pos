@@ -6,6 +6,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { AuthProvider } from '@/context/AuthContext';
 import { CartProvider } from '@/context/CartContext';
+import { CheckoutDraftProvider } from '@/context/CheckoutDraftContext';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import './styles.css';
@@ -107,8 +108,10 @@ if ( root ) {
 						<BrowserRouter basename={ getBasename() } future={ routerFuture }>
 							<AuthProvider>
 								<CartProvider>
-									<App />
-									<Toaster />
+									<CheckoutDraftProvider>
+										<App />
+										<Toaster />
+									</CheckoutDraftProvider>
 								</CartProvider>
 							</AuthProvider>
 						</BrowserRouter>

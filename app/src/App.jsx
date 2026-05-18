@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AppSidebar } from '@/components/app-sidebar';
 import {
 	Breadcrumb,
@@ -18,6 +18,7 @@ import {
 import { RequireManageEventsRoute, RequireValidateTicketsRoute, useAuth } from '@/context/AuthContext';
 import Dashboard from './pages/Dashboard';
 import Checkout from './pages/Checkout';
+import CheckoutGuestInfo from './pages/CheckoutGuestInfo';
 import EventDetail from './pages/EventDetail';
 import EventList from './pages/EventList.jsx';
 import Schedule from './pages/Schedule';
@@ -29,6 +30,9 @@ function breadcrumbPageLabel( pathname ) {
 	}
 	if ( pathname === '/' || pathname === '/calendar' ) {
 		return 'Calendar';
+	}
+	if ( pathname === '/checkout/guest-info' ) {
+		return 'Guest info';
 	}
 	if ( pathname === '/checkout' ) {
 		return 'Checkout';
@@ -42,11 +46,51 @@ function breadcrumbPageLabel( pathname ) {
 	return 'Internal POS';
 }
 
-function App() {
+function MainSidebarLayout() {
 	const { pathname } = useLocation();
 	const { site, canUsePos, canValidateTickets } = useAuth();
 	const parentLabel = site?.name?.trim() || 'Internal POS';
 	const parentHref = ! canUsePos && canValidateTickets ? '/validate' : '/calendar';
+
+	return (
+		<SidebarProvider>
+			<AppSidebar />
+			<SidebarInset>
+				<header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/80 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 backdrop-blur">
+					<div className="flex items-center gap-2 px-4 sm:px-6">
+						<SidebarTrigger className="-ml-1" />
+						<Separator
+							orientation="vertical"
+							className="mr-2 data-[orientation=vertical]:h-4"
+						/>
+						<Breadcrumb>
+							<BreadcrumbList>
+								<BreadcrumbItem className="hidden md:block">
+									<BreadcrumbLink asChild>
+										<Link to={ parentHref }>{ parentLabel }</Link>
+									</BreadcrumbLink>
+								</BreadcrumbItem>
+								<BreadcrumbSeparator className="hidden md:block" />
+								<BreadcrumbItem>
+									<BreadcrumbPage>
+										{ breadcrumbPageLabel( pathname ) }
+									</BreadcrumbPage>
+								</BreadcrumbItem>
+							</BreadcrumbList>
+						</Breadcrumb>
+					</div>
+				</header>
+				<div className="mx-auto w-full max-w-7xl flex-1 px-4 pb-12 pt-6 sm:px-6">
+					<Outlet />
+				</div>
+			</SidebarInset>
+		</SidebarProvider>
+	);
+}
+
+export default function App() {
+	const { pathname } = useLocation();
+	const { canUsePos, canValidateTickets } = useAuth();
 	const validatorOnly = canValidateTickets && ! canUsePos;
 
 	useEffect( () => {
@@ -60,88 +104,64 @@ function App() {
 		} );
 	}, [ pathname ] );
 
-	if ( validatorOnly && ( pathname === '/' || pathname === '/calendar' || pathname === '/checkout' ) ) {
+	if (
+		validatorOnly
+		&& ( pathname === '/'
+			|| pathname === '/calendar'
+			|| pathname === '/checkout'
+			|| pathname === '/checkout/guest-info' )
+	) {
 		return <Navigate to="/validate" replace />;
 	}
 
 	return (
 		<div className="fooevents-internal-pos-app">
-			<SidebarProvider>
-				<AppSidebar />
-				<SidebarInset>
-					<header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background/80 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 backdrop-blur">
-						<div className="flex items-center gap-2 px-4 sm:px-6">
-							<SidebarTrigger className="-ml-1" />
-							<Separator
-								orientation="vertical"
-								className="mr-2 data-[orientation=vertical]:h-4"
-							/>
-							<Breadcrumb>
-								<BreadcrumbList>
-									<BreadcrumbItem className="hidden md:block">
-										<BreadcrumbLink asChild>
-											<Link to={ parentHref }>{ parentLabel }</Link>
-										</BreadcrumbLink>
-									</BreadcrumbItem>
-									<BreadcrumbSeparator className="hidden md:block" />
-									<BreadcrumbItem>
-										<BreadcrumbPage>
-											{ breadcrumbPageLabel( pathname ) }
-										</BreadcrumbPage>
-									</BreadcrumbItem>
-								</BreadcrumbList>
-							</Breadcrumb>
-						</div>
-					</header>
-					<div className="mx-auto w-full max-w-7xl flex-1 px-4 pb-12 pt-6 sm:px-6">
-						<Routes>
-							<Route path="/" element={ <Dashboard /> } />
-							<Route path="/calendar" element={ <Dashboard /> } />
-							<Route path="/checkout" element={ <Checkout /> } />
-							<Route
-								path="/events"
-								element={ (
-									<RequireManageEventsRoute>
-										<EventList />
-									</RequireManageEventsRoute>
-								) }
-							/>
-							<Route
-								path="/event/:id/manage"
-								element={ (
-									<RequireManageEventsRoute>
-										<Schedule />
-									</RequireManageEventsRoute>
-								) }
-							/>
-							<Route
-								path="/event/:id"
-								element={ (
-									<RequireManageEventsRoute>
-										<EventDetail />
-									</RequireManageEventsRoute>
-								) }
-							/>
-							<Route
-								path="/validate"
-								element={ (
-									<RequireValidateTicketsRoute>
-										<Validate />
-									</RequireValidateTicketsRoute>
-								) }
-							/>
-							<Route
-								path="*"
-								element={ (
-									<Navigate to={ canUsePos ? '/' : '/validate' } replace />
-								) }
-							/>
-						</Routes>
-					</div>
-				</SidebarInset>
-			</SidebarProvider>
+			<Routes>
+				<Route path="/checkout/guest-info" element={ <CheckoutGuestInfo /> } />
+				<Route element={ <MainSidebarLayout /> }>
+					<Route path="/" element={ <Dashboard /> } />
+					<Route path="/calendar" element={ <Dashboard /> } />
+					<Route path="/checkout" element={ <Checkout /> } />
+					<Route
+						path="/events"
+						element={ (
+							<RequireManageEventsRoute>
+								<EventList />
+							</RequireManageEventsRoute>
+						) }
+					/>
+					<Route
+						path="/event/:id/manage"
+						element={ (
+							<RequireManageEventsRoute>
+								<Schedule />
+							</RequireManageEventsRoute>
+						) }
+					/>
+					<Route
+						path="/event/:id"
+						element={ (
+							<RequireManageEventsRoute>
+								<EventDetail />
+							</RequireManageEventsRoute>
+						) }
+					/>
+					<Route
+						path="/validate"
+						element={ (
+							<RequireValidateTicketsRoute>
+								<Validate />
+							</RequireValidateTicketsRoute>
+						) }
+					/>
+					<Route
+						path="*"
+						element={ (
+							<Navigate to={ canUsePos ? '/' : '/validate' } replace />
+						) }
+					/>
+				</Route>
+			</Routes>
 		</div>
 	);
 }
-
-export default App;

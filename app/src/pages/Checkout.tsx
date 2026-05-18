@@ -1,10 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { useCheckoutPreview, useCreateBooking, usePaymentMethods, usePosVisibleCoupons } from '../api/queries.js';
 import { CartLineRow } from '@/components/Cart';
 import { cartLineKey, useCart } from '@/context/CartContext';
+import { useCheckoutDraft } from '@/context/CheckoutDraftContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -157,48 +158,18 @@ export default function Checkout() {
 	const navigate = useNavigate();
 	const formId = useId();
 	const { items, clearCart, updateQty, removeLine } = useCart();
+	const {
+		first,
+		last,
+		email,
+		postalCode,
+		setFirst,
+		setLast,
+		setEmail,
+		setPostalCode,
+		resetAttendeeDraft,
+	} = useCheckoutDraft();
 	const [ clearOrderDialogOpen, setClearOrderDialogOpen ] = useState( false );
-	const [ guestInfoDialogOpen, setGuestInfoDialogOpen ] = useState( false );
-	const [ guestCloseConfirmOpen, setGuestCloseConfirmOpen ] = useState( false );
-	const bypassGuestDismissConfirmRef = useRef( false );
-
-	const guestDialogPanelSelectors =
-		'[&_[data-slot=dialog-content-panel]]:mx-0 [&_[data-slot=dialog-content-panel]]:h-full [&_[data-slot=dialog-content-panel]]:min-h-[100dvh] [&_[data-slot=dialog-content-panel]]:max-h-none [&_[data-slot=dialog-content-panel]]:max-w-none [&_[data-slot=dialog-content-panel]]:rounded-none';
-
-	const closeGuestDialogWithoutDismissPrompt = () => {
-		bypassGuestDismissConfirmRef.current = true;
-		setGuestInfoDialogOpen( false );
-	};
-
-	const handleGuestDialogOpenChange = ( open: boolean ) => {
-		if ( open ) {
-			setGuestInfoDialogOpen( true );
-			return;
-		}
-		if ( bypassGuestDismissConfirmRef.current ) {
-			bypassGuestDismissConfirmRef.current = false;
-			setGuestInfoDialogOpen( false );
-			return;
-		}
-		setGuestCloseConfirmOpen( true );
-	};
-
-	const requestGuestCloseConfirm = () => {
-		setGuestCloseConfirmOpen( true );
-	};
-
-	const dismissGuestCloseConfirmKeepEditing = () => {
-		setGuestCloseConfirmOpen( false );
-	};
-
-	const confirmDismissGuestDialog = () => {
-		setGuestCloseConfirmOpen( false );
-		closeGuestDialogWithoutDismissPrompt();
-	};
-
-	const finishGuestInformation = () => {
-		closeGuestDialogWithoutDismissPrompt();
-	};
 
 	const previewLines = useMemo(
 		() =>
@@ -221,8 +192,6 @@ export default function Checkout() {
 			),
 		[ couponInput, quickApplyCouponCodes ],
 	);
-	const [ email, setEmail ] = useState( '' );
-
 	const {
 		data: previewRaw,
 		isLoading: previewLoading,
@@ -272,9 +241,6 @@ export default function Checkout() {
 
 	const mutation = useCreateBooking();
 	const { data: paymentMethods, isLoading: paymentMethodsLoading } = usePaymentMethods();
-	const [ first, setFirst ] = useState( '' );
-	const [ last, setLast ] = useState( '' );
-	const [ postalCode, setPostalCode ] = useState( '' );
 	const [ paymentMethodKey, setPaymentMethodKey ] = useState( '' );
 	const [ checkInNow, setCheckInNow ] = useState( false );
 
@@ -347,10 +313,7 @@ export default function Checkout() {
 				toast.success( `Next-purchase coupon: ${ npc.code }${ amtPart }`, { duration: 12_000 } );
 			}
 			clearCart();
-			setFirst( '' );
-			setLast( '' );
-			setEmail( '' );
-			setPostalCode( '' );
+			resetAttendeeDraft();
 			setCouponInput( '' );
 			setQuickApplyCouponCodes( [] );
 			setCheckInNow( false );
@@ -466,7 +429,7 @@ export default function Checkout() {
 											type="button"
 											variant="outline"
 											size="sm"
-											onClick={ () => setGuestInfoDialogOpen( true ) }
+											onClick={ () => navigate( '/checkout/guest-info' ) }
 											disabled={ mutation.isPending }
 										>
 											Let guest enter info
@@ -900,143 +863,6 @@ export default function Checkout() {
 							</CardContent>
 						</Card>
 					</form>
-
-					<Dialog open={ guestInfoDialogOpen } onOpenChange={ handleGuestDialogOpenChange }>
-						<DialogContent
-							showCloseButton={ false }
-							className={ cn(
-								'gap-0 p-0 max-h-none max-w-none [&_[data-slot=dialog-content-panel]]:gap-0',
-								'items-stretch justify-stretch',
-								'[&_[data-slot=dialog-content-panel]]:!flex [&_[data-slot=dialog-content-panel]]:flex-col',
-								guestDialogPanelSelectors,
-							) }
-						>
-							<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-6 sm:px-8">
-								<DialogHeader className="text-left">
-									<DialogTitle className="text-xl">Enter your information</DialogTitle>
-									<DialogDescription className="text-base">
-										Provide the details shown below. Payment and totals are handled on the staff
-										checkout screen.
-									</DialogDescription>
-								</DialogHeader>
-								<div className="mx-auto grid w-full max-w-md gap-4 sm:max-w-lg">
-									<div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
-										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-guest-first` }>
-												First name{' '}
-												<span className="text-muted-foreground font-normal">(optional)</span>
-											</Label>
-											<Input
-												id={ `${ formId }-guest-first` }
-												value={ first }
-												onChange={ ( e ) => setFirst( e.target.value ) }
-												maxLength={ 100 }
-												autoComplete="given-name"
-												disabled={ mutation.isPending }
-											/>
-										</div>
-										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-guest-last` }>
-												Last name{' '}
-												<span className="text-muted-foreground font-normal">(optional)</span>
-											</Label>
-											<Input
-												id={ `${ formId }-guest-last` }
-												value={ last }
-												onChange={ ( e ) => setLast( e.target.value ) }
-												maxLength={ 100 }
-												autoComplete="family-name"
-												disabled={ mutation.isPending }
-											/>
-										</div>
-										<div className="grid gap-2 sm:col-span-2">
-											<Label htmlFor={ `${ formId }-guest-email` }>Email</Label>
-											<Input
-												id={ `${ formId }-guest-email` }
-												type="email"
-												value={ email }
-												onChange={ ( e ) => setEmail( e.target.value ) }
-												required
-												autoComplete="email"
-												disabled={ mutation.isPending }
-											/>
-										</div>
-										<div className="grid gap-2 sm:col-span-2">
-											<Label htmlFor={ `${ formId }-guest-postal` }>Postal code</Label>
-											<Input
-												id={ `${ formId }-guest-postal` }
-												type="text"
-												value={ postalCode }
-												onChange={ ( e ) => setPostalCode( e.target.value ) }
-												required
-												maxLength={ 50 }
-												autoComplete="postal-code"
-												inputMode="text"
-												placeholder="Customer postal / ZIP code"
-												disabled={ mutation.isPending }
-											/>
-										</div>
-									</div>
-								</div>
-							</div>
-							<div className="bg-popover shrink-0 border-border border-t px-5 py-4 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)] dark:shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.45)]">
-								<div className="mx-auto flex w-full max-w-md flex-wrap items-center gap-3 sm:max-w-lg sm:flex-nowrap sm:justify-between">
-									<Button
-										type="button"
-										variant="outline"
-										className="w-full sm:w-auto"
-										disabled={ mutation.isPending }
-										onClick={ requestGuestCloseConfirm }
-									>
-										Back
-									</Button>
-									<Button
-										type="button"
-										className="w-full sm:ml-auto sm:w-auto sm:max-w-none"
-										disabled={ mutation.isPending }
-										onClick={ finishGuestInformation }
-									>
-										Save information
-									</Button>
-								</div>
-							</div>
-						</DialogContent>
-					</Dialog>
-
-					<Dialog
-						open={ guestCloseConfirmOpen }
-						onOpenChange={ setGuestCloseConfirmOpen }
-					>
-						<DialogContent showCloseButton={ false } className="max-w-md">
-							<DialogHeader>
-								<DialogTitle>Close guest information?</DialogTitle>
-								<DialogDescription>
-									You haven&apos;t finished saving yet. Closing returns to checkout with your current
-									entries retained.
-								</DialogDescription>
-							</DialogHeader>
-							<div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									disabled={ mutation.isPending }
-									onClick={ dismissGuestCloseConfirmKeepEditing }
-									className="w-full sm:w-auto"
-								>
-									Keep entering info
-								</Button>
-								<Button
-									type="button"
-									variant="default"
-									disabled={ mutation.isPending }
-									onClick={ confirmDismissGuestDialog }
-									className="w-full sm:w-auto"
-								>
-									I confirm I want to close the dialog
-								</Button>
-							</div>
-						</DialogContent>
-					</Dialog>
 
 					<Dialog open={ clearOrderDialogOpen } onOpenChange={ setClearOrderDialogOpen }>
 						<DialogContent showCloseButton={ false }>

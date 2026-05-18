@@ -40,7 +40,7 @@ export function AppSidebar( { ...props }: React.ComponentProps<typeof Sidebar> )
   }, [ pathname, isMobile, setOpenMobile, setOpen ] )
 
   const calendarNavActive = pathname === "/" || pathname === "/calendar"
-  const checkoutActive = pathname === "/checkout"
+  const checkoutActive = pathname === "/checkout" || pathname === "/checkout/guest-info"
   const validateActive = pathname === "/validate"
   const manageEventsActive =
     pathname === "/events" || pathname.startsWith( "/event/" )
