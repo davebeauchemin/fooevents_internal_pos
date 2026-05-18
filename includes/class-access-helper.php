@@ -172,6 +172,7 @@ final class Access_Helper {
 			$out['showWpBackendMenu'] = $show_wp_backend_menu;
 			if ( $show_wp_backend_menu ) {
 				$out['backendUrls'] = array(
+					'orders'   => admin_url( 'admin.php?page=wc-orders' ),
 					'products' => admin_url( 'edit.php?post_type=product' ),
 					'coupons'  => admin_url( 'edit.php?post_type=shop_coupon' ),
 					'admin'    => admin_url(),

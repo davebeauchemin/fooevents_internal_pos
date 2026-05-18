@@ -22,6 +22,7 @@ import { useAuth } from "@/context/AuthContext"
 import {
   BadgeCheckIcon,
   BadgePercentIcon,
+  ClipboardListIcon,
   ChevronsUpDownIcon,
   LayoutDashboardIcon,
   LogOutIcon,
@@ -52,7 +53,11 @@ export function NavUser({
   const { logoutUrl, profileUrl, showWpBackendMenu, backendUrls } = useAuth()
   const initials = initialsFromName( user.name )
   const showShopBackendLinks = Boolean(
-    showWpBackendMenu && backendUrls?.products && backendUrls?.coupons && backendUrls?.admin
+    showWpBackendMenu &&
+      backendUrls?.orders &&
+      backendUrls?.products &&
+      backendUrls?.coupons &&
+      backendUrls?.admin
   )
 
   return (
@@ -110,6 +115,14 @@ export function NavUser({
                   Account
                 </DropdownMenuItem>
               ) }
+              { showShopBackendLinks && backendUrls ? (
+                <DropdownMenuItem asChild>
+                  <a href={backendUrls.orders}>
+                    <ClipboardListIcon />
+                    Manage Order
+                  </a>
+                </DropdownMenuItem>
+              ) : null }
             </DropdownMenuGroup>
             { showShopBackendLinks && backendUrls ? (
               <>

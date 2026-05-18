@@ -13,6 +13,7 @@ export type POSBootstrapUser = {
 };
 
 export type POSBackendUrls = {
+	orders: string;
 	products: string;
 	coupons: string;
 	admin: string;
@@ -42,13 +43,14 @@ function parseBackendUrls( raw: unknown ): POSBackendUrls | undefined {
 		return undefined;
 	}
 	const o = raw as Record< string, unknown >;
+	const orders = String( o.orders ?? '' ).trim();
 	const products = String( o.products ?? '' ).trim();
 	const coupons = String( o.coupons ?? '' ).trim();
 	const admin = String( o.admin ?? '' ).trim();
-	if ( products === '' || coupons === '' || admin === '' ) {
+	if ( orders === '' || products === '' || coupons === '' || admin === '' ) {
 		return undefined;
 	}
-	return { products, coupons, admin };
+	return { orders, products, coupons, admin };
 }
 
 /** Vite dev when WordPress does not inject bootstrap — full UI for local dev. */
