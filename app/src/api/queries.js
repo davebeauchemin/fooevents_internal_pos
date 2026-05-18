@@ -325,6 +325,22 @@ export function useRemoveSlotStock( eventId ) {
 }
 
 /**
+ * Lower capacity on one slot–date cell (same endpoint as {@link useRemoveSlotStock}).
+ * Use for bulk flows that call {@link invalidateInternalPosAfterSlotWrites} once at the end.
+ *
+ * @param {number|string|undefined} eventId
+ * @param {{ slotId: string, dateId: string, date: string, removeSpots: number }} body
+ * @returns {Promise<unknown>}
+ */
+export async function subtractSlotStockViaRest( eventId, body ) {
+	return restFetch( `${ prefix }/events/${ eventId }/slots/stock`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify( body ),
+	} );
+}
+
+/**
  * Remove one slot–date row by internal ids (blocked if tickets exist server-side).
  * Pass `ymd` (Y-m-d calendar day) when the UI has it so dateslot rows resolve to raw meta reliably.
  *

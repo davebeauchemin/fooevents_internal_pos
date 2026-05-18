@@ -9,6 +9,13 @@ export type SlotLike = {
 	time?: string;
 	stock: number | null;
 	dateId?: string;
+	/** Active tickets consuming capacity (FooEvents — Not Checked In / Checked In). */
+	bookedCount?: number;
+	/**
+	 * Precomputed `stock + bookedCount` for finite-capacity cells; `null` when unlimited.
+	 * Optional — clients may compute from `stock` + `bookedCount`.
+	 */
+	totalCapacity?: number | null;
 };
 
 /** Clock time to 24h HH:MM (handles optional seconds as from <input type="time"> or APIs). */
@@ -458,4 +465,39 @@ export function hourRemainingSpotsLabel( slots: Pick<SlotLike, 'stock' >[] ) {
 	}
 	const total = slots.reduce( ( a, s ) => a + ( s.stock as number ), 0 );
 	return `${ total } left`;
+}
+
+export type TargetTotalRemovalPlan = {
+	removeSpots: number;
+	bookedOverTarget: boolean;
+	currentTotal: number;
+	desiredRemaining: number;
+};
+
+/**
+ * Plan how many spots to remove from remaining stock to reach a target **total** capacity
+ * (`booked + remaining`), without altering sold tickets.
+ *
+ * @returns `null` when `currentTotal <= targetTotal` (nothing to do).
+ */
+export function planTargetTotalCapacityRemoval(
+	remainingStock: number,
+	bookedCount: number,
+	targetTotal: number,
+): TargetTotalRemovalPlan | null {
+	const rem = Math.max( 0, Math.floor( remainingStock ) );
+	const booked = Math.max( 0, Math.floor( bookedCount ) );
+	const tt = Math.floor( targetTotal );
+	const currentTotal = rem + booked;
+	if ( currentTotal <= tt ) {
+		return null;
+	}
+	const desiredRemaining = Math.max( 0, tt - booked );
+	const removeSpots = rem - desiredRemaining;
+	return {
+		removeSpots: Math.max( 0, removeSpots ),
+		bookedOverTarget: booked > tt,
+		currentTotal,
+		desiredRemaining,
+	};
 }

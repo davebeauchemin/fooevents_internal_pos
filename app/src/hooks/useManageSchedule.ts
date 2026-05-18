@@ -9,6 +9,7 @@ import {
 	useEvent,
 	useGenerateSlots,
 	invalidateInternalPosAfterSlotWrites,
+	subtractSlotStockViaRest,
 } from '@/api/queries.js';
 import { restFetch } from '@/api/client.js';
 import {
@@ -19,6 +20,7 @@ import {
 	normalizeTimeInputToHhmm,
 	slotMatchesBulkRemoveTimeOnly,
 	type SlotLike,
+	planTargetTotalCapacityRemoval,
 } from '@/lib/slotHourGrouping';
 import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
 
@@ -49,6 +51,33 @@ export type BulkRemoveTarget = {
 	dateId: string;
 	ymd: string;
 };
+
+/** One slot–date cell with per-cell stock reduction for bulk reduce. */
+export type BulkReduceStockTarget = {
+	slotId: string;
+	dateId: string;
+	ymd: string;
+	currentStock: number;
+	removeSpots: number;
+	bookedCount?: number;
+	currentTotal?: number;
+	bookedOverTarget?: boolean;
+	targetTotalCapacity?: number;
+};
+
+export type BulkReduceStockPreview = {
+	targets: BulkReduceStockTarget[];
+	skippedUnlimited: number;
+	skippedZero: number;
+	skippedAtOrBelowTarget: number;
+	skippedMissingBookedData: number;
+	bookedOverTargetSessions: number;
+	totalSpotsRemoved: number;
+};
+
+export type BulkReduceComputationMode =
+	| { kind: 'fixedRemove'; requestedRemovePerCell: number }
+	| { kind: 'targetTotal'; targetTotal: number };
 
 function newId() {
 	return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -433,6 +462,8 @@ function buildEventDaySlotsLookup(
 				time: ( s as SlotLike )?.time,
 				stock: ( s as SlotLike )?.stock ?? null,
 				dateId: ( s as SlotLike )?.dateId,
+				bookedCount: ( s as SlotLike )?.bookedCount,
+				totalCapacity: ( s as SlotLike )?.totalCapacity,
 			} ) )
 			: [];
 		out.set( y, slots );
@@ -501,6 +532,175 @@ function computeBulkRemoveTargets(
 		}
 	}
 	return out;
+}
+
+/**
+ * Same pattern matching as {@link computeBulkRemoveTargets}, but only finite-capacity cells;
+ * each target's `removeSpots` is capped by mode (fixed amount vs target total capacity).
+ */
+function computeBulkReduceStockTargets(
+	eventDatesUnknown: unknown,
+	blocks: ScheduleBlock[],
+	sessionM: number,
+	fillFrom: string,
+	fillTo: string,
+	computation: BulkReduceComputationMode,
+): BulkReduceStockPreview {
+	const empty: BulkReduceStockPreview = {
+		targets: [],
+		skippedUnlimited: 0,
+		skippedZero: 0,
+		skippedAtOrBelowTarget: 0,
+		skippedMissingBookedData: 0,
+		bookedOverTargetSessions: 0,
+		totalSpotsRemoved: 0,
+	};
+
+	if ( computation.kind === 'fixedRemove' ) {
+		const req = Math.floor( computation.requestedRemovePerCell );
+		if ( req < 1 ) {
+			return empty;
+		}
+	} else {
+		const tt = Math.floor( computation.targetTotal );
+		if ( ! Number.isFinite( tt ) || tt < 0 ) {
+			return empty;
+		}
+	}
+
+	const ff = fillFrom.trim();
+	const ft = fillTo.trim();
+	const dayMap = buildEventDaySlotsLookup( eventDatesUnknown );
+	const dedupe = new Set<string>();
+	const out: BulkReduceStockTarget[] = [];
+	let skippedUnlimited = 0;
+	let skippedZero = 0;
+	let skippedAtOrBelowTarget = 0;
+	let skippedMissingBookedData = 0;
+	let bookedOverTargetSessions = 0;
+
+	for ( const b of blocks ) {
+		const openM = parseHHMM( b.openTime );
+		const closeM = parseHHMM( b.closeTime );
+		if ( openM === null || closeM === null || openM + sessionM > closeM ) {
+			continue;
+		}
+		const rawEffStart = ymdMin( b.startDate, ff );
+		const rawEffEnd = ymdMax( b.endDate, ft );
+		const enumerStart = rawEffStart;
+		const enumerEnd = rawEffEnd;
+		if ( enumerStart > enumerEnd ) {
+			continue;
+		}
+		const dates = listDates( enumerStart, enumerEnd, b.weekdays );
+		const starts = sessionStarts( openM, closeM, sessionM );
+		for ( const st of starts ) {
+			const timeKey = toHHMM( st );
+			for ( const ymd of dates ) {
+				if ( ymd < ff || ymd > ft ) {
+					continue;
+				}
+				const slots = dayMap.get( ymd );
+				if ( ! slots?.length ) {
+					continue;
+				}
+				for ( const slot of slots ) {
+					const sid = String( slot.id ?? '' ).trim();
+					const did = String( slot.dateId ?? '' ).trim();
+					if ( ! sid || ! did ) {
+						continue;
+					}
+					if ( ! slotMatchesBulkRemoveTimeOnly( slot, timeKey ) ) {
+						continue;
+					}
+					const k = encodeManualSlotDateRef( { id: sid, dateId: did } );
+					if ( dedupe.has( k ) ) {
+						continue;
+					}
+					dedupe.add( k );
+
+					const stRaw = slot.stock;
+					if ( stRaw === null || stRaw === undefined ) {
+						skippedUnlimited += 1;
+						continue;
+					}
+					if ( typeof stRaw !== 'number' || stRaw < 0 ) {
+						skippedZero += 1;
+						continue;
+					}
+
+					const bookedDisp =
+						typeof slot.bookedCount === 'number' && Number.isFinite( slot.bookedCount )
+							? Math.max( 0, Math.floor( slot.bookedCount ) )
+							: 0;
+
+					if ( computation.kind === 'fixedRemove' ) {
+						if ( stRaw <= 0 ) {
+							skippedZero += 1;
+							continue;
+						}
+						const req = Math.floor( computation.requestedRemovePerCell );
+						const removeSpots = Math.min( req, stRaw );
+						if ( removeSpots < 1 ) {
+							continue;
+						}
+						out.push( {
+							slotId: sid,
+							dateId: did,
+							ymd,
+							currentStock: stRaw,
+							removeSpots,
+							bookedCount: bookedDisp,
+							currentTotal: stRaw + bookedDisp,
+						} );
+						continue;
+					}
+
+					const targetTotal = Math.floor( computation.targetTotal );
+					const bookedRaw = slot.bookedCount;
+					if ( typeof bookedRaw !== 'number' || ! Number.isFinite( bookedRaw ) ) {
+						skippedMissingBookedData += 1;
+						continue;
+					}
+					const booked = Math.max( 0, Math.floor( bookedRaw ) );
+
+					const plan = planTargetTotalCapacityRemoval( stRaw, booked, targetTotal );
+					if ( plan === null ) {
+						skippedAtOrBelowTarget += 1;
+						continue;
+					}
+					if ( plan.bookedOverTarget && plan.removeSpots < 1 ) {
+						bookedOverTargetSessions += 1;
+					}
+					if ( plan.removeSpots < 1 ) {
+						continue;
+					}
+					out.push( {
+						slotId: sid,
+						dateId: did,
+						ymd,
+						currentStock: stRaw,
+						removeSpots: plan.removeSpots,
+						bookedCount: booked,
+						currentTotal: plan.currentTotal,
+						bookedOverTarget: plan.bookedOverTarget,
+						targetTotalCapacity: targetTotal,
+					} );
+				}
+			}
+		}
+	}
+
+	const totalSpotsRemoved = out.reduce( ( acc, t ) => acc + t.removeSpots, 0 );
+	return {
+		targets: out,
+		skippedUnlimited,
+		skippedZero,
+		skippedAtOrBelowTarget,
+		skippedMissingBookedData,
+		bookedOverTargetSessions,
+		totalSpotsRemoved,
+	};
 }
 
 async function deleteSlotDateViaRest(
@@ -590,6 +790,16 @@ export function useManageSchedule(
 		BulkRemoveTarget[]
 	>( [] );
 	const [ bulkRemoving, setBulkRemoving ] = useState( false );
+	const [ bulkReduceSpotsPerCell, setBulkReduceSpotsPerCell ] = useState( 1 );
+	const [ bulkReduceSubMode, setBulkReduceSubMode ] = useState<
+		'fixedRemove' | 'targetTotal'
+	>( 'fixedRemove' );
+	const [ bulkTargetTotalCapacity, setBulkTargetTotalCapacity ] = useState( 8 );
+	const [ bulkReduceConfirmOpen, setBulkReduceConfirmOpen ] = useState( false );
+	const [ bulkReduceRunList, setBulkReduceRunList ] = useState<
+		BulkReduceStockTarget[]
+	>( [] );
+	const [ bulkReducingStock, setBulkReducingStock ] = useState( false );
 	const [ blocks, setBlocks ] = useState< ScheduleBlock[] >( [ emptyBlock( 0 ) ] );
 	const [ sessionMinutes, setSessionMinutes ] = useState( 10 );
 	const [ capacity, setCapacity ] = useState( 12 );
@@ -756,6 +966,50 @@ export function useManageSchedule(
 		bulkRemoveEnvelope,
 	] );
 
+	const bulkReduceComputation = useMemo( (): BulkReduceComputationMode => {
+		if ( bulkReduceSubMode === 'targetTotal' ) {
+			return {
+				kind: 'targetTotal',
+				targetTotal: Math.floor( bulkTargetTotalCapacity ),
+			};
+		}
+		return {
+			kind: 'fixedRemove',
+			requestedRemovePerCell: bulkReduceSpotsPerCell,
+		};
+	}, [ bulkReduceSubMode, bulkReduceSpotsPerCell, bulkTargetTotalCapacity ] );
+
+	const bulkReduceStockPreview = useMemo( () => {
+		if ( bulkRemoveEnvelope.invalid ) {
+			return {
+				targets: [] as BulkReduceStockTarget[],
+				skippedUnlimited: 0,
+				skippedZero: 0,
+				skippedAtOrBelowTarget: 0,
+				skippedMissingBookedData: 0,
+				bookedOverTargetSessions: 0,
+				totalSpotsRemoved: 0,
+			};
+		}
+		const datesForBulkReduce =
+			eventDetailWithPast?.dates ?? eventData?.dates;
+		return computeBulkReduceStockTargets(
+			datesForBulkReduce,
+			blocks,
+			sessionMinutes,
+			bulkRemoveEnvelope.removeFrom,
+			bulkRemoveEnvelope.removeTo,
+			bulkReduceComputation,
+		);
+	}, [
+		eventDetailWithPast?.dates,
+		eventData?.dates,
+		blocks,
+		sessionMinutes,
+		bulkRemoveEnvelope,
+		bulkReduceComputation,
+	] );
+
 	useEffect( () => {
 		if ( manualAddMode !== 'extraSpots' ) {
 			return;
@@ -787,7 +1041,10 @@ export function useManageSchedule(
 	}, [ spotsEligibleSchedule, manualSpotSelectValue ] );
 
 	const scheduleManualBusy =
-		addManual.isPending || addStock.isPending || bulkRemoving;
+		addManual.isPending
+		|| addStock.isPending
+		|| bulkRemoving
+		|| bulkReducingStock;
 
 	const manualDuplicateMessage =
 		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
@@ -991,6 +1248,88 @@ export function useManageSchedule(
 		}
 	}, [ bulkRemoveRunList, eventId, queryClient ] );
 
+	const requestBulkReduceStockConfirm = useCallback( () => {
+		if ( bulkRemoveEnvelope.invalid ) {
+			toast.error(
+				'Fix every block’s start and end dates (Y-m-d), with start on or before end, before reducing spots.',
+			);
+			return;
+		}
+		if ( bulkReduceSubMode === 'fixedRemove' && bulkReduceSpotsPerCell < 1 ) {
+			toast.error( 'Remove at least 1 spot per session.' );
+			return;
+		}
+		const tt = Math.floor( bulkTargetTotalCapacity );
+		if (
+			bulkReduceSubMode === 'targetTotal'
+			&& ( ! Number.isFinite( tt ) || tt < 0 )
+		) {
+			toast.error( 'Target total capacity must be zero or greater.' );
+			return;
+		}
+		if ( bulkReduceStockPreview.targets.length === 0 ) {
+			toast.message(
+				bulkReduceSubMode === 'targetTotal'
+					? 'No sessions need changes for this target total (unlimited, missing booked counts, already at/below target, or zero removal).'
+					: 'No finite-capacity sessions to reduce for this pattern. Unlimited or empty sessions are skipped.',
+			);
+			return;
+		}
+		setBulkReduceRunList( bulkReduceStockPreview.targets );
+		setBulkReduceConfirmOpen( true );
+	}, [
+		bulkRemoveEnvelope.invalid,
+		bulkReduceSpotsPerCell,
+		bulkReduceStockPreview.targets,
+		bulkReduceSubMode,
+		bulkTargetTotalCapacity,
+	] );
+
+	const runBulkReduceStock = useCallback( async () => {
+		const targets = bulkReduceRunList;
+		if ( targets.length === 0 ) {
+			return;
+		}
+		let applied = 0;
+		let failed = 0;
+		setBulkReducingStock( true );
+		try {
+			for ( const t of targets ) {
+				if ( t.removeSpots < 1 ) {
+					continue;
+				}
+				try {
+					await subtractSlotStockViaRest( eventId, {
+						slotId: t.slotId,
+						dateId: t.dateId,
+						date: t.ymd,
+						removeSpots: t.removeSpots,
+					} );
+					applied += 1;
+				} catch {
+					failed += 1;
+				}
+			}
+			await invalidateInternalPosAfterSlotWrites( queryClient, eventId );
+			setBulkReduceConfirmOpen( false );
+			const failPart =
+				failed > 0
+					? ` ${ failed } failed (capacity may have changed).`
+					: '';
+			setMutationSuccessAck( {
+				title: 'Ticket spots reduced',
+				description:
+					`Reduced capacity on ${ applied } session${ applied === 1 ? '' : 's' } (${ targets.length } planned).${ failPart }`,
+			} );
+		} catch ( e ) {
+			toast.error(
+				String( ( e as Error )?.message || e || 'Request failed' ),
+			);
+		} finally {
+			setBulkReducingStock( false );
+		}
+	}, [ bulkReduceRunList, eventId, queryClient ] );
+
 	const runGenerate = useCallback( async () => {
 		setConfirmOpen( false );
 		try {
@@ -1130,6 +1469,19 @@ export function useManageSchedule(
 		bulkRemoveTargets,
 		bulkRemoveRunList,
 		bulkRemoving,
+		bulkReduceSpotsPerCell,
+		setBulkReduceSpotsPerCell,
+		bulkReduceSubMode,
+		setBulkReduceSubMode,
+		bulkTargetTotalCapacity,
+		setBulkTargetTotalCapacity,
+		bulkReduceStockPreview,
+		bulkReduceConfirmOpen,
+		setBulkReduceConfirmOpen,
+		bulkReduceRunList,
+		bulkReducingStock,
+		requestBulkReduceStockConfirm,
+		runBulkReduceStock,
 		slotsOnManualDate,
 		manualAddWouldDuplicate,
 		spotsEligibleSchedule,

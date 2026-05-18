@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CircleCheck, Plus, TriangleAlert } from 'lucide-react';
 import { encodeManualSlotDateRef } from '@/lib/slotHourGrouping';
 import type { ManageScheduleController } from '@/hooks/useManageSchedule';
@@ -69,6 +69,17 @@ export function ManagedEventScheduleDialogs( {
 		bulkRemoveConfirmOpen,
 		setBulkRemoveConfirmOpen,
 		bulkRemoving,
+		bulkReduceSpotsPerCell,
+		setBulkReduceSpotsPerCell,
+		bulkReduceSubMode,
+		setBulkReduceSubMode,
+		bulkTargetTotalCapacity,
+		setBulkTargetTotalCapacity,
+		bulkReduceStockPreview,
+		bulkReduceConfirmOpen,
+		setBulkReduceConfirmOpen,
+		bulkReduceRunList,
+		bulkReducingStock,
 		manualAddSpotsDelta,
 		setManualAddSpotsDelta,
 		manualStockConfirmOpen,
@@ -89,7 +100,9 @@ export function ManagedEventScheduleDialogs( {
 		submitManualSlot,
 		commitManualStockAdd,
 		requestBulkRemoveConfirm,
+		requestBulkReduceStockConfirm,
 		runBulkRemoveBlocks,
+		runBulkReduceStock,
 		runFillEmpty,
 		runGenerate,
 		gen,
@@ -118,13 +131,32 @@ export function ManagedEventScheduleDialogs( {
 	useEffect( () => {
 		if ( ! removeOpen ) {
 			setBulkRemoveConfirmOpen( false );
+			setBulkReduceConfirmOpen( false );
 		}
-	}, [ removeOpen, setBulkRemoveConfirmOpen ] );
+	}, [ removeOpen, setBulkRemoveConfirmOpen, setBulkReduceConfirmOpen ] );
+
+	const [ removeBulkMode, setRemoveBulkMode ] = useState<
+		'deleteCells' | 'reduceSpots'
+	>( 'deleteCells' );
+
+	useEffect( () => {
+		if ( removeOpen ) {
+			setRemoveBulkMode( 'deleteCells' );
+		}
+	}, [ removeOpen ] );
 
 	const matchedRemoveDayCount = useMemo(
 		() =>
 			new Set( bulkRemoveTargets.map( ( t ) => t.ymd.trim() ) ).size,
 		[ bulkRemoveTargets ],
+	);
+
+	const matchedReduceDayCount = useMemo(
+		() =>
+			new Set(
+				bulkReduceStockPreview.targets.map( ( t ) => t.ymd.trim() ),
+			).size,
+		[ bulkReduceStockPreview.targets ],
 	);
 
 	return (
@@ -319,32 +351,68 @@ export function ManagedEventScheduleDialogs( {
 				<DialogContent className="flex max-h-[90vh] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
 					<div className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-10 pt-6">
 						<DialogHeader className="shrink-0">
-							<DialogTitle>Remove time blocks</DialogTitle>
+							<DialogTitle>Bulk remove or reduce spots</DialogTitle>
 							<DialogDescription className="text-left leading-relaxed">
-								Use the same blocks, weekdays, open/close times, and session length as Manage schedule,
-								then bulk-remove matching slot–date cells that{ ' ' }
-								<strong className="text-foreground font-medium">already exist</strong> on this product —
-								including{ ' ' }
-								<strong className="text-foreground font-medium">historical days before today</strong>
-								{ ' ' }
-								on the site calendar (unlike Fill empty). The server skips cells that already have
-								bookings (409 <span className="font-mono">slot_has_bookings</span>
-								).
+								Use the same blocks, weekdays, open/close times, and session length as Manage schedule. Choose
+								whether to <strong className="text-foreground font-medium">delete entire sessions</strong> or{ ' ' }
+								<strong className="text-foreground font-medium">lower numeric capacity</strong> (sessions stay on
+								the calendar; unlimited slots are skipped). Patterns can include days before site today (unlike Fill
+								empty).
 							</DialogDescription>
 						</DialogHeader>
-						<div className="bg-destructive/[0.06] flex shrink-0 gap-3 rounded-lg border border-destructive/35 p-4 dark:bg-destructive/10">
-							<TriangleAlert
-								className="text-destructive mt-0.5 size-5 shrink-0"
-								aria-hidden
-							/>
-							<p className="text-muted-foreground text-sm leading-relaxed">
-								Removal matches{ ' ' }
-								<strong className="text-foreground font-medium">weekdays + session start times </strong>
-								stepped from Open/Close (same as Fill empty stepping). Stored FooEvents{ ' ' }
-								<strong className="text-foreground font-medium">labels are ignored </strong>
-								— all slot rows on a day whose resolved time aligns are candidates.
-							</p>
+						<div className="flex flex-wrap gap-2">
+							<Button
+								type="button"
+								size="sm"
+								variant={ removeBulkMode === 'deleteCells' ? 'default' : 'outline' }
+								onClick={ () => setRemoveBulkMode( 'deleteCells' ) }
+							>
+								Delete sessions
+							</Button>
+							<Button
+								type="button"
+								size="sm"
+								variant={ removeBulkMode === 'reduceSpots' ? 'default' : 'outline' }
+								onClick={ () => setRemoveBulkMode( 'reduceSpots' ) }
+							>
+								Reduce ticket spots
+							</Button>
 						</div>
+						{ removeBulkMode === 'deleteCells' ? (
+							<div className="bg-destructive/[0.06] flex shrink-0 gap-3 rounded-lg border border-destructive/35 p-4 dark:bg-destructive/10">
+								<TriangleAlert
+									className="text-destructive mt-0.5 size-5 shrink-0"
+									aria-hidden
+								/>
+								<p className="text-muted-foreground text-sm leading-relaxed">
+									Deletion matches{ ' ' }
+									<strong className="text-foreground font-medium">weekdays + session start times </strong>
+									stepped from Open/Close (same as Fill empty stepping). Stored FooEvents{ ' ' }
+									<strong className="text-foreground font-medium">labels are ignored </strong>
+									— all slot rows on a day whose resolved time aligns are candidates. The server skips cells
+									that already have bookings ({ ' ' }
+									<span className="font-mono">slot_has_bookings</span>
+									).
+								</p>
+							</div>
+						) : (
+							<div className="bg-muted/40 flex shrink-0 gap-3 rounded-lg border border-border p-4">
+								<CircleCheck
+									className="text-muted-foreground mt-0.5 size-5 shrink-0"
+									aria-hidden
+								/>
+								<p className="text-muted-foreground text-sm leading-relaxed">
+									<strong className="text-foreground font-medium">Reduce ticket spots</strong> can
+									either remove a fixed number of <strong className="text-foreground font-medium">remaining
+									</strong> spots per session, or set a <strong className="text-foreground font-medium">
+									target total capacity</strong> (sold + remaining) per session. Remaining inventory is
+									adjusted only — <strong className="text-foreground font-medium">sold tickets are never
+									canceled or changed</strong>. Unlimited and zero-remaining sessions are skipped.
+									When bookings already exceed the target total, remaining spots drop as far as possible
+									and those rows are flagged as booked over target.
+								</p>
+							</div>
+						) }
 						<ScheduleDefaultsAndBlocksForm
 							mgr={ mgr }
 							formIdPrefix="rmv"
@@ -357,15 +425,14 @@ export function ManagedEventScheduleDialogs( {
 						>
 							<div className="space-y-2">
 								<h2 id="dlg-remove-bulk" className="text-lg font-semibold tracking-tight">
-									Removal window & preview
+									Schedule window &amp; preview
 								</h2>
 								<p className="text-muted-foreground text-sm leading-relaxed">
-									Removal spans the{' '}
-									<strong className="text-foreground font-medium">configured block calendars</strong>{ ' ' }
-									as Y-m-d bounds (each block clipped to those dates plus weekdays/times/slot length).
-									Use site today only as orientation — removal is{' '}
-									<strong className="text-foreground font-medium">not</strong> clipped to dates on or
-									after today.
+									The range is the union of each block&apos;s start/end dates (Y-m-d), clipped per block
+									by weekdays and stepped session start times from Open/Close. Use site today only as
+									orientation — these tools are{' '}
+									<strong className="text-foreground font-medium">not</strong> limited to today or future
+									days.
 								</p>
 								<p className="text-muted-foreground text-xs leading-snug">
 									Site calendar today:{ ' ' }
@@ -381,10 +448,96 @@ export function ManagedEventScheduleDialogs( {
 									</p>
 								) : (
 									<p className="text-destructive text-sm">
-										Add at least one block with valid start and end dates (Y-m-d) before bulk removal.
+										Add at least one block with valid start and end dates (Y-m-d) before continuing.
 									</p>
 								) }
 							</div>
+							{ removeBulkMode === 'reduceSpots' ? (
+								<div className="space-y-3">
+									<div className="flex flex-wrap gap-2">
+										<Button
+											type="button"
+											size="sm"
+											variant={
+												bulkReduceSubMode === 'fixedRemove' ? 'default' : 'outline'
+											}
+											onClick={ () => setBulkReduceSubMode( 'fixedRemove' ) }
+										>
+											Remove X available spots
+										</Button>
+										<Button
+											type="button"
+											size="sm"
+											variant={
+												bulkReduceSubMode === 'targetTotal' ? 'default' : 'outline'
+											}
+											onClick={ () => setBulkReduceSubMode( 'targetTotal' ) }
+										>
+											Set total capacity to X
+										</Button>
+									</div>
+									{ bulkReduceSubMode === 'fixedRemove' ? (
+										<div className="space-y-2">
+											<Label htmlFor="dlg-bulk-reduce-per-cell">
+												Spots to remove per matching session
+											</Label>
+											<p className="text-muted-foreground text-xs">
+												Each finite-capacity cell loses up to this many remaining spots (never below
+												zero).
+											</p>
+											<Input
+												id="dlg-bulk-reduce-per-cell"
+												type="number"
+												min={ 1 }
+												step={ 1 }
+												className="max-w-[140px]"
+												value={ bulkReduceSpotsPerCell }
+												disabled={
+													scheduleManualBusy
+													|| gen.isPending
+													|| bulkRemoveEnvelope.invalid
+												}
+												onChange={ ( e ) => {
+													const n = parseInt( e.target.value, 10 );
+													setBulkReduceSpotsPerCell(
+														Number.isFinite( n ) && n >= 1 ? n : 1,
+													);
+												} }
+											/>
+										</div>
+									) : (
+										<div className="space-y-2">
+											<Label htmlFor="dlg-bulk-reduce-target-total">
+												Target total capacity
+											</Label>
+											<p className="text-muted-foreground text-xs">
+												Goal per session for{' '}
+												<span className="text-foreground font-medium">booked + remaining</span>.
+												Only remaining spots are reduced; sold tickets stay as-is.
+											</p>
+											<Input
+												id="dlg-bulk-reduce-target-total"
+												type="number"
+												min={ 0 }
+												step={ 1 }
+												className="max-w-[140px]"
+												value={ bulkTargetTotalCapacity }
+												disabled={
+													scheduleManualBusy
+													|| gen.isPending
+													|| bulkRemoveEnvelope.invalid
+												}
+												onChange={ ( e ) => {
+													const n = parseInt( e.target.value, 10 );
+													setBulkTargetTotalCapacity(
+														Number.isFinite( n ) && n >= 0 ? n : 0,
+													);
+												} }
+											/>
+										</div>
+									) }
+								</div>
+							) : null }
 							<Card className="border-border/80 bg-background/80">
 								<CardHeader className="pb-2">
 									<CardTitle className="text-base">
@@ -393,7 +546,19 @@ export function ManagedEventScheduleDialogs( {
 								</CardHeader>
 								<CardContent className="space-y-2 text-sm">
 									<p className="text-muted-foreground text-xs">
-										Block names below only<strong className="text-foreground font-medium"> group preview rows </strong>; they don’t filter what gets deleted — times do.
+										{ removeBulkMode === 'deleteCells' ? (
+											<>
+												Block names only
+												<strong className="text-foreground font-medium"> group preview rows </strong>;
+												they don’t filter what gets deleted — times do.
+											</>
+										) : (
+											<>
+												Block names only
+												<strong className="text-foreground font-medium"> group preview rows </strong>.
+												Matching uses stepped start times (same as delete mode).
+											</>
+										) }
 									</p>
 									<p>
 										<span className="text-muted-foreground">
@@ -420,77 +585,207 @@ export function ManagedEventScheduleDialogs( {
 									) }
 								</CardContent>
 							</Card>
-							<Card className="border-border/80 bg-background/80">
-								<CardHeader className="pb-2">
-									<CardTitle className="text-base">
-										Matched rows on this product (will be attempted)
-									</CardTitle>
-								</CardHeader>
-								<CardContent className="space-y-3 text-sm">
-									<p>
-										<span className="text-muted-foreground">Slot–date cells that match:</span>{ ' ' }
-										<strong className="tabular-nums">{ bulkRemoveTargets.length }</strong>
-									</p>
-									<p>
-										<span className="text-muted-foreground">Distinct calendar days touched:</span>{ ' ' }
-										<strong className="tabular-nums">{ matchedRemoveDayCount }</strong>
-									</p>
-									{ bulkRemoveTargets.length > 0 ? (
-										<ul className="max-h-[10rem] list-inside list-decimal overflow-y-auto border-t border-border/60 pt-2 text-muted-foreground text-xs">
-											{ bulkRemoveTargets.slice( 0, 40 ).map( ( t ) => (
-												<li
-													key={
-														t.ymd
-														+ '\t'
-														+ encodeManualSlotDateRef( {
-															id: t.slotId,
-															dateId: t.dateId,
-														} )
-													}
-												>
-													<span className="font-mono text-foreground">{ t.ymd }</span>
-													{ ' · ids ' }
-													<span className="font-mono">{ t.slotId }</span>
-													<span className="text-muted-foreground/80">/</span>
-													<span className="font-mono">{ t.dateId }</span>
-												</li>
-											) ) }
-											{ bulkRemoveTargets.length > 40 ? (
-												<li className="list-none pl-5 text-muted-foreground">
-													…plus { bulkRemoveTargets.length - 40 } more
-												</li>
-											) : null }
-										</ul>
-									) : (
-										<p className="text-muted-foreground text-xs">
-											Adjust weekdays, Open/Close, session length, or date span — nothing on this schedule shares those start times yet.
+							{ removeBulkMode === 'deleteCells' ? (
+								<Card className="border-border/80 bg-background/80">
+									<CardHeader className="pb-2">
+										<CardTitle className="text-base">
+											Matched rows on this product (delete — will be attempted)
+										</CardTitle>
+									</CardHeader>
+									<CardContent className="space-y-3 text-sm">
+										<p>
+											<span className="text-muted-foreground">Slot–date cells that match:</span>{ ' ' }
+											<strong className="tabular-nums">{ bulkRemoveTargets.length }</strong>
 										</p>
-									) }
-								</CardContent>
-							</Card>
+										<p>
+											<span className="text-muted-foreground">Distinct calendar days touched:</span>{ ' ' }
+											<strong className="tabular-nums">{ matchedRemoveDayCount }</strong>
+										</p>
+										{ bulkRemoveTargets.length > 0 ? (
+											<ul className="max-h-[10rem] list-inside list-decimal overflow-y-auto border-t border-border/60 pt-2 text-muted-foreground text-xs">
+												{ bulkRemoveTargets.slice( 0, 40 ).map( ( t ) => (
+													<li
+														key={
+															t.ymd
+															+ '\t'
+															+ encodeManualSlotDateRef( {
+																id: t.slotId,
+																dateId: t.dateId,
+															} )
+														}
+													>
+														<span className="font-mono text-foreground">{ t.ymd }</span>
+														{ ' · ids ' }
+														<span className="font-mono">{ t.slotId }</span>
+														<span className="text-muted-foreground/80">/</span>
+														<span className="font-mono">{ t.dateId }</span>
+													</li>
+												) ) }
+												{ bulkRemoveTargets.length > 40 ? (
+													<li className="list-none pl-5 text-muted-foreground">
+														…plus { bulkRemoveTargets.length - 40 } more
+													</li>
+												) : null }
+											</ul>
+										) : (
+											<p className="text-muted-foreground text-xs">
+												Adjust weekdays, Open/Close, session length, or date span — nothing on this schedule shares those start times yet.
+											</p>
+										) }
+									</CardContent>
+								</Card>
+							) : (
+								<Card className="border-border/80 bg-background/80">
+									<CardHeader className="pb-2">
+										<CardTitle className="text-base">
+											Finite-capacity matches (reduce spots)
+										</CardTitle>
+									</CardHeader>
+									<CardContent className="space-y-3 text-sm">
+										<p>
+											<span className="text-muted-foreground">Sessions to update:</span>{ ' ' }
+											<strong className="tabular-nums">{ bulkReduceStockPreview.targets.length }</strong>
+										</p>
+										<p>
+											<span className="text-muted-foreground">Total spots removed (planned):</span>{ ' ' }
+											<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsRemoved }</strong>
+										</p>
+										<p>
+											<span className="text-muted-foreground">Distinct calendar days touched:</span>{ ' ' }
+											<strong className="tabular-nums">{ matchedReduceDayCount }</strong>
+										</p>
+										<p>
+											<span className="text-muted-foreground">Skipped (unlimited capacity):</span>{ ' ' }
+											<strong className="tabular-nums">{ bulkReduceStockPreview.skippedUnlimited }</strong>
+										</p>
+										<p>
+											<span className="text-muted-foreground">Skipped (zero remaining):</span>{ ' ' }
+											<strong className="tabular-nums">{ bulkReduceStockPreview.skippedZero }</strong>
+										</p>
+										{ bulkReduceSubMode === 'targetTotal' ? (
+											<>
+												<p>
+													<span className="text-muted-foreground">Skipped (already at/below target):</span>{ ' ' }
+													<strong className="tabular-nums">{ bulkReduceStockPreview.skippedAtOrBelowTarget }</strong>
+												</p>
+												<p>
+													<span className="text-muted-foreground">Skipped (missing booked count):</span>{ ' ' }
+													<strong className="tabular-nums">{ bulkReduceStockPreview.skippedMissingBookedData }</strong>
+												</p>
+												<p>
+													<span className="text-muted-foreground">Booked over target (no spots left to cut):</span>{ ' ' }
+													<strong className="tabular-nums">{ bulkReduceStockPreview.bookedOverTargetSessions }</strong>
+												</p>
+											</>
+										) : null }
+										{ bulkReduceStockPreview.targets.length > 0 ? (
+											<ul className="max-h-[10rem] list-inside list-decimal overflow-y-auto border-t border-border/60 pt-2 text-muted-foreground text-xs">
+												{ bulkReduceStockPreview.targets.slice( 0, 40 ).map( ( t ) => (
+													<li
+														key={
+															t.ymd
+															+ '\t'
+															+ encodeManualSlotDateRef( {
+																id: t.slotId,
+																dateId: t.dateId,
+															} )
+														}
+													>
+														<span className="font-mono text-foreground">{ t.ymd }</span>
+														{ bulkReduceSubMode === 'targetTotal'
+														&& typeof t.bookedCount === 'number'
+														&& typeof t.currentTotal === 'number'
+														&& typeof t.targetTotalCapacity === 'number' ? (
+															<>
+																{ ' · booked ' }
+																<span className="tabular-nums">{ t.bookedCount }</span>
+																{ ' + rem ' }
+																<span className="tabular-nums">{ t.currentStock }</span>
+																{ ' = ' }
+																<span className="tabular-nums text-foreground">{ t.currentTotal }</span>
+																{ ' → target ' }
+																<span className="tabular-nums text-foreground">{ t.targetTotalCapacity }</span>
+																{ '; -' }
+																<span className="tabular-nums text-foreground">{ t.removeSpots }</span>
+																{ t.bookedOverTarget ? ' · booked over target' : '' }
+															</>
+														) : (
+															<>
+																{ ' · -'}
+																<span className="tabular-nums text-foreground">{ t.removeSpots }</span>
+																{ ' (was ' }
+																<span className="tabular-nums">{ t.currentStock }</span>
+																{ ') ' }
+															</>
+														) }
+														{ ' · ' }
+														<span className="font-mono">{ t.slotId }</span>
+														<span className="text-muted-foreground/80">/</span>
+														<span className="font-mono">{ t.dateId }</span>
+													</li>
+												) ) }
+												{ bulkReduceStockPreview.targets.length > 40 ? (
+													<li className="list-none pl-5 text-muted-foreground">
+														…plus { bulkReduceStockPreview.targets.length - 40 } more
+													</li>
+												) : null }
+											</ul>
+										) : (
+											<p className="text-muted-foreground text-xs">
+												{ bulkReduceSubMode === 'targetTotal'
+													? 'No cells need remaining spots removed for this target, or sessions are unlimited / missing booked counts.'
+													: 'No finite-capacity cells match this pattern, or spots per session is below 1.' }
+											</p>
+										) }
+									</CardContent>
+								</Card>
+							) }
 							<DialogFooter className="shrink-0 sm:justify-between">
 								<Button
 									type="button"
 									variant="outline"
 									onClick={ () => onRemoveOpenChange( false ) }
-									disabled={ bulkRemoving }
+									disabled={ bulkRemoving || bulkReducingStock }
 								>
-									Cancel
+									Close
 								</Button>
-								<Button
-									type="button"
-									variant="destructive"
-									disabled={
-										scheduleManualBusy
-										|| gen.isPending
-										|| bulkRemoveEnvelope.invalid
-										|| bulkRemoveTargets.length === 0
-										|| bulkRemoving
-									}
-									onClick={ requestBulkRemoveConfirm }
-								>
-									Continue to confirm removal…
-								</Button>
+								{ removeBulkMode === 'deleteCells' ? (
+									<Button
+										type="button"
+										variant="destructive"
+										disabled={
+											scheduleManualBusy
+											|| gen.isPending
+											|| bulkRemoveEnvelope.invalid
+											|| bulkRemoveTargets.length === 0
+											|| bulkRemoving
+											|| bulkReducingStock
+										}
+										onClick={ requestBulkRemoveConfirm }
+									>
+										Continue to confirm deletion…
+									</Button>
+								) : (
+									<Button
+										type="button"
+										disabled={
+											scheduleManualBusy
+											|| gen.isPending
+											|| bulkRemoveEnvelope.invalid
+											|| bulkReduceStockPreview.targets.length === 0
+											|| bulkRemoving
+											|| bulkReducingStock
+											|| ( bulkReduceSubMode === 'fixedRemove'
+												&& bulkReduceSpotsPerCell < 1 )
+											|| ( bulkReduceSubMode === 'targetTotal'
+												&& ( ! Number.isFinite( Math.floor( bulkTargetTotalCapacity ) )
+													|| Math.floor( bulkTargetTotalCapacity ) < 0 ) )
+										}
+										onClick={ requestBulkReduceStockConfirm }
+									>
+										Continue to confirm spot reduction…
+									</Button>
+								) }
 							</DialogFooter>
 						</section>
 					</div>
@@ -617,6 +912,75 @@ export function ManagedEventScheduleDialogs( {
 							disabled={ bulkRemoving }
 						>
 							{ bulkRemoving ? 'Removing…' : 'Remove now' }
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={ bulkReduceConfirmOpen }
+				onOpenChange={ ( open ) => {
+					if ( ! bulkReducingStock ) {
+						setBulkReduceConfirmOpen( open );
+					}
+				} }
+			>
+				<DialogContent showCloseButton={ ! bulkReducingStock }>
+					<DialogHeader>
+						<DialogTitle>Reduce spots on matched sessions?</DialogTitle>
+						<DialogDescription className="text-left">
+							{ bulkReduceSubMode === 'targetTotal' ? (
+								<>
+									Set total capacity toward{ ' ' }
+									<strong className="text-foreground tabular-nums">
+										{ Math.floor( bulkTargetTotalCapacity ) }
+									</strong>
+									{ ' ' }
+									(booked + remaining) on{ ' ' }
+									<strong className="text-foreground">{ bulkReduceRunList.length }</strong>
+									{ ' ' }
+									slot–date cell(s) by lowering <strong className="text-foreground">remaining</strong> spots
+									only. Sold tickets are not changed.
+								</>
+							) : (
+								<>
+									Lower remaining capacity on{ ' ' }
+									<strong className="text-foreground">{ bulkReduceRunList.length }</strong>
+									{ ' ' }
+									slot–date cell(s), up to{ ' ' }
+									<strong className="text-foreground">{ bulkReduceSpotsPerCell }</strong>
+									{ ' ' }
+									spot(s) each (capped by remaining stock). Sold tickets are not changed.
+								</>
+							) }
+						</DialogDescription>
+					</DialogHeader>
+					<div className="bg-muted/40 flex gap-3 rounded-lg border border-border p-4 text-sm">
+						<CircleCheck className="text-muted-foreground size-5 shrink-0" aria-hidden />
+						<p className="text-muted-foreground leading-relaxed">
+							Planned total spots removed from remaining inventory:{ ' ' }
+							<strong className="text-foreground tabular-nums">
+								{ bulkReduceRunList.reduce( ( a, t ) => a + t.removeSpots, 0 ) }
+							</strong>
+							. Sessions stay on the schedule. If another user changes capacity while this runs, some
+							updates may fail (reported in the summary).
+						</p>
+					</div>
+					<DialogFooter>
+						<Button
+							type="button"
+							variant="outline"
+							onClick={ () => setBulkReduceConfirmOpen( false ) }
+							disabled={ bulkReducingStock }
+						>
+							Cancel
+						</Button>
+						<Button
+							type="button"
+							onClick={ () => void runBulkReduceStock() }
+							disabled={ bulkReducingStock }
+						>
+							{ bulkReducingStock ? 'Saving…' : 'Reduce spots now' }
 						</Button>
 					</DialogFooter>
 				</DialogContent>

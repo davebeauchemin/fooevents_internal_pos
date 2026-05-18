@@ -421,6 +421,9 @@ class Bookings_Service {
 			);
 		}
 
+		$booked_by_slot_date = $this->build_active_booked_counts_by_slot_date( $product_id );
+		$dates_out           = $this->enrich_dates_slots_with_booking_metrics( $dates_out, $booked_by_slot_date );
+
 		$price_row = $this->get_product_price_for_rest( $product_id );
 
 		return array_merge(
@@ -468,6 +471,107 @@ class Bookings_Service {
 			return null;
 		}
 		return (int) $min;
+	}
+
+	/**
+	 * Count active (spot-consuming) booking tickets per slot–date cell.
+	 *
+	 * Uses the same statuses as {@see Ticket_Status_Stock_Service}: Not Checked In, Checked In.
+	 *
+	 * @param int $product_id Event (booking) product ID.
+	 * @return array<string,int> Keys `{slotId}\x1e{dateId}` (trimmed meta) => count.
+	 */
+	private function build_active_booked_counts_by_slot_date( $product_id ) {
+		$product_id = absint( $product_id );
+		if ( $product_id <= 0 ) {
+			return array();
+		}
+		$active_statuses = array( 'Not Checked In', 'Checked In' );
+
+		$q = new WP_Query(
+			array(
+				'post_type'              => 'event_magic_tickets',
+				'post_status'            => 'publish',
+				'posts_per_page'         => -1,
+				'fields'                 => 'ids',
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => true,
+				'update_post_term_cache' => false,
+				'meta_query'             => array(
+					array(
+						'key'     => 'WooCommerceEventsProductID',
+						'value'   => $product_id,
+						'compare' => '=',
+						'type'    => 'NUMERIC',
+					),
+				),
+			)
+		);
+
+		if ( empty( $q->posts ) ) {
+			return array();
+		}
+
+		$out = array();
+		foreach ( $q->posts as $pid_raw ) {
+			$pid = absint( $pid_raw );
+			if ( $pid <= 0 ) {
+				continue;
+			}
+			$status = trim( (string) get_post_meta( $pid, 'WooCommerceEventsStatus', true ) );
+			if ( ! in_array( $status, $active_statuses, true ) ) {
+				continue;
+			}
+			$slot_id = trim( (string) get_post_meta( $pid, 'WooCommerceEventsBookingSlotID', true ) );
+			$date_id = trim( (string) get_post_meta( $pid, 'WooCommerceEventsBookingDateID', true ) );
+			if ( '' === $slot_id || '' === $date_id ) {
+				continue;
+			}
+			$key = $slot_id . "\x1e" . $date_id;
+			if ( ! isset( $out[ $key ] ) ) {
+				$out[ $key ] = 0;
+			}
+			$out[ $key ]++;
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Add bookedCount and totalCapacity to each slot row for REST consumers.
+	 *
+	 * @param array<int,array<string,mixed>> $dates_out Built dates from get_event_detail.
+	 * @param array<string,int>              $counts    From build_active_booked_counts_by_slot_date().
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function enrich_dates_slots_with_booking_metrics( array $dates_out, array $counts ) {
+		foreach ( $dates_out as &$day ) {
+			if ( ! is_array( $day ) || empty( $day['slots'] ) || ! is_array( $day['slots'] ) ) {
+				continue;
+			}
+			foreach ( $day['slots'] as &$slot ) {
+				if ( ! is_array( $slot ) ) {
+					continue;
+				}
+				$sid = trim( (string) ( $slot['id'] ?? '' ) );
+				$did = trim( (string) ( $slot['dateId'] ?? '' ) );
+				$key = $sid . "\x1e" . $did;
+
+				$booked = isset( $counts[ $key ] ) ? (int) $counts[ $key ] : 0;
+				$slot['bookedCount'] = $booked;
+
+				$stock = array_key_exists( 'stock', $slot ) ? $slot['stock'] : null;
+				if ( null === $stock ) {
+					$slot['totalCapacity'] = null;
+				} else {
+					$slot['totalCapacity'] = (int) $stock + $booked;
+				}
+			}
+			unset( $slot );
+		}
+		unset( $day );
+
+		return $dates_out;
 	}
 
 	/**
