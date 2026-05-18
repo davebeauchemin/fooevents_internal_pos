@@ -66,18 +66,18 @@ export default function CheckoutGuestInfo() {
 
 	return (
 		<div className="bg-background flex min-h-[100dvh] flex-col">
-			<div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-8 sm:px-10">
-				<div className="mx-auto w-full max-w-md space-y-2 text-left pb-8">
+			<div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-6 sm:px-10">
+				<div className="mx-auto my-auto w-full max-w-md shrink-0">
 					{ phase === 'entry' ? (
 						<>
-							<h1 className="font-heading text-2xl font-semibold tracking-tight">
+							<h1 className="font-heading text-center text-2xl font-semibold tracking-tight">
 								Enter your information
 							</h1>
-							<p className="text-muted-foreground text-base leading-relaxed">
+							<p className="text-muted-foreground mx-auto mt-2 max-w-md text-center text-base leading-relaxed">
 								Add your details for this booking. Payment and totals are handled on the staff checkout
 								screen after you hand the device back.
 							</p>
-							<div className="mx-auto mt-8 grid w-full gap-4 sm:max-w-lg">
+							<div className="mx-auto mt-8 grid w-full gap-4 text-left sm:max-w-lg">
 								<div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
 									<div className="grid gap-2">
 										<Label htmlFor={ `${ formId }-guest-first` }>
@@ -134,22 +134,22 @@ export default function CheckoutGuestInfo() {
 							</div>
 						</>
 					) : phase === 'waiting' ? (
-						<>
-							<div className="flex flex-col items-center gap-6 py-12 text-center">
-								<Loader2 className="text-muted-foreground size-12 animate-spin" aria-hidden />
-								<h1 className="font-heading text-2xl font-semibold tracking-tight">
-									Waiting for staff
-								</h1>
-								<p className="text-muted-foreground max-w-sm text-base leading-relaxed">
-									Hold the tablet or device steady and return it to a staff member—they will unlock
-									checkout next.
-								</p>
-							</div>
-						</>
+						<div className="flex flex-col items-center gap-6 text-center">
+							<Loader2 className="text-muted-foreground size-12 shrink-0 animate-spin" aria-hidden />
+							<h1 className="font-heading text-2xl font-semibold tracking-tight">
+								Waiting for staff
+							</h1>
+							<p className="text-muted-foreground max-w-sm text-base leading-relaxed">
+								Hold the tablet or device steady and return it to a staff member—they will unlock
+								checkout next.
+							</p>
+						</div>
 					) : (
 						<>
-							<h1 className="font-heading text-2xl font-semibold tracking-tight">Staff takeover</h1>
-							<p className="text-muted-foreground text-base leading-relaxed">
+							<h1 className="font-heading text-center text-2xl font-semibold tracking-tight">
+								Staff takeover
+							</h1>
+							<p className="text-muted-foreground mx-auto mt-2 max-w-sm text-center text-base leading-relaxed">
 								Enter the staff takeover code to return to checkout.
 							</p>
 							<div className="mx-auto mt-8 grid w-full max-w-xs gap-2">
