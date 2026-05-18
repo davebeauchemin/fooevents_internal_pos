@@ -812,10 +812,6 @@ export function useManageSchedule(
 		BulkRemoveTarget[]
 	>( [] );
 	const [ bulkRemoving, setBulkRemoving ] = useState( false );
-	const [ bulkReduceSpotsPerCell, setBulkReduceSpotsPerCell ] = useState( 1 );
-	const [ bulkReduceSubMode, setBulkReduceSubMode ] = useState<
-		'fixedRemove' | 'targetTotal'
-	>( 'fixedRemove' );
 	const [ bulkTargetTotalCapacity, setBulkTargetTotalCapacity ] = useState( 8 );
 	const [ bulkReduceConfirmOpen, setBulkReduceConfirmOpen ] = useState( false );
 	const [ bulkReduceRunList, setBulkReduceRunList ] = useState<
@@ -978,17 +974,11 @@ export function useManageSchedule(
 	] );
 
 	const bulkReduceComputation = useMemo( (): BulkReduceComputationMode => {
-		if ( bulkReduceSubMode === 'targetTotal' ) {
-			return {
-				kind: 'targetTotal',
-				targetTotal: Math.floor( bulkTargetTotalCapacity ),
-			};
-		}
 		return {
-			kind: 'fixedRemove',
-			requestedRemovePerCell: bulkReduceSpotsPerCell,
+			kind: 'targetTotal',
+			targetTotal: Math.floor( bulkTargetTotalCapacity ),
 		};
-	}, [ bulkReduceSubMode, bulkReduceSpotsPerCell, bulkTargetTotalCapacity ] );
+	}, [ bulkTargetTotalCapacity ] );
 
 	const bulkReduceStockPreview = useMemo( () => {
 		if ( bulkRemoveEnvelope.invalid ) {
@@ -1172,23 +1162,14 @@ export function useManageSchedule(
 			);
 			return;
 		}
-		if ( bulkReduceSubMode === 'fixedRemove' && bulkReduceSpotsPerCell < 1 ) {
-			toast.error( 'Remove at least 1 spot per session.' );
-			return;
-		}
 		const tt = Math.floor( bulkTargetTotalCapacity );
-		if (
-			bulkReduceSubMode === 'targetTotal'
-			&& ( ! Number.isFinite( tt ) || tt < 0 )
-		) {
+		if ( ! Number.isFinite( tt ) || tt < 0 ) {
 			toast.error( 'Target total capacity must be zero or greater.' );
 			return;
 		}
 		if ( bulkReduceStockPreview.targets.length === 0 ) {
 			toast.message(
-				bulkReduceSubMode === 'targetTotal'
-					? 'No sessions need changes for this target total (unlimited, missing booked counts, already at target, or booked over target with no remaining to cut).'
-					: 'No finite-capacity sessions to reduce for this pattern. Unlimited or empty sessions are skipped.',
+				'No sessions need changes for this target total (unlimited, missing booked counts, already at target, or booked over target with no remaining to cut).',
 			);
 			return;
 		}
@@ -1196,9 +1177,7 @@ export function useManageSchedule(
 		setBulkReduceConfirmOpen( true );
 	}, [
 		bulkRemoveEnvelope.invalid,
-		bulkReduceSpotsPerCell,
 		bulkReduceStockPreview.targets,
-		bulkReduceSubMode,
 		bulkTargetTotalCapacity,
 	] );
 
@@ -1399,10 +1378,6 @@ export function useManageSchedule(
 		bulkRemoveTargets,
 		bulkRemoveRunList,
 		bulkRemoving,
-		bulkReduceSpotsPerCell,
-		setBulkReduceSpotsPerCell,
-		bulkReduceSubMode,
-		setBulkReduceSubMode,
 		bulkTargetTotalCapacity,
 		setBulkTargetTotalCapacity,
 		bulkReduceStockPreview,

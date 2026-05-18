@@ -840,16 +840,10 @@ function EventOverviewReduceStockDialog( {
 	const removeStock = useRemoveSlotStock( eventId );
 	const addStock = useAddSlotStock( eventId );
 	const stockBusy = removeStock.isPending || addStock.isPending;
-	const [ reduceSubMode, setReduceSubMode ] = useState<
-		'fixedRemove' | 'targetTotal'
-	>( 'fixedRemove' );
-	const [ removeDelta, setRemoveDelta ] = useState( 1 );
 	const [ targetTotalCap, setTargetTotalCap ] = useState( 0 );
 
 	useEffect( () => {
 		if ( pendingReduce ) {
-			setRemoveDelta( 1 );
-			setReduceSubMode( 'fixedRemove' );
 			const cap = pendingReduce.currentStock + (
 				typeof pendingReduce.bookedCount === 'number'
 				&& Number.isFinite( pendingReduce.bookedCount )
@@ -859,12 +853,6 @@ function EventOverviewReduceStockDialog( {
 			setTargetTotalCap( Math.max( 0, cap ) );
 		}
 	}, [ pendingReduce ] );
-
-	const maxRemove = pendingReduce?.currentStock ?? 1;
-	const clampedDelta =
-		Number.isFinite( removeDelta ) && removeDelta >= 1
-			? Math.min( removeDelta, maxRemove )
-			: 1;
 
 	const bookedCount = pendingReduce
 		&& typeof pendingReduce.bookedCount === 'number'
@@ -887,25 +875,6 @@ function EventOverviewReduceStockDialog( {
 		}
 		const tgt = pendingReduce;
 		try {
-			if ( reduceSubMode === 'fixedRemove' ) {
-				const n = Math.min(
-					Math.max( 1, Math.floor( clampedDelta ) ),
-					tgt.currentStock,
-				);
-				await removeStock.mutateAsync( {
-					slotId: tgt.slotId,
-					dateId: tgt.dateId,
-					date: tgt.ymd,
-					removeSpots: n,
-				} );
-				clearPending();
-				toast.success(
-					n === 1
-						? 'Removed 1 ticket spot.'
-						: `Removed ${ n } ticket spots.`,
-				);
-				return;
-			}
 			if ( bookedCount === null ) {
 				return;
 			}
@@ -972,152 +941,85 @@ function EventOverviewReduceStockDialog( {
 		>
 			<DialogContent showCloseButton={ ! stockBusy }>
 				<DialogHeader>
-					<DialogTitle>
-						{ reduceSubMode === 'targetTotal'
-							? 'Set total capacity?'
-							: 'Remove ticket spots?' }
-					</DialogTitle>
+					<DialogTitle>Set total capacity?</DialogTitle>
 					<DialogDescription>
-						{ reduceSubMode === 'targetTotal' ? (
-							<>
-								Adjust <strong className="text-foreground">remaining</strong> availability so total capacity
-								(booked + remaining) reaches your target for{ ' ' }
-								<span className="text-foreground font-medium">{ pendingReduce?.title }</span>
-								{ ' ' }
-								on{ ' ' }
-								<span className="font-mono text-foreground">{ pendingReduce?.ymd }</span>. Sold tickets are
-								not changed.
-							</>
-						) : (
-							<>
-								Lowers <strong className="text-foreground">remaining</strong> availability for{ ' ' }
-								<span className="text-foreground font-medium">{ pendingReduce?.title }</span>
-								{ ' ' }
-								on{ ' ' }
-								<span className="font-mono text-foreground">{ pendingReduce?.ymd }</span>. Sold tickets are
-								not changed. This does not delete the session (use the trash icon for that).
-							</>
-						) }
+						Adjust <strong className="text-foreground">remaining</strong> availability so total capacity
+						(booked + remaining) reaches your target for{ ' ' }
+						<span className="text-foreground font-medium">{ pendingReduce?.title }</span>
+						{ ' ' }
+						on{ ' ' }
+						<span className="font-mono text-foreground">{ pendingReduce?.ymd }</span>. Sold tickets are
+						not changed. This does not delete the session (use the trash icon for that).
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-3">
-					<div className="flex flex-wrap gap-2">
-						<Button
-							type="button"
-							size="sm"
-							variant={ reduceSubMode === 'fixedRemove' ? 'default' : 'outline' }
-							onClick={ () => setReduceSubMode( 'fixedRemove' ) }
-							disabled={ stockBusy }
-						>
-							Remove X available spots
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							variant={ reduceSubMode === 'targetTotal' ? 'default' : 'outline' }
-							onClick={ () => setReduceSubMode( 'targetTotal' ) }
+					<div className="space-y-2">
+						<Label htmlFor="overview-reduce-target-total">Target total capacity</Label>
+						<Input
+							id="overview-reduce-target-total"
+							type="number"
+							min={ 0 }
+							value={ targetTotalCap }
+							onChange={ ( e ) => {
+								const v = parseInt( e.target.value, 10 );
+								setTargetTotalCap(
+									Number.isFinite( v ) && v >= 0 ? v : 0,
+								);
+							} }
 							disabled={
 								stockBusy || bookedCount === null
 							}
-						>
-							Set total capacity to X
-						</Button>
-					</div>
-					{ reduceSubMode === 'fixedRemove' ? (
-						<div className="space-y-2">
-							<Label htmlFor="overview-reduce-delta">Spots to remove</Label>
-							<Input
-								id="overview-reduce-delta"
-								type="number"
-								min={ 1 }
-								max={ maxRemove }
-								value={ removeDelta }
-								onChange={ ( e ) => {
-									const v = parseInt( e.target.value, 10 );
-									setRemoveDelta( Number.isFinite( v ) ? v : 1 );
-								} }
-								disabled={ stockBusy }
-							/>
+						/>
+						{ bookedCount !== null && pendingReduce ? (
 							<p className="text-muted-foreground text-xs">
-								Current remaining slots:{ ' ' }
-								<span className="text-foreground font-medium tabular-nums">{ maxRemove }</span>
-								{ bookedCount !== null ? (
+								Booked{ ' ' }
+								<span className="tabular-nums text-foreground">{ bookedCount }</span>
+								{ ' + remaining ' }
+								<span className="tabular-nums text-foreground">{ pendingReduce.currentStock }</span>
+								{ ' = ' }
+								<span className="tabular-nums text-foreground">
+									{ bookedCount + pendingReduce.currentStock }
+								</span>
+								{ targetPlanAdj?.kind === 'add' && targetPlanAdj.addSpots >= 1 ? (
 									<>
-										{ ' · booked ' }
-										<span className="text-foreground font-medium tabular-nums">{ bookedCount }</span>
+										{ ' → target ' }
+										<span className="tabular-nums text-foreground">
+											{ Math.floor( targetTotalCap ) }
+										</span>
+										{ '; add ' }
+										<span className="tabular-nums text-foreground">
+											{ targetPlanAdj.addSpots }
+										</span>
 									</>
-								) : null }
+								) : targetPlanAdj?.kind === 'remove' && targetPlanAdj.removeSpots >= 1 ? (
+									<>
+										{ ' → target ' }
+										<span className="tabular-nums text-foreground">
+											{ Math.floor( targetTotalCap ) }
+										</span>
+										{ '; remove ' }
+										<span className="tabular-nums text-foreground">
+											{ targetPlanAdj.removeSpots }
+										</span>
+										{ targetPlanAdj.bookedOverTarget
+											? ' (booked already exceeds target)'
+											: '' }
+									</>
+								) : (
+									<>
+										{ '. ' }
+										{ targetPlanAdj?.kind === 'none'
+											? 'Already at target.'
+											: 'No change to apply.' }
+									</>
+								) }
 							</p>
-						</div>
-					) : (
-						<div className="space-y-2">
-							<Label htmlFor="overview-reduce-target-total">Target total capacity</Label>
-							<Input
-								id="overview-reduce-target-total"
-								type="number"
-								min={ 0 }
-								value={ targetTotalCap }
-								onChange={ ( e ) => {
-									const v = parseInt( e.target.value, 10 );
-									setTargetTotalCap(
-										Number.isFinite( v ) && v >= 0 ? v : 0,
-									);
-								} }
-								disabled={
-									stockBusy || bookedCount === null
-								}
-							/>
-							{ bookedCount !== null && pendingReduce ? (
-								<p className="text-muted-foreground text-xs">
-									Booked{ ' ' }
-									<span className="tabular-nums text-foreground">{ bookedCount }</span>
-									{ ' + remaining ' }
-									<span className="tabular-nums text-foreground">{ pendingReduce.currentStock }</span>
-									{ ' = ' }
-									<span className="tabular-nums text-foreground">
-										{ bookedCount + pendingReduce.currentStock }
-									</span>
-									{ targetPlanAdj?.kind === 'add' && targetPlanAdj.addSpots >= 1 ? (
-										<>
-											{ ' → target ' }
-											<span className="tabular-nums text-foreground">
-												{ Math.floor( targetTotalCap ) }
-											</span>
-											{ '; add ' }
-											<span className="tabular-nums text-foreground">
-												{ targetPlanAdj.addSpots }
-											</span>
-										</>
-									) : targetPlanAdj?.kind === 'remove' && targetPlanAdj.removeSpots >= 1 ? (
-										<>
-											{ ' → target ' }
-											<span className="tabular-nums text-foreground">
-												{ Math.floor( targetTotalCap ) }
-											</span>
-											{ '; remove ' }
-											<span className="tabular-nums text-foreground">
-												{ targetPlanAdj.removeSpots }
-											</span>
-											{ targetPlanAdj.bookedOverTarget
-												? ' (booked already exceeds target)'
-												: '' }
-										</>
-									) : (
-										<>
-											{ '. ' }
-											{ targetPlanAdj?.kind === 'none'
-												? 'Already at target.'
-												: 'No change to apply.' }
-										</>
-									) }
-								</p>
-							) : (
-								<p className="text-destructive text-xs">
-									Booked count unavailable — reload event data or use fixed removal.
-								</p>
-							) }
-						</div>
-					) }
+						) : (
+							<p className="text-destructive text-xs">
+								Booked count unavailable — reload event data before setting total capacity.
+							</p>
+						) }
+					</div>
 				</div>
 				<DialogFooter>
 					<Button
@@ -1131,23 +1033,9 @@ function EventOverviewReduceStockDialog( {
 					<Button
 						type="button"
 						onClick={ () => void confirmReduce() }
-						disabled={
-							stockBusy
-							|| ( reduceSubMode === 'fixedRemove' && maxRemove < 1 )
-							|| ( reduceSubMode === 'fixedRemove'
-								&& ( clampedDelta < 1 || clampedDelta > maxRemove ) )
-							|| ( reduceSubMode === 'targetTotal' && ! canSubmitTarget )
-						}
+						disabled={ stockBusy || ! canSubmitTarget }
 					>
-						{ stockBusy
-							? 'Saving…'
-							: reduceSubMode === 'targetTotal' && targetPlanAdj?.kind === 'add'
-								? 'Add spots'
-								: reduceSubMode === 'targetTotal' && targetPlanAdj?.kind === 'remove'
-									? 'Remove spots'
-									: reduceSubMode === 'targetTotal'
-										? 'Apply'
-										: 'Remove spots' }
+						{ stockBusy ? 'Saving…' : 'Apply capacity change' }
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1267,19 +1155,27 @@ function EventOverviewReduceHourGroupDialog( {
 	onWorkingChange: ( busy: boolean ) => void;
 } ) {
 	const qc = useQueryClient();
-	const [ hourReduceSubMode, setHourReduceSubMode ] = useState<
-		'fixedRemove' | 'targetTotal'
-	>( 'fixedRemove' );
-	const [ removeDelta, setRemoveDelta ] = useState( 1 );
 	const [ hourTargetTotal, setHourTargetTotal ] = useState( 8 );
 	const [ working, setWorking ] = useState( false );
 	const busy = working;
 
 	useEffect( () => {
 		if ( pendingGroup ) {
-			setRemoveDelta( 1 );
-			setHourReduceSubMode( 'fixedRemove' );
-			setHourTargetTotal( 8 );
+			let maxTotal = 0;
+			for ( const s of pendingGroup.slots ) {
+				if ( s.stock === null || s.stock === undefined ) {
+					continue;
+				}
+				if ( typeof s.stock !== 'number' || s.stock < 0 ) {
+					continue;
+				}
+				const bc =
+					typeof s.bookedCount === 'number' && Number.isFinite( s.bookedCount )
+						? Math.max( 0, Math.floor( s.bookedCount ) )
+						: 0;
+				maxTotal = Math.max( maxTotal, s.stock + bc );
+			}
+			setHourTargetTotal( Math.max( 0, maxTotal ) );
 		}
 	}, [ pendingGroup ] );
 
@@ -1314,123 +1210,53 @@ function EventOverviewReduceHourGroupDialog( {
 		let skippedMissingBookedData = 0;
 		let bookedOverTargetSessions = 0;
 
-		if ( hourReduceSubMode === 'fixedRemove' ) {
-			const d = Math.floor( removeDelta );
-			if ( d < 1 ) {
-				return {
-					rows: [],
-					skippedUnlimited: 0,
-					skippedZero: 0,
-					skippedAtOrBelowTarget: 0,
-					skippedMissingBookedData: 0,
-					bookedOverTargetSessions: 0,
-				};
+		const tt = Math.floor( hourTargetTotal );
+		if ( ! Number.isFinite( tt ) || tt < 0 ) {
+			return {
+				rows: [],
+				skippedUnlimited: 0,
+				skippedZero: 0,
+				skippedAtOrBelowTarget: 0,
+				skippedMissingBookedData: 0,
+				bookedOverTargetSessions: 0,
+			};
+		}
+		for ( const s of pendingGroup.slots ) {
+			const sid = String( s.id ?? '' ).trim();
+			const did = String( s.dateId ?? '' ).trim();
+			if ( ! sid || ! did ) {
+				continue;
 			}
-			for ( const s of pendingGroup.slots ) {
-				const sid = String( s.id ?? '' ).trim();
-				const did = String( s.dateId ?? '' ).trim();
-				if ( ! sid || ! did ) {
-					continue;
-				}
-				if ( s.stock === null || s.stock === undefined ) {
-					skippedUnlimited += 1;
-					continue;
-				}
-				if ( typeof s.stock !== 'number' || s.stock < 0 ) {
-					skippedZero += 1;
-					continue;
-				}
-				if ( s.stock <= 0 ) {
-					skippedZero += 1;
-					continue;
-				}
-				const removeSpots = Math.min( d, s.stock );
-				if ( removeSpots < 1 ) {
-					continue;
-				}
-				const bc =
-					typeof s.bookedCount === 'number' && Number.isFinite( s.bookedCount )
-						? Math.max( 0, Math.floor( s.bookedCount ) )
-						: 0;
-				rows.push( {
-					slotId: sid,
-					dateId: did,
-					addSpots: 0,
-					removeSpots,
-					currentStock: s.stock,
-					title: slotTitleForRemoveConfirm( s as SlotApi ),
-					bookedCount: bc,
-					currentTotal: s.stock + bc,
-				} );
+			if ( s.stock === null || s.stock === undefined ) {
+				skippedUnlimited += 1;
+				continue;
 			}
-		} else {
-			const tt = Math.floor( hourTargetTotal );
-			if ( ! Number.isFinite( tt ) || tt < 0 ) {
-				return {
-					rows: [],
-					skippedUnlimited: 0,
-					skippedZero: 0,
-					skippedAtOrBelowTarget: 0,
-					skippedMissingBookedData: 0,
-					bookedOverTargetSessions: 0,
-				};
+			if ( typeof s.stock !== 'number' || s.stock < 0 ) {
+				skippedZero += 1;
+				continue;
 			}
-			for ( const s of pendingGroup.slots ) {
-				const sid = String( s.id ?? '' ).trim();
-				const did = String( s.dateId ?? '' ).trim();
-				if ( ! sid || ! did ) {
-					continue;
-				}
-				if ( s.stock === null || s.stock === undefined ) {
-					skippedUnlimited += 1;
-					continue;
-				}
-				if ( typeof s.stock !== 'number' || s.stock < 0 ) {
-					skippedZero += 1;
-					continue;
-				}
-				const st = s.stock;
-				const bookedRaw = s.bookedCount;
-				if ( typeof bookedRaw !== 'number' || ! Number.isFinite( bookedRaw ) ) {
-					skippedMissingBookedData += 1;
-					continue;
-				}
-				const booked = Math.max( 0, Math.floor( bookedRaw ) );
-				const plan = planTargetTotalCapacityAdjustment( st, booked, tt );
-				if ( plan.kind === 'none' ) {
-					if ( plan.bookedOverTarget ) {
-						bookedOverTargetSessions += 1;
-					} else {
-						skippedAtOrBelowTarget += 1;
-					}
-					continue;
-				}
-				if ( plan.kind === 'add' ) {
-					rows.push( {
-						slotId: sid,
-						dateId: did,
-						addSpots: plan.addSpots,
-						removeSpots: 0,
-						currentStock: st,
-						title: slotTitleForRemoveConfirm( s as SlotApi ),
-						bookedCount: booked,
-						currentTotal: plan.currentTotal,
-						bookedOverTarget: plan.bookedOverTarget,
-						targetTotalCapacity: tt,
-					} );
-					continue;
-				}
-				if ( plan.bookedOverTarget && plan.removeSpots < 1 ) {
+			const st = s.stock;
+			const bookedRaw = s.bookedCount;
+			if ( typeof bookedRaw !== 'number' || ! Number.isFinite( bookedRaw ) ) {
+				skippedMissingBookedData += 1;
+				continue;
+			}
+			const booked = Math.max( 0, Math.floor( bookedRaw ) );
+			const plan = planTargetTotalCapacityAdjustment( st, booked, tt );
+			if ( plan.kind === 'none' ) {
+				if ( plan.bookedOverTarget ) {
 					bookedOverTargetSessions += 1;
+				} else {
+					skippedAtOrBelowTarget += 1;
 				}
-				if ( plan.removeSpots < 1 ) {
-					continue;
-				}
+				continue;
+			}
+			if ( plan.kind === 'add' ) {
 				rows.push( {
 					slotId: sid,
 					dateId: did,
-					addSpots: 0,
-					removeSpots: plan.removeSpots,
+					addSpots: plan.addSpots,
+					removeSpots: 0,
 					currentStock: st,
 					title: slotTitleForRemoveConfirm( s as SlotApi ),
 					bookedCount: booked,
@@ -1438,7 +1264,26 @@ function EventOverviewReduceHourGroupDialog( {
 					bookedOverTarget: plan.bookedOverTarget,
 					targetTotalCapacity: tt,
 				} );
+				continue;
 			}
+			if ( plan.bookedOverTarget && plan.removeSpots < 1 ) {
+				bookedOverTargetSessions += 1;
+			}
+			if ( plan.removeSpots < 1 ) {
+				continue;
+			}
+			rows.push( {
+				slotId: sid,
+				dateId: did,
+				addSpots: 0,
+				removeSpots: plan.removeSpots,
+				currentStock: st,
+				title: slotTitleForRemoveConfirm( s as SlotApi ),
+				bookedCount: booked,
+				currentTotal: plan.currentTotal,
+				bookedOverTarget: plan.bookedOverTarget,
+				targetTotalCapacity: tt,
+			} );
 		}
 
 		return {
@@ -1449,7 +1294,7 @@ function EventOverviewReduceHourGroupDialog( {
 			skippedMissingBookedData,
 			bookedOverTargetSessions,
 		};
-	}, [ pendingGroup, hourReduceSubMode, removeDelta, hourTargetTotal ] );
+	}, [ pendingGroup, hourTargetTotal ] );
 
 	const reduceRows = hourReducePreview.rows;
 	const skippedUnlimited = hourReducePreview.skippedUnlimited;
@@ -1470,11 +1315,6 @@ function EventOverviewReduceHourGroupDialog( {
 		}
 		return m;
 	}, [ pendingGroup ] );
-
-	const clampedDelta =
-		Number.isFinite( removeDelta ) && removeDelta >= 1
-			? Math.min( Math.floor( removeDelta ), Math.max( 1, maxFiniteInHour ) )
-			: 1;
 
 	const totalPlannedRemoved = reduceRows.reduce( ( a, r ) => a + r.removeSpots, 0 );
 	const totalPlannedAdded = reduceRows.reduce( ( a, r ) => a + r.addSpots, 0 );
@@ -1559,79 +1399,31 @@ function EventOverviewReduceHourGroupDialog( {
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-3">
-					<div className="flex flex-wrap gap-2">
-						<Button
-							type="button"
-							size="sm"
-							variant={ hourReduceSubMode === 'fixedRemove' ? 'default' : 'outline' }
-							onClick={ () => setHourReduceSubMode( 'fixedRemove' ) }
+					<div className="space-y-2">
+						<Label htmlFor="overview-hour-reduce-target">Target total capacity per session</Label>
+						<Input
+							id="overview-hour-reduce-target"
+							type="number"
+							min={ 0 }
+							value={ hourTargetTotal }
+							onChange={ ( e ) => {
+								const v = parseInt( e.target.value, 10 );
+								setHourTargetTotal(
+									Number.isFinite( v ) && v >= 0 ? v : 0,
+								);
+							} }
 							disabled={ busy }
-						>
-							Remove X available spots
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							variant={ hourReduceSubMode === 'targetTotal' ? 'default' : 'outline' }
-							onClick={ () => setHourReduceSubMode( 'targetTotal' ) }
-							disabled={ busy }
-						>
-							Set total capacity to X
-						</Button>
+						/>
 					</div>
-					{ hourReduceSubMode === 'fixedRemove' ? (
-						<div className="space-y-2">
-							<Label htmlFor="overview-hour-reduce-delta">Spots to remove per session</Label>
-							<Input
-								id="overview-hour-reduce-delta"
-								type="number"
-								min={ 1 }
-								max={ Math.max( 1, maxFiniteInHour ) }
-								value={ removeDelta }
-								onChange={ ( e ) => {
-									const v = parseInt( e.target.value, 10 );
-									setRemoveDelta( Number.isFinite( v ) ? v : 1 );
-								} }
-								disabled={ busy }
-							/>
-						</div>
-					) : (
-						<div className="space-y-2">
-							<Label htmlFor="overview-hour-reduce-target">Target total capacity per session</Label>
-							<Input
-								id="overview-hour-reduce-target"
-								type="number"
-								min={ 0 }
-								value={ hourTargetTotal }
-								onChange={ ( e ) => {
-									const v = parseInt( e.target.value, 10 );
-									setHourTargetTotal(
-										Number.isFinite( v ) && v >= 0 ? v : 0,
-									);
-								} }
-								disabled={ busy }
-							/>
-						</div>
-					) }
 					<p className="text-muted-foreground text-xs">
 						Largest remaining cap in this hour:{ ' ' }
 						<span className="text-foreground font-medium tabular-nums">{ maxFiniteInHour }</span>
-						{ hourReduceSubMode === 'targetTotal' ? (
-							<>
-								{ ' · ' }
-								Planned add{ ' ' }
-								<span className="text-foreground font-medium tabular-nums">{ totalPlannedAdded }</span>
-								{ ' · ' }
-								Planned remove{ ' ' }
-								<span className="text-foreground font-medium tabular-nums">{ totalPlannedRemoved }</span>
-							</>
-						) : (
-							<>
-								{ ' · ' }
-								Planned total spots removed:{ ' ' }
-								<span className="text-foreground font-medium tabular-nums">{ totalPlannedRemoved }</span>
-							</>
-						) }
+						{ ' · ' }
+						Planned add{ ' ' }
+						<span className="text-foreground font-medium tabular-nums">{ totalPlannedAdded }</span>
+						{ ' · ' }
+						Planned remove{ ' ' }
+						<span className="text-foreground font-medium tabular-nums">{ totalPlannedRemoved }</span>
 					</p>
 					<p className="text-muted-foreground text-xs">
 						Skipped unlimited:{ ' ' }
@@ -1640,26 +1432,23 @@ function EventOverviewReduceHourGroupDialog( {
 						Skipped zero remaining:{ ' ' }
 						<span className="tabular-nums">{ skippedZero }</span>
 					</p>
-					{ hourReduceSubMode === 'targetTotal' ? (
-						<p className="text-muted-foreground text-xs">
-							Skipped (at target):{ ' ' }
-							<span className="tabular-nums">{ skippedAtOrBelowTarget }</span>
-							{ ' · ' }
-							Skipped (missing booked):{ ' ' }
-							<span className="tabular-nums">{ skippedMissingBookedData }</span>
-							{ ' · ' }
-							Booked over target (nothing to cut):{ ' ' }
-							<span className="tabular-nums">{ bookedOverTargetSessions }</span>
-						</p>
-					) : null }
+					<p className="text-muted-foreground text-xs">
+						Skipped (at target):{ ' ' }
+						<span className="tabular-nums">{ skippedAtOrBelowTarget }</span>
+						{ ' · ' }
+						Skipped (missing booked):{ ' ' }
+						<span className="tabular-nums">{ skippedMissingBookedData }</span>
+						{ ' · ' }
+						Booked over target (nothing to cut):{ ' ' }
+						<span className="tabular-nums">{ bookedOverTargetSessions }</span>
+					</p>
 				</div>
 				{ finiteCount > 0 ? (
 					<ul className="max-h-[12rem] list-inside list-decimal overflow-y-auto border border-border/60 rounded-md p-2 text-muted-foreground text-xs">
 						{ reduceRows.map( ( r ) => (
 							<li key={ `${ r.slotId }-${ r.dateId }` }>
 								<span className="text-foreground font-medium">{ r.title }</span>
-								{ hourReduceSubMode === 'targetTotal'
-								&& typeof r.bookedCount === 'number'
+								{ typeof r.bookedCount === 'number'
 								&& typeof r.currentTotal === 'number'
 								&& typeof r.targetTotalCapacity === 'number' ? (
 									<>
@@ -1685,22 +1474,13 @@ function EventOverviewReduceHourGroupDialog( {
 										) }
 										{ r.bookedOverTarget ? ' · booked over target' : '' }
 									</>
-								) : (
-									<>
-										{ ': −' }
-										<span className="tabular-nums">{ r.removeSpots }</span>
-										{ ' (was ' }
-										<span className="tabular-nums">{ r.currentStock }</span>
-										{ ')' }
-									</>
-								) }
+								) : null }
 							</li>
 						) ) }
 					</ul>
 					) : (
 						<p className="text-muted-foreground text-sm">
-							{ hourReduceSubMode === 'targetTotal'
-							&& ( ! Number.isFinite( targetTotalFloored ) || targetTotalFloored < 0 )
+							{ ! Number.isFinite( targetTotalFloored ) || targetTotalFloored < 0
 								? 'Enter a valid target total (0 or greater).'
 								: 'No finite-capacity sessions in this hour need changes for this input.' }
 						</p>
@@ -1720,12 +1500,10 @@ function EventOverviewReduceHourGroupDialog( {
 						disabled={
 							busy
 							|| finiteCount < 1
-							|| ( hourReduceSubMode === 'fixedRemove' && clampedDelta < 1 )
-							|| ( hourReduceSubMode === 'targetTotal'
-								&& ( ! Number.isFinite( targetTotalFloored ) || targetTotalFloored < 0 ) )
+							|| ( ! Number.isFinite( targetTotalFloored ) || targetTotalFloored < 0 )
 						}
 					>
-						{ busy ? 'Saving…' : 'Apply changes' }
+						{ busy ? 'Saving…' : 'Apply capacity change' }
 					</Button>
 				</DialogFooter>
 			</DialogContent>

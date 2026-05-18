@@ -58,10 +58,6 @@ export function ManagedEventScheduleDialogs( {
 		bulkRemoveConfirmOpen,
 		setBulkRemoveConfirmOpen,
 		bulkRemoving,
-		bulkReduceSpotsPerCell,
-		setBulkReduceSpotsPerCell,
-		bulkReduceSubMode,
-		setBulkReduceSubMode,
 		bulkTargetTotalCapacity,
 		setBulkTargetTotalCapacity,
 		bulkReduceStockPreview,
@@ -414,11 +410,11 @@ export function ManagedEventScheduleDialogs( {
 								aria-hidden
 							/>
 							<p className="text-muted-foreground text-sm leading-relaxed">
-								<strong className="text-foreground font-medium">Adjust capacity</strong> can either remove a
-								fixed number of <strong className="text-foreground font-medium">remaining</strong> spots per
-								session, or <strong className="text-foreground font-medium">set target total capacity</strong>{ ' ' }
-								(booked + remaining) per session by <strong className="text-foreground font-medium">raising or
-								lowering remaining availability</strong>.{ ' ' }
+								<strong className="text-foreground font-medium">Adjust capacity</strong> sets
+								a <strong className="text-foreground font-medium">target total capacity</strong>{ ' ' }
+								(booked + remaining) per matched session by{ ' ' }
+								<strong className="text-foreground font-medium">raising or lowering remaining availability</strong>.
+								{ ' ' }
 								<strong className="text-foreground font-medium">Sold tickets are never canceled or changed</strong>.
 								Unlimited sessions are skipped. When bookings already exceed the target total, remaining spots
 								drop as far as possible and those rows are flagged as booked over target.
@@ -464,89 +460,36 @@ export function ManagedEventScheduleDialogs( {
 								) }
 							</div>
 							<div className="space-y-3">
-								<div className="flex flex-wrap gap-2">
-									<Button
-										type="button"
-										size="sm"
-										variant={
-											bulkReduceSubMode === 'fixedRemove' ? 'default' : 'outline'
+								<div className="space-y-2">
+									<Label htmlFor="dlg-bulk-reduce-target-total-cap">
+										Target total capacity
+									</Label>
+									<p className="text-muted-foreground text-xs">
+										Goal per session for{ ' ' }
+										<span className="text-foreground font-medium">booked + remaining</span>.
+										Remaining spots are increased or decreased to reach this total; sold tickets stay
+										as-is.
+									</p>
+									<Input
+										id="dlg-bulk-reduce-target-total-cap"
+										type="number"
+										min={ 0 }
+										step={ 1 }
+										className="max-w-[140px]"
+										value={ bulkTargetTotalCapacity }
+										disabled={
+											scheduleManualBusy
+											|| gen.isPending
+											|| bulkRemoveEnvelope.invalid
 										}
-										onClick={ () => setBulkReduceSubMode( 'fixedRemove' ) }
-									>
-										Remove X available spots
-									</Button>
-									<Button
-										type="button"
-										size="sm"
-										variant={
-											bulkReduceSubMode === 'targetTotal' ? 'default' : 'outline'
-										}
-										onClick={ () => setBulkReduceSubMode( 'targetTotal' ) }
-									>
-										Set total capacity to X
-									</Button>
+										onChange={ ( e ) => {
+											const n = parseInt( e.target.value, 10 );
+											setBulkTargetTotalCapacity(
+												Number.isFinite( n ) && n >= 0 ? n : 0,
+											);
+										} }
+									/>
 								</div>
-								{ bulkReduceSubMode === 'fixedRemove' ? (
-									<div className="space-y-2">
-										<Label htmlFor="dlg-bulk-reduce-per-cell-cap">
-											Spots to remove per matching session
-										</Label>
-										<p className="text-muted-foreground text-xs">
-											Each finite-capacity cell loses up to this many remaining spots (never below
-											zero).
-										</p>
-										<Input
-											id="dlg-bulk-reduce-per-cell-cap"
-											type="number"
-											min={ 1 }
-											step={ 1 }
-											className="max-w-[140px]"
-											value={ bulkReduceSpotsPerCell }
-											disabled={
-												scheduleManualBusy
-												|| gen.isPending
-												|| bulkRemoveEnvelope.invalid
-											}
-											onChange={ ( e ) => {
-												const n = parseInt( e.target.value, 10 );
-												setBulkReduceSpotsPerCell(
-													Number.isFinite( n ) && n >= 1 ? n : 1,
-												);
-											} }
-										/>
-									</div>
-								) : (
-									<div className="space-y-2">
-										<Label htmlFor="dlg-bulk-reduce-target-total-cap">
-											Target total capacity
-										</Label>
-										<p className="text-muted-foreground text-xs">
-											Goal per session for{ ' ' }
-											<span className="text-foreground font-medium">booked + remaining</span>.
-											Remaining spots are increased or decreased to reach this total; sold tickets stay
-											as-is.
-										</p>
-										<Input
-											id="dlg-bulk-reduce-target-total-cap"
-											type="number"
-											min={ 0 }
-											step={ 1 }
-											className="max-w-[140px]"
-											value={ bulkTargetTotalCapacity }
-											disabled={
-												scheduleManualBusy
-												|| gen.isPending
-												|| bulkRemoveEnvelope.invalid
-											}
-											onChange={ ( e ) => {
-												const n = parseInt( e.target.value, 10 );
-												setBulkTargetTotalCapacity(
-													Number.isFinite( n ) && n >= 0 ? n : 0,
-												);
-											} }
-										/>
-									</div>
-								) }
 							</div>
 							<Card className="border-border/80 bg-background/80">
 								<CardHeader className="pb-2">
@@ -588,9 +531,7 @@ export function ManagedEventScheduleDialogs( {
 							<Card className="border-border/80 bg-background/80">
 								<CardHeader className="pb-2">
 									<CardTitle className="text-base">
-										{ bulkReduceSubMode === 'targetTotal'
-											? 'Finite-capacity matches (target total)'
-											: 'Finite-capacity matches (remove fixed amount)' }
+										Finite-capacity matches (target total)
 									</CardTitle>
 								</CardHeader>
 								<CardContent className="space-y-3 text-sm">
@@ -598,23 +539,14 @@ export function ManagedEventScheduleDialogs( {
 										<span className="text-muted-foreground">Sessions to update:</span>{ ' ' }
 										<strong className="tabular-nums">{ bulkReduceStockPreview.targets.length }</strong>
 									</p>
-									{ bulkReduceSubMode === 'targetTotal' ? (
-										<>
-											<p>
-												<span className="text-muted-foreground">Planned spots to add (remaining):</span>{ ' ' }
-												<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsAdded }</strong>
-											</p>
-											<p>
-												<span className="text-muted-foreground">Planned spots to remove (remaining):</span>{ ' ' }
-												<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsRemoved }</strong>
-											</p>
-										</>
-									) : (
-										<p>
-											<span className="text-muted-foreground">Total spots removed (planned):</span>{ ' ' }
-											<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsRemoved }</strong>
-										</p>
-									) }
+									<p>
+										<span className="text-muted-foreground">Planned spots to add (remaining):</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsAdded }</strong>
+									</p>
+									<p>
+										<span className="text-muted-foreground">Planned spots to remove (remaining):</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkReduceStockPreview.totalSpotsRemoved }</strong>
+									</p>
 									<p>
 										<span className="text-muted-foreground">Distinct calendar days touched:</span>{ ' ' }
 										<strong className="tabular-nums">{ matchedReduceDayCount }</strong>
@@ -627,22 +559,18 @@ export function ManagedEventScheduleDialogs( {
 										<span className="text-muted-foreground">Skipped (zero remaining):</span>{ ' ' }
 										<strong className="tabular-nums">{ bulkReduceStockPreview.skippedZero }</strong>
 									</p>
-									{ bulkReduceSubMode === 'targetTotal' ? (
-										<>
-											<p>
-												<span className="text-muted-foreground">Skipped (already at target):</span>{ ' ' }
-												<strong className="tabular-nums">{ bulkReduceStockPreview.skippedAtOrBelowTarget }</strong>
-											</p>
-											<p>
-												<span className="text-muted-foreground">Skipped (missing booked count):</span>{ ' ' }
-												<strong className="tabular-nums">{ bulkReduceStockPreview.skippedMissingBookedData }</strong>
-											</p>
-											<p>
-												<span className="text-muted-foreground">Booked over target (no spots left to cut):</span>{ ' ' }
-												<strong className="tabular-nums">{ bulkReduceStockPreview.bookedOverTargetSessions }</strong>
-											</p>
-										</>
-									) : null }
+									<p>
+										<span className="text-muted-foreground">Skipped (already at target):</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkReduceStockPreview.skippedAtOrBelowTarget }</strong>
+									</p>
+									<p>
+										<span className="text-muted-foreground">Skipped (missing booked count):</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkReduceStockPreview.skippedMissingBookedData }</strong>
+									</p>
+									<p>
+										<span className="text-muted-foreground">Booked over target (no spots left to cut):</span>{ ' ' }
+										<strong className="tabular-nums">{ bulkReduceStockPreview.bookedOverTargetSessions }</strong>
+									</p>
 									{ bulkReduceStockPreview.targets.length > 0 ? (
 										<ul className="max-h-[10rem] list-inside list-decimal overflow-y-auto border-t border-border/60 pt-2 text-muted-foreground text-xs">
 											{ bulkReduceStockPreview.targets.slice( 0, 40 ).map( ( t ) => (
@@ -657,8 +585,7 @@ export function ManagedEventScheduleDialogs( {
 													}
 												>
 													<span className="font-mono text-foreground">{ t.ymd }</span>
-													{ bulkReduceSubMode === 'targetTotal'
-													&& typeof t.bookedCount === 'number'
+													{ typeof t.bookedCount === 'number'
 													&& typeof t.currentTotal === 'number'
 													&& typeof t.targetTotalCapacity === 'number' ? (
 														<>
@@ -707,9 +634,7 @@ export function ManagedEventScheduleDialogs( {
 										</ul>
 									) : (
 										<p className="text-muted-foreground text-xs">
-											{ bulkReduceSubMode === 'targetTotal'
-												? 'No cells need remaining availability changed for this target, or sessions are unlimited / missing booked counts.'
-												: 'No finite-capacity cells match this pattern, or spots per session is below 1.' }
+											No cells need remaining availability changed for this target, or sessions are unlimited / missing booked counts.
 										</p>
 									) }
 								</CardContent>
@@ -732,17 +657,12 @@ export function ManagedEventScheduleDialogs( {
 										|| bulkReduceStockPreview.targets.length === 0
 										|| bulkRemoving
 										|| bulkReducingStock
-										|| ( bulkReduceSubMode === 'fixedRemove'
-											&& bulkReduceSpotsPerCell < 1 )
-										|| ( bulkReduceSubMode === 'targetTotal'
-											&& ( ! Number.isFinite( Math.floor( bulkTargetTotalCapacity ) )
-												|| Math.floor( bulkTargetTotalCapacity ) < 0 ) )
+										|| ( ! Number.isFinite( Math.floor( bulkTargetTotalCapacity ) )
+											|| Math.floor( bulkTargetTotalCapacity ) < 0 )
 									}
 									onClick={ requestBulkReduceStockConfirm }
 								>
-									{ bulkReduceSubMode === 'targetTotal'
-										? 'Continue to confirm capacity change…'
-										: 'Continue to confirm spot reduction…' }
+									Continue to confirm capacity change…
 								</Button>
 							</DialogFooter>
 						</section>
@@ -818,63 +738,38 @@ export function ManagedEventScheduleDialogs( {
 				<DialogContent showCloseButton={ ! bulkReducingStock }>
 					<DialogHeader>
 						<DialogTitle>
-							{ bulkReduceSubMode === 'targetTotal'
-								? 'Adjust capacity on matched sessions?'
-								: 'Reduce spots on matched sessions?' }
+							Adjust capacity on matched sessions?
 						</DialogTitle>
 						<DialogDescription className="text-left">
-							{ bulkReduceSubMode === 'targetTotal' ? (
-								<>
-									Set total capacity toward{ ' ' }
-									<strong className="text-foreground tabular-nums">
-										{ Math.floor( bulkTargetTotalCapacity ) }
-									</strong>
-									{ ' ' }
-									(booked + remaining) on{ ' ' }
-									<strong className="text-foreground">{ bulkReduceRunList.length }</strong>
-									{ ' ' }
-									slot–date cell(s) by <strong className="text-foreground">raising or lowering remaining
-									availability</strong>. Sold tickets are not changed.
-								</>
-							) : (
-								<>
-									Lower remaining capacity on{ ' ' }
-									<strong className="text-foreground">{ bulkReduceRunList.length }</strong>
-									{ ' ' }
-									slot–date cell(s), up to{ ' ' }
-									<strong className="text-foreground">{ bulkReduceSpotsPerCell }</strong>
-									{ ' ' }
-									spot(s) each (capped by remaining stock). Sold tickets are not changed.
-								</>
-							) }
+							<>
+								Set total capacity toward{ ' ' }
+								<strong className="text-foreground tabular-nums">
+									{ Math.floor( bulkTargetTotalCapacity ) }
+								</strong>
+								{ ' ' }
+								(booked + remaining) on{ ' ' }
+								<strong className="text-foreground">{ bulkReduceRunList.length }</strong>
+								{ ' ' }
+								slot–date cell(s) by <strong className="text-foreground">raising or lowering remaining
+								availability</strong>. Sold tickets are not changed.
+							</>
 						</DialogDescription>
 					</DialogHeader>
 					<div className="bg-muted/40 flex gap-3 rounded-lg border border-border p-4 text-sm">
 						<CircleCheck className="text-muted-foreground size-5 shrink-0" aria-hidden />
 						<p className="text-muted-foreground leading-relaxed">
-							{ bulkReduceSubMode === 'targetTotal' ? (
-								<>
-									Planned net change to remaining inventory — add{ ' ' }
-									<strong className="text-foreground tabular-nums">
-										{ bulkReduceRunList.reduce( ( a, t ) => a + t.addSpots, 0 ) }
-									</strong>
-									, remove{ ' ' }
-									<strong className="text-foreground tabular-nums">
-										{ bulkReduceRunList.reduce( ( a, t ) => a + t.removeSpots, 0 ) }
-									</strong>
-									. Sessions stay on the schedule. If another user changes capacity while this runs, some
-									updates may fail (reported in the summary).
-								</>
-							) : (
-								<>
-									Planned total spots removed from remaining inventory:{ ' ' }
-									<strong className="text-foreground tabular-nums">
-										{ bulkReduceRunList.reduce( ( a, t ) => a + t.removeSpots, 0 ) }
-									</strong>
-									. Sessions stay on the schedule. If another user changes capacity while this runs, some
-									updates may fail (reported in the summary).
-								</>
-							) }
+							<>
+								Planned net change to remaining inventory — add{ ' ' }
+								<strong className="text-foreground tabular-nums">
+									{ bulkReduceRunList.reduce( ( a, t ) => a + t.addSpots, 0 ) }
+								</strong>
+								, remove{ ' ' }
+								<strong className="text-foreground tabular-nums">
+									{ bulkReduceRunList.reduce( ( a, t ) => a + t.removeSpots, 0 ) }
+								</strong>
+								. Sessions stay on the schedule. If another user changes capacity while this runs, some
+								updates may fail (reported in the summary).
+							</>
 						</p>
 					</div>
 					<DialogFooter>
@@ -891,7 +786,7 @@ export function ManagedEventScheduleDialogs( {
 							onClick={ () => void runBulkReduceStock() }
 							disabled={ bulkReducingStock }
 						>
-							{ bulkReducingStock ? 'Saving…' : bulkReduceSubMode === 'targetTotal' ? 'Apply changes now' : 'Reduce spots now' }
+							{ bulkReducingStock ? 'Saving…' : 'Apply changes now' }
 						</Button>
 					</DialogFooter>
 				</DialogContent>
