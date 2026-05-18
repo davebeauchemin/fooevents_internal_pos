@@ -38,6 +38,34 @@ class Bookings_Checkout_Service {
 	const MAX_BOOKING_POSTAL_CODE_LENGTH = 50;
 
 	/**
+	 * Billing/attendee email when POS checkout omits email (WooCommerce + FooEvents require a value).
+	 */
+	private const POS_DEFAULT_CHECKOUT_EMAIL = 'pos-order@kaboommontreal.com';
+
+	/**
+	 * Resolve POS checkout email: blank input uses the POS default; non-blank must be valid.
+	 *
+	 * @param string $raw Raw attendee or billing email from REST.
+	 * @return string|WP_Error Sanitized email or error when non-empty but invalid.
+	 */
+	public static function normalize_pos_checkout_email_for_request( $raw ) {
+		$trimmed = trim( (string) $raw );
+		if ( '' === $trimmed ) {
+			return self::POS_DEFAULT_CHECKOUT_EMAIL;
+		}
+		$email = sanitize_email( $trimmed );
+		if ( '' === $email || ! is_email( $email ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				__( 'A valid attendee.email is required.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		return $email;
+	}
+
+	/**
 	 * Coupon codes POS tries automatically (create those coupons in WooCommerce). Extend via
 	 * `fooevents_internal_pos_auto_coupon_codes` filter — default empty.
 	 *
@@ -657,8 +685,13 @@ class Bookings_Checkout_Service {
 		$pm_raw = isset( $args['payment_method_key'] ) ? trim( (string) $args['payment_method_key'] ) : '';
 		$af     = isset( $args['attendee_first'] ) ? sanitize_text_field( (string) $args['attendee_first'] ) : '';
 		$al     = isset( $args['attendee_last'] ) ? sanitize_text_field( (string) $args['attendee_last'] ) : '';
-		$em     = isset( $args['attendee_email'] ) ? sanitize_email( (string) $args['attendee_email'] ) : '';
-		$note   = isset( $args['note'] ) ? sanitize_text_field( (string) $args['note'] ) : '';
+		$em_raw = isset( $args['attendee_email'] ) ? (string) $args['attendee_email'] : '';
+		$em_res = self::normalize_pos_checkout_email_for_request( $em_raw );
+		if ( is_wp_error( $em_res ) ) {
+			return $em_res;
+		}
+		$em   = $em_res;
+		$note = isset( $args['note'] ) ? sanitize_text_field( (string) $args['note'] ) : '';
 		$postal_pc = isset( $args['billing_postal_code'] ) ? sanitize_text_field( trim( (string) $args['billing_postal_code'] ) ) : '';
 		if ( isset( $args['check_in_now'] ) ) {
 			$b               = filter_var( $args['check_in_now'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE );
@@ -667,9 +700,6 @@ class Bookings_Checkout_Service {
 			$check_in_now = false;
 		}
 
-		if ( ! is_email( $em ) ) {
-			return new WP_Error( 'rest_invalid_param', __( 'Invalid booking parameters.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
 		if ( '' === $postal_pc ) {
 			return new WP_Error( 'rest_invalid_param', __( 'A billing postal code is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}

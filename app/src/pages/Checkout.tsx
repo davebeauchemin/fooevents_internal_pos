@@ -260,7 +260,6 @@ export default function Checkout() {
 		|| mutation.isPending
 		|| paymentMethodsLoading
 		|| ! effectivePaymentKey
-		|| ! email.trim()
 		|| ! postalCode.trim()
 		|| couponBlocking;
 
@@ -424,7 +423,7 @@ export default function Checkout() {
 									<p className="text-muted-foreground text-xs leading-snug">
 										Applied to every ticket in this order.
 									</p>
-									<div className="flex justify-end">
+									<div className="flex justify-start">
 										<Button
 											type="button"
 											variant="outline"
@@ -463,13 +462,15 @@ export default function Checkout() {
 											/>
 										</div>
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-email` }>Email</Label>
+											<Label htmlFor={ `${ formId }-email` }>
+												Email <span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-email` }
 												type="email"
 												value={ email }
 												onChange={ ( e ) => setEmail( e.target.value ) }
-												required
+												placeholder="Uses store default if left blank"
 												autoComplete="email"
 												disabled={ mutation.isPending }
 											/>

@@ -615,15 +615,19 @@ class Rest_API {
 			return $coupon_parse;
 		}
 
-		$billing_email = '';
+		$billing_raw = '';
 		if ( isset( $params['billingEmail'] ) ) {
-			$billing_email = sanitize_email( trim( wp_unslash( (string) $params['billingEmail'] ) ) );
+			$billing_raw = trim( wp_unslash( (string) $params['billingEmail'] ) );
+		}
+		$billing_resolved = Bookings_Checkout_Service::normalize_pos_checkout_email_for_request( $billing_raw );
+		if ( is_wp_error( $billing_resolved ) ) {
+			return $billing_resolved;
 		}
 
 		$out = $this->booking_checkout->preview_checkout_lines(
 			$lines_snake,
 			is_array( $coupon_parse ) ? $coupon_parse : array(),
-			$billing_email
+			$billing_resolved
 		);
 		if ( is_wp_error( $out ) ) {
 			return $out;
@@ -1223,7 +1227,11 @@ class Rest_API {
 		$att      = isset( $params['attendee'] ) && is_array( $params['attendee'] ) ? $params['attendee'] : array();
 		$fn       = isset( $att['firstName'] ) ? trim( (string) $att['firstName'] ) : '';
 		$ln       = isset( $att['lastName'] ) ? trim( (string) $att['lastName'] ) : '';
-		$em       = isset( $att['email'] ) ? trim( (string) $att['email'] ) : '';
+		$em_raw   = isset( $att['email'] ) ? trim( (string) $att['email'] ) : '';
+		$em       = Bookings_Checkout_Service::normalize_pos_checkout_email_for_request( $em_raw );
+		if ( is_wp_error( $em ) ) {
+			return $em;
+		}
 		$note   = isset( $params['note'] ) ? sanitize_text_field( (string) $params['note'] ) : '';
 		$pm_key = isset( $params['paymentMethodKey'] ) ? trim( (string) $params['paymentMethodKey'] ) : '';
 
@@ -1268,9 +1276,6 @@ class Rest_API {
 
 		if ( mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
-		if ( ! is_email( $em ) ) {
-			return new WP_Error( 'rest_invalid_param', __( 'A valid attendee.email is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 		if ( '' === $postal_pc ) {
 			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode is required for POS bookings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
