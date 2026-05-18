@@ -43,6 +43,16 @@ class Bookings_Checkout_Service {
 	private const POS_DEFAULT_CHECKOUT_EMAIL = 'pos-order@kaboommontreal.com';
 
 	/**
+	 * Guest billing names when POS checkout omits first name, last name, and postal code (split label).
+	 */
+	private const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Checkout';
+
+	/**
+	 * @see POS_CHECKOUT_GUEST_FIRST_NAME
+	 */
+	private const POS_CHECKOUT_GUEST_LAST_NAME = 'Guest';
+
+	/**
 	 * Resolve POS checkout email: blank input uses the POS default; non-blank must be valid.
 	 *
 	 * @param string $raw Raw attendee or billing email from REST.
@@ -700,16 +710,15 @@ class Bookings_Checkout_Service {
 			$check_in_now = false;
 		}
 
-		if ( '' === $af || '' === $al ) {
-			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
+		if ( '' === $af && '' === $al && '' === $postal_pc ) {
+			$af = self::POS_CHECKOUT_GUEST_FIRST_NAME;
+			$al = self::POS_CHECKOUT_GUEST_LAST_NAME;
 		}
+
 		if ( mb_strlen( $af ) > 100 || mb_strlen( $al ) > 100 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}
 
-		if ( '' === $postal_pc ) {
-			return new WP_Error( 'rest_invalid_param', __( 'A billing postal code is required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
 		if ( mb_strlen( $postal_pc ) > self::MAX_BOOKING_POSTAL_CODE_LENGTH ) {
 			return new WP_Error( 'rest_invalid_param', __( 'Billing postal code is too long.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
 		}

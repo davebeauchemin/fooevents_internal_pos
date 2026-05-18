@@ -1,6 +1,5 @@
 import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,14 +38,6 @@ export default function CheckoutGuestInfo() {
 	};
 
 	const beginStaffHandoff = () => {
-		if ( ! first.trim() || ! last.trim() ) {
-			toast.error( 'First name and last name are required.' );
-			return;
-		}
-		if ( ! postalCode.trim() ) {
-			toast.error( 'Postal code is required.' );
-			return;
-		}
 		setPhase( 'waiting' );
 	};
 
@@ -85,25 +76,31 @@ export default function CheckoutGuestInfo() {
 									<div className="grid gap-4 text-left sm:max-w-lg">
 										<div className="grid gap-2 sm:grid-cols-2 sm:gap-3">
 											<div className="grid gap-2">
-												<Label htmlFor={ `${ formId }-guest-first` }>First name</Label>
+												<Label htmlFor={ `${ formId }-guest-first` }>
+													First name{ ' ' }
+													<span className="text-muted-foreground font-normal">(optional)</span>
+												</Label>
 												<Input
 													id={ `${ formId }-guest-first` }
 													value={ first }
 													onChange={ ( e ) => setFirst( e.target.value ) }
-													required
 													maxLength={ 100 }
 													autoComplete="given-name"
+													placeholder="Leave blank if unknown"
 												/>
 											</div>
 											<div className="grid gap-2">
-												<Label htmlFor={ `${ formId }-guest-last` }>Last name</Label>
+												<Label htmlFor={ `${ formId }-guest-last` }>
+													Last name{ ' ' }
+													<span className="text-muted-foreground font-normal">(optional)</span>
+												</Label>
 												<Input
 													id={ `${ formId }-guest-last` }
 													value={ last }
 													onChange={ ( e ) => setLast( e.target.value ) }
-													required
 													maxLength={ 100 }
 													autoComplete="family-name"
+													placeholder="Leave blank if unknown"
 												/>
 											</div>
 											<div className="grid gap-2 sm:col-span-2">
@@ -121,17 +118,19 @@ export default function CheckoutGuestInfo() {
 												/>
 											</div>
 											<div className="grid gap-2 sm:col-span-2">
-												<Label htmlFor={ `${ formId }-guest-postal` }>Postal code</Label>
+												<Label htmlFor={ `${ formId }-guest-postal` }>
+													Postal code{ ' ' }
+													<span className="text-muted-foreground font-normal">(optional)</span>
+												</Label>
 												<Input
 													id={ `${ formId }-guest-postal` }
 													type="text"
 													value={ postalCode }
 													onChange={ ( e ) => setPostalCode( e.target.value ) }
-													required
 													maxLength={ 50 }
 													autoComplete="postal-code"
 													inputMode="text"
-													placeholder="Customer postal / ZIP code"
+													placeholder="Leave blank if unknown"
 												/>
 											</div>
 										</div>

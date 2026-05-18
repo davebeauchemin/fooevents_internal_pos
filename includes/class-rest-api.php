@@ -1274,19 +1274,6 @@ class Rest_API {
 			$booking_args['qty']      = $qty;
 		}
 
-		if ( '' === $fn || '' === $ln ) {
-			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName are required.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
-		if ( mb_strlen( $fn ) > 100 || mb_strlen( $ln ) > 100 ) {
-			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
-		if ( '' === $postal_pc ) {
-			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode is required for POS bookings.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
-		if ( mb_strlen( $postal_pc ) > 50 ) {
-			return new WP_Error( 'rest_invalid_param', __( 'billing.postalCode must be 50 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
-		}
-
 		$coupon_parse = Bookings_Checkout_Service::parse_coupon_codes_from_rest_payload( isset( $params['couponCodes'] ) ? $params['couponCodes'] : null );
 		if ( is_wp_error( $coupon_parse ) ) {
 			return $coupon_parse;

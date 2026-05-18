@@ -30,6 +30,10 @@ import { cn } from '@/lib/utils';
 
 const MAX_POS_COUPONS = 20;
 
+/** Split label when attendee first name, last name, and postal code are all omitted at POS checkout. */
+const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Checkout';
+const POS_CHECKOUT_GUEST_LAST_NAME = 'Guest';
+
 function parseCouponCodesInput( raw: string ): string[] {
 	const parts = raw.split( /[\s,;]+/ );
 	const out: string[] = [];
@@ -299,9 +303,6 @@ export default function Checkout() {
 		|| mutation.isPending
 		|| paymentMethodsLoading
 		|| ! effectivePaymentKey
-		|| ! first.trim()
-		|| ! last.trim()
-		|| ! postalCode.trim()
 		|| couponBlocking;
 
 	const onSubmit = async ( e: FormEvent ) => {
@@ -310,17 +311,22 @@ export default function Checkout() {
 			return;
 		}
 		try {
+			const firstTrimmed = first.trim();
+			const lastTrimmed = last.trim();
+			const postalTrimmed = postalCode.trim();
+			const useGuestIdentity =
+				firstTrimmed === '' && lastTrimmed === '' && postalTrimmed === '';
 			const res = ( await mutation.mutateAsync( {
 				lines: previewLines,
 				paymentMethodKey: effectivePaymentKey,
 				checkInNow,
 				attendee: {
-					firstName: first.trim(),
-					lastName: last.trim(),
+					firstName: useGuestIdentity ? POS_CHECKOUT_GUEST_FIRST_NAME : firstTrimmed,
+					lastName: useGuestIdentity ? POS_CHECKOUT_GUEST_LAST_NAME : lastTrimmed,
 					email: email.trim(),
 				},
 				billing: {
-					postalCode: postalCode.trim(),
+					postalCode: useGuestIdentity ? '' : postalTrimmed,
 				},
 				couponCodes: couponCodesForApi,
 			} ) ) as {
@@ -477,27 +483,33 @@ export default function Checkout() {
 									</div>
 									<div className="grid gap-3 sm:grid-cols-2">
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-first` }>First name</Label>
+											<Label htmlFor={ `${ formId }-first` }>
+												First name{ ' ' }
+												<span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-first` }
 												value={ first }
 												onChange={ ( e ) => setFirst( e.target.value ) }
-												required
 												maxLength={ 100 }
 												autoComplete="given-name"
 												disabled={ mutation.isPending }
+												placeholder="Leave blank if unknown"
 											/>
 										</div>
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-last` }>Last name</Label>
+											<Label htmlFor={ `${ formId }-last` }>
+												Last name{ ' ' }
+												<span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-last` }
 												value={ last }
 												onChange={ ( e ) => setLast( e.target.value ) }
-												required
 												maxLength={ 100 }
 												autoComplete="family-name"
 												disabled={ mutation.isPending }
+												placeholder="Leave blank if unknown"
 											/>
 										</div>
 										<div className="grid gap-2">
@@ -515,17 +527,19 @@ export default function Checkout() {
 											/>
 										</div>
 										<div className="grid gap-2">
-											<Label htmlFor={ `${ formId }-postal` }>Postal code</Label>
+											<Label htmlFor={ `${ formId }-postal` }>
+												Postal code{ ' ' }
+												<span className="text-muted-foreground font-normal">(optional)</span>
+											</Label>
 											<Input
 												id={ `${ formId }-postal` }
 												type="text"
 												value={ postalCode }
 												onChange={ ( e ) => setPostalCode( e.target.value ) }
-												required
 												maxLength={ 50 }
 												autoComplete="postal-code"
 												inputMode="text"
-												placeholder="Customer postal / ZIP code"
+												placeholder="Leave blank if unknown"
 												disabled={ mutation.isPending }
 											/>
 										</div>
