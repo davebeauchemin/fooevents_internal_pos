@@ -4,7 +4,7 @@ import { restFetch } from './client.js';
 const prefix = 'internalpos/v1';
 
 /**
- * Mark event detail queries stale and refetch observers so Manage schedule / Event detail repaint immediately.
+ * Mark event detail queries stale and refetch observers so Add missing sessions / Event detail repaint immediately.
  *
  * @param {import('@tanstack/react-query').QueryClient} qc
  * @param {number|string|undefined} eventId
@@ -333,6 +333,22 @@ export function useRemoveSlotStock( eventId ) {
  * @returns {Promise<unknown>}
  */
 export async function subtractSlotStockViaRest( eventId, body ) {
+	return restFetch( `${ prefix }/events/${ eventId }/slots/stock`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify( body ),
+	} );
+}
+
+/**
+ * Add capacity on one slot–date cell (same endpoint as {@link useAddSlotStock}).
+ * Use for bulk flows that call {@link invalidateInternalPosAfterSlotWrites} once at the end.
+ *
+ * @param {number|string|undefined} eventId
+ * @param {{ slotId: string, dateId: string, date: string, addSpots: number }} body
+ * @returns {Promise<unknown>}
+ */
+export async function addSlotStockViaRest( eventId, body ) {
 	return restFetch( `${ prefix }/events/${ eventId }/slots/stock`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },

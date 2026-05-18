@@ -467,37 +467,67 @@ export function hourRemainingSpotsLabel( slots: Pick<SlotLike, 'stock' >[] ) {
 	return `${ total } left`;
 }
 
-export type TargetTotalRemovalPlan = {
-	removeSpots: number;
-	bookedOverTarget: boolean;
-	currentTotal: number;
-	desiredRemaining: number;
-};
+export type TargetTotalCapacityPlan =
+	| {
+		kind: 'none';
+		currentTotal: number;
+		desiredRemaining: number;
+		bookedOverTarget: boolean;
+	}
+	| {
+		kind: 'add';
+		addSpots: number;
+		currentTotal: number;
+		desiredRemaining: number;
+		bookedOverTarget: boolean;
+	}
+	| {
+		kind: 'remove';
+		removeSpots: number;
+		currentTotal: number;
+		desiredRemaining: number;
+		bookedOverTarget: boolean;
+	};
 
 /**
- * Plan how many spots to remove from remaining stock to reach a target **total** capacity
- * (`booked + remaining`), without altering sold tickets.
- *
- * @returns `null` when `currentTotal <= targetTotal` (nothing to do).
+ * Plan how to change remaining availability so **booked + remaining** matches `targetTotal`.
+ * Sold tickets are not altered: `desiredRemaining = max(0, targetTotal - bookedCount)`.
  */
-export function planTargetTotalCapacityRemoval(
+export function planTargetTotalCapacityAdjustment(
 	remainingStock: number,
 	bookedCount: number,
 	targetTotal: number,
-): TargetTotalRemovalPlan | null {
+): TargetTotalCapacityPlan {
 	const rem = Math.max( 0, Math.floor( remainingStock ) );
 	const booked = Math.max( 0, Math.floor( bookedCount ) );
 	const tt = Math.floor( targetTotal );
-	const currentTotal = rem + booked;
-	if ( currentTotal <= tt ) {
-		return null;
-	}
 	const desiredRemaining = Math.max( 0, tt - booked );
-	const removeSpots = rem - desiredRemaining;
+	const bookedOverTarget = booked > tt;
+	const currentTotal = rem + booked;
+	const delta = desiredRemaining - rem;
+
+	if ( delta === 0 ) {
+		return {
+			kind: 'none',
+			currentTotal,
+			desiredRemaining,
+			bookedOverTarget,
+		};
+	}
+	if ( delta > 0 ) {
+		return {
+			kind: 'add',
+			addSpots: delta,
+			currentTotal,
+			desiredRemaining,
+			bookedOverTarget,
+		};
+	}
 	return {
-		removeSpots: Math.max( 0, removeSpots ),
-		bookedOverTarget: booked > tt,
+		kind: 'remove',
+		removeSpots: -delta,
 		currentTotal,
 		desiredRemaining,
+		bookedOverTarget,
 	};
 }

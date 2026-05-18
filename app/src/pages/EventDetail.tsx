@@ -13,7 +13,12 @@ import { WorkspaceScheduleBlockingOverlay } from '@/components/WorkspaceSchedule
 import { useManageSchedule } from '@/hooks/useManageSchedule';
 import { useEventScheduleMutationsBusy } from '@/hooks/useEventScheduleMutationsBusy';
 
-type ManageTab = 'session' | 'spots' | 'remove' | 'schedule' | 'replace';
+type ManageTab =
+	| 'session'
+	| 'remove'
+	| 'capacity'
+	| 'schedule'
+	| 'replace';
 
 function parseManageParam(
 	raw: string | null,
@@ -21,8 +26,8 @@ function parseManageParam(
 ): ManageTab | null {
 	if (
 		raw === 'session'
-		|| raw === 'spots'
 		|| raw === 'remove'
+		|| raw === 'capacity'
 		|| raw === 'schedule'
 	) {
 		return raw;
@@ -126,8 +131,11 @@ export default function EventDetail() {
 				<Button type="button" onClick={ () => openTab( 'session' ) }>
 					Add new session
 				</Button>
-				<Button type="button" variant="secondary" onClick={ () => openTab( 'spots' ) }>
-					Add ticket spots
+				<Button type="button" variant="secondary" onClick={ () => openTab( 'capacity' ) }>
+					Adjust capacity
+				</Button>
+				<Button type="button" variant="outline" onClick={ () => openTab( 'schedule' ) }>
+					Add missing sessions
 				</Button>
 				<Button
 					type="button"
@@ -136,9 +144,6 @@ export default function EventDetail() {
 					onClick={ () => openTab( 'remove' ) }
 				>
 					Remove time block
-				</Button>
-				<Button type="button" variant="outline" onClick={ () => openTab( 'schedule' ) }>
-					Manage schedule
 				</Button>
 				{ canReplaceEventSchedules ? (
 					<Button
@@ -157,8 +162,8 @@ export default function EventDetail() {
 			<ManagedEventScheduleDialogs
 				mgr={ mgr }
 				sessionOpen={ manageTab === 'session' }
-				spotsOpen={ manageTab === 'spots' }
 				removeOpen={ manageTab === 'remove' }
+				capacityOpen={ manageTab === 'capacity' }
 				scheduleOpen={ manageTab === 'schedule' }
 				replaceOpen={
 					canReplaceEventSchedules && manageTab === 'replace'
@@ -168,12 +173,12 @@ export default function EventDetail() {
 						closeManagedDialogs();
 					}
 				} }
-				onSpotsOpenChange={ ( open ) => {
+				onRemoveOpenChange={ ( open ) => {
 					if ( ! open ) {
 						closeManagedDialogs();
 					}
 				} }
-				onRemoveOpenChange={ ( open ) => {
+				onCapacityOpenChange={ ( open ) => {
 					if ( ! open ) {
 						closeManagedDialogs();
 					}
@@ -190,7 +195,11 @@ export default function EventDetail() {
 				} }
 			/>
 			<WorkspaceScheduleBlockingOverlay
-				open={ scheduleMutationsBusy || mgr.bulkRemoving }
+				open={
+					scheduleMutationsBusy
+					|| mgr.bulkRemoving
+					|| mgr.bulkReducingStock
+				}
 			/>
 		</div>
 	);

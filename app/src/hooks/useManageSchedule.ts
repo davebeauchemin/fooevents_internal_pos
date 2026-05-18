@@ -5,22 +5,20 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import {
 	useAddManualSlot,
-	useAddSlotStock,
 	useEvent,
 	useGenerateSlots,
 	invalidateInternalPosAfterSlotWrites,
+	addSlotStockViaRest,
 	subtractSlotStockViaRest,
 } from '@/api/queries.js';
 import { restFetch } from '@/api/client.js';
 import {
-	decodeManualSlotDateRef,
 	encodeManualSlotDateRef,
-	formatSlotTime,
 	manualSlotWouldDuplicateExisting,
 	normalizeTimeInputToHhmm,
 	slotMatchesBulkRemoveTimeOnly,
 	type SlotLike,
-	planTargetTotalCapacityRemoval,
+	planTargetTotalCapacityAdjustment,
 } from '@/lib/slotHourGrouping';
 import { siteYmdPrefixFromWpNowLocal } from '@/lib/wpSiteClock';
 
@@ -58,7 +56,10 @@ export type BulkReduceStockTarget = {
 	dateId: string;
 	ymd: string;
 	currentStock: number;
+	/** Target-total and fixed-remove: spots to remove (0 if this row only adds). */
 	removeSpots: number;
+	/** Target-total: spots to add to remaining capacity (0 if this row only removes). */
+	addSpots: number;
 	bookedCount?: number;
 	currentTotal?: number;
 	bookedOverTarget?: boolean;
@@ -73,6 +74,7 @@ export type BulkReduceStockPreview = {
 	skippedMissingBookedData: number;
 	bookedOverTargetSessions: number;
 	totalSpotsRemoved: number;
+	totalSpotsAdded: number;
 };
 
 export type BulkReduceComputationMode =
@@ -554,6 +556,7 @@ function computeBulkReduceStockTargets(
 		skippedMissingBookedData: 0,
 		bookedOverTargetSessions: 0,
 		totalSpotsRemoved: 0,
+		totalSpotsAdded: 0,
 	};
 
 	if ( computation.kind === 'fixedRemove' ) {
@@ -650,6 +653,7 @@ function computeBulkReduceStockTargets(
 							ymd,
 							currentStock: stRaw,
 							removeSpots,
+							addSpots: 0,
 							bookedCount: bookedDisp,
 							currentTotal: stRaw + bookedDisp,
 						} );
@@ -664,9 +668,32 @@ function computeBulkReduceStockTargets(
 					}
 					const booked = Math.max( 0, Math.floor( bookedRaw ) );
 
-					const plan = planTargetTotalCapacityRemoval( stRaw, booked, targetTotal );
-					if ( plan === null ) {
-						skippedAtOrBelowTarget += 1;
+					const plan = planTargetTotalCapacityAdjustment(
+						stRaw,
+						booked,
+						targetTotal,
+					);
+					if ( plan.kind === 'none' ) {
+						if ( plan.bookedOverTarget ) {
+							bookedOverTargetSessions += 1;
+						} else {
+							skippedAtOrBelowTarget += 1;
+						}
+						continue;
+					}
+					if ( plan.kind === 'add' ) {
+						out.push( {
+							slotId: sid,
+							dateId: did,
+							ymd,
+							currentStock: stRaw,
+							addSpots: plan.addSpots,
+							removeSpots: 0,
+							bookedCount: booked,
+							currentTotal: plan.currentTotal,
+							bookedOverTarget: plan.bookedOverTarget,
+							targetTotalCapacity: targetTotal,
+						} );
 						continue;
 					}
 					if ( plan.bookedOverTarget && plan.removeSpots < 1 ) {
@@ -680,6 +707,7 @@ function computeBulkReduceStockTargets(
 						dateId: did,
 						ymd,
 						currentStock: stRaw,
+						addSpots: 0,
 						removeSpots: plan.removeSpots,
 						bookedCount: booked,
 						currentTotal: plan.currentTotal,
@@ -692,6 +720,7 @@ function computeBulkReduceStockTargets(
 	}
 
 	const totalSpotsRemoved = out.reduce( ( acc, t ) => acc + t.removeSpots, 0 );
+	const totalSpotsAdded = out.reduce( ( acc, t ) => acc + t.addSpots, 0 );
 	return {
 		targets: out,
 		skippedUnlimited,
@@ -700,6 +729,7 @@ function computeBulkReduceStockTargets(
 		skippedMissingBookedData,
 		bookedOverTargetSessions,
 		totalSpotsRemoved,
+		totalSpotsAdded,
 	};
 }
 
@@ -755,7 +785,6 @@ export function useManageSchedule(
 	const queryClient = useQueryClient();
 	const gen = useGenerateSlots( eventId );
 	const addManual = useAddManualSlot( eventId );
-	const addStock = useAddSlotStock( eventId );
 
 	const apiWpSiteYmd = useMemo( () => {
 		if ( eventData && typeof eventData.siteTodayYmd === 'string' ) {
@@ -778,13 +807,6 @@ export function useManageSchedule(
 	const [ manualTime, setManualTime ] = useState( '09:00' );
 	const [ manualCapacity, setManualCapacity ] = useState( 12 );
 	const [ manualLabel, setManualLabel ] = useState( '' );
-	const [ manualAddMode, setManualAddMode ] = useState<
-		'newSession' | 'extraSpots'
-	>( 'newSession' );
-	const [ manualSpotSelectValue, setManualSpotSelectValue ] = useState( '' );
-	const [ manualAddSpotsDelta, setManualAddSpotsDelta ] = useState( 1 );
-	const [ manualStockConfirmOpen, setManualStockConfirmOpen ] =
-		useState( false );
 	const [ bulkRemoveConfirmOpen, setBulkRemoveConfirmOpen ] = useState( false );
 	const [ bulkRemoveRunList, setBulkRemoveRunList ] = useState<
 		BulkRemoveTarget[]
@@ -926,23 +948,12 @@ export function useManageSchedule(
 
 	const manualAddWouldDuplicate = useMemo(
 		() =>
-			manualAddMode === 'newSession'
-			&& manualSlotWouldDuplicateExisting(
+			manualSlotWouldDuplicateExisting(
 				slotsOnManualDate,
 				manualTime,
 				manualLabel,
 			),
-		[ manualAddMode, slotsOnManualDate, manualTime, manualLabel ],
-	);
-
-	const spotsEligibleSchedule = useMemo(
-		() =>
-			slotsOnManualDate.filter( ( s ) => {
-				const sid = String( s.id ?? '' ).trim();
-				const did = String( s.dateId ?? '' ).trim();
-				return Boolean( sid && did && s.stock !== null && s.stock !== undefined );
-			} ),
-		[ slotsOnManualDate ],
+		[ slotsOnManualDate, manualTime, manualLabel ],
 	);
 
 	const bulkRemoveTargets = useMemo( () => {
@@ -989,6 +1000,7 @@ export function useManageSchedule(
 				skippedMissingBookedData: 0,
 				bookedOverTargetSessions: 0,
 				totalSpotsRemoved: 0,
+				totalSpotsAdded: 0,
 			};
 		}
 		const datesForBulkReduce =
@@ -1010,55 +1022,13 @@ export function useManageSchedule(
 		bulkReduceComputation,
 	] );
 
-	useEffect( () => {
-		if ( manualAddMode !== 'extraSpots' ) {
-			return;
-		}
-		if ( spotsEligibleSchedule.length === 0 ) {
-			setManualSpotSelectValue( '' );
-			return;
-		}
-		setManualSpotSelectValue( ( prev ) => {
-			if (
-				prev
-				&& spotsEligibleSchedule.some(
-					( s ) => encodeManualSlotDateRef( s ) === prev,
-				)
-			) {
-				return prev;
-			}
-			return encodeManualSlotDateRef( spotsEligibleSchedule[ 0 ] );
-		} );
-	}, [ manualAddMode, spotsEligibleSchedule ] );
-
-	const selectedSpotSchedule = useMemo( () => {
-		if ( ! manualSpotSelectValue ) {
-			return undefined;
-		}
-		return spotsEligibleSchedule.find(
-			( s ) => encodeManualSlotDateRef( s ) === manualSpotSelectValue,
-		);
-	}, [ spotsEligibleSchedule, manualSpotSelectValue ] );
-
 	const scheduleManualBusy =
 		addManual.isPending
-		|| addStock.isPending
 		|| bulkRemoving
 		|| bulkReducingStock;
 
 	const manualDuplicateMessage =
-		'That time already has a session on this date. Use Add ticket spots for more capacity, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
-
-	const scheduleSlotPickerLabel = useCallback( ( s: SlotLike ): string => {
-		const t = formatSlotTime( s );
-		const lab = ( s.label ?? '' ).trim();
-		const head = lab || t;
-		const cap =
-			s.stock === null || s.stock === undefined
-				? 'Unlimited'
-				: `${ s.stock } cap`;
-		return `${ head } · ${ t } · ${ cap }`;
-	}, [] );
+		'That time already has a session on this date. Add spots to that session from the schedule below, or pick a different time (or a distinct schedule label if your product allows multiple sessions at one time).';
 
 	const updateBlock = useCallback( (
 		blockId: string,
@@ -1095,25 +1065,6 @@ export function useManageSchedule(
 	const submitManualSlot = useCallback(
 		async ( ev: FormEvent ) => {
 			ev.preventDefault();
-			if ( manualAddMode === 'extraSpots' ) {
-				if ( spotsEligibleSchedule.length === 0 ) {
-					toast.error(
-						'No sessions with a set capacity on that date. Use New session or pick a date that already has numeric limits.',
-					);
-					return;
-				}
-				const parsed = decodeManualSlotDateRef( manualSpotSelectValue );
-				if ( ! parsed ) {
-					toast.error( 'Select a session to add spots to.' );
-					return;
-				}
-				if ( manualAddSpotsDelta < 1 ) {
-					toast.error( 'Add at least 1 spot.' );
-					return;
-				}
-				setManualStockConfirmOpen( true );
-				return;
-			}
 			if ( manualAddWouldDuplicate ) {
 				toast.error( manualDuplicateMessage );
 				return;
@@ -1146,10 +1097,6 @@ export function useManageSchedule(
 			}
 		},
 		[
-			manualAddMode,
-			spotsEligibleSchedule,
-			manualSpotSelectValue,
-			manualAddSpotsDelta,
 			manualAddWouldDuplicate,
 			manualDuplicateMessage,
 			manualTime,
@@ -1159,36 +1106,6 @@ export function useManageSchedule(
 			addManual,
 		],
 	);
-
-	const commitManualStockAdd = useCallback( async () => {
-		const parsed = decodeManualSlotDateRef( manualSpotSelectValue );
-		if ( ! parsed || manualAddSpotsDelta < 1 ) {
-			return;
-		}
-		try {
-			await addStock.mutateAsync( {
-				slotId: parsed.slotId,
-				dateId: parsed.dateId,
-				date: manualDate.trim(),
-				addSpots: manualAddSpotsDelta,
-			} );
-			setManualStockConfirmOpen( false );
-			setMutationSuccessAck( {
-				title: 'Ticket spots added',
-				description:
-					`Added ${ manualAddSpotsDelta } ticket spot(s) to the selected session.`,
-			} );
-		} catch ( e ) {
-			toast.error(
-				String( ( e as Error )?.message || e || 'Request failed' ),
-			);
-		}
-	}, [
-		manualSpotSelectValue,
-		manualAddSpotsDelta,
-		addStock,
-		manualDate,
-	] );
 
 	const requestBulkRemoveConfirm = useCallback( () => {
 		if ( bulkRemoveEnvelope.invalid ) {
@@ -1270,7 +1187,7 @@ export function useManageSchedule(
 		if ( bulkReduceStockPreview.targets.length === 0 ) {
 			toast.message(
 				bulkReduceSubMode === 'targetTotal'
-					? 'No sessions need changes for this target total (unlimited, missing booked counts, already at/below target, or zero removal).'
+					? 'No sessions need changes for this target total (unlimited, missing booked counts, already at target, or booked over target with no remaining to cut).'
 					: 'No finite-capacity sessions to reduce for this pattern. Unlimited or empty sessions are skipped.',
 			);
 			return;
@@ -1292,19 +1209,34 @@ export function useManageSchedule(
 		}
 		let applied = 0;
 		let failed = 0;
+		let totalAdded = 0;
+		let totalRemoved = 0;
 		setBulkReducingStock( true );
 		try {
 			for ( const t of targets ) {
-				if ( t.removeSpots < 1 ) {
+				const addN = t.addSpots >= 1 ? Math.floor( t.addSpots ) : 0;
+				const removeN = t.removeSpots >= 1 ? Math.floor( t.removeSpots ) : 0;
+				if ( addN < 1 && removeN < 1 ) {
 					continue;
 				}
 				try {
-					await subtractSlotStockViaRest( eventId, {
-						slotId: t.slotId,
-						dateId: t.dateId,
-						date: t.ymd,
-						removeSpots: t.removeSpots,
-					} );
+					if ( addN >= 1 ) {
+						await addSlotStockViaRest( eventId, {
+							slotId: t.slotId,
+							dateId: t.dateId,
+							date: t.ymd,
+							addSpots: addN,
+						} );
+						totalAdded += addN;
+					} else {
+						await subtractSlotStockViaRest( eventId, {
+							slotId: t.slotId,
+							dateId: t.dateId,
+							date: t.ymd,
+							removeSpots: removeN,
+						} );
+						totalRemoved += removeN;
+					}
 					applied += 1;
 				} catch {
 					failed += 1;
@@ -1316,10 +1248,16 @@ export function useManageSchedule(
 				failed > 0
 					? ` ${ failed } failed (capacity may have changed).`
 					: '';
+			const changePart = [
+				totalAdded > 0 ? `+${ totalAdded } spots` : null,
+				totalRemoved > 0 ? `−${ totalRemoved } spots` : null,
+			]
+				.filter( Boolean )
+				.join( ', ' );
 			setMutationSuccessAck( {
-				title: 'Ticket spots reduced',
+				title: 'Capacity adjusted',
 				description:
-					`Reduced capacity on ${ applied } session${ applied === 1 ? '' : 's' } (${ targets.length } planned).${ failPart }`,
+					`Updated ${ applied } session${ applied === 1 ? '' : 's' } (${ targets.length } planned)${ changePart ? ` — ${ changePart }` : '' }.${ failPart }`,
 			} );
 		} catch ( e ) {
 			toast.error(
@@ -1441,14 +1379,6 @@ export function useManageSchedule(
 		setManualCapacity,
 		manualLabel,
 		setManualLabel,
-		manualAddMode,
-		setManualAddMode,
-		manualSpotSelectValue,
-		setManualSpotSelectValue,
-		manualAddSpotsDelta,
-		setManualAddSpotsDelta,
-		manualStockConfirmOpen,
-		setManualStockConfirmOpen,
 		bulkRemoveConfirmOpen,
 		setBulkRemoveConfirmOpen,
 		blocks,
@@ -1484,21 +1414,16 @@ export function useManageSchedule(
 		runBulkReduceStock,
 		slotsOnManualDate,
 		manualAddWouldDuplicate,
-		spotsEligibleSchedule,
-		selectedSpotSchedule,
 		scheduleManualBusy,
 		manualDuplicateMessage,
-		scheduleSlotPickerLabel,
 		updateBlock,
 		toggleWeekday,
 		submitManualSlot,
-		commitManualStockAdd,
 		requestBulkRemoveConfirm,
 		runBulkRemoveBlocks,
 		runGenerate,
 		runFillEmpty,
 		addManual,
-		addStock,
 		mutationSuccessAck,
 		dismissMutationSuccessAck,
 	};
