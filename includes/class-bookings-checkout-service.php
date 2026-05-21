@@ -43,14 +43,15 @@ class Bookings_Checkout_Service {
 	private const POS_DEFAULT_CHECKOUT_EMAIL = 'pos-order@kaboommontreal.com';
 
 	/**
-	 * Guest billing names when POS checkout omits first name, last name, and postal code (split label).
+	 * Guest billing names when POS checkout omits first name, last name, and postal code.
+	 * Combined as "POS Guest Checkout" in WooCommerce order lists.
 	 */
-	private const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Checkout';
+	private const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Guest';
 
 	/**
 	 * @see POS_CHECKOUT_GUEST_FIRST_NAME
 	 */
-	private const POS_CHECKOUT_GUEST_LAST_NAME = 'Guest';
+	private const POS_CHECKOUT_GUEST_LAST_NAME = 'Checkout';
 
 	/**
 	 * Resolve POS checkout email: blank input uses the POS default; non-blank must be valid.

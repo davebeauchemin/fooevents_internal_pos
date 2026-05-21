@@ -30,9 +30,9 @@ import { cn } from '@/lib/utils';
 
 const MAX_POS_COUPONS = 20;
 
-/** Split label when attendee first name, last name, and postal code are all omitted at POS checkout. */
-const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Checkout';
-const POS_CHECKOUT_GUEST_LAST_NAME = 'Guest';
+/** Guest billing names when first name, last name, and postal code are all omitted (order list: POS Guest Checkout). */
+const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Guest';
+const POS_CHECKOUT_GUEST_LAST_NAME = 'Checkout';
 
 function parseCouponCodesInput( raw: string ): string[] {
 	const parts = raw.split( /[\s,;]+/ );
