@@ -67,6 +67,10 @@ The plugin enqueues `public/frontend/css|js` on single product and on cart/check
 
 After upgrading to **0.1.1.4+**, if you used the schedule generator before that release, open **Internal POS → Schedule** for each affected product and **Save schedule** once so serialized slot meta is rewritten with the correct key order. **0.1.1.5+** addressed time-only slot labels; **0.1.1.6+** restores optional schedule block names and improves the storefront pill text. Re-save the schedule after upgrade.
 
+## Order attribution (WooCommerce admin)
+
+Internal POS bookings set `_wc_order_attribution_source_type` to `pos` when the order is created, so **WooCommerce → Orders** and the order **Order attribution** metabox show **Point of Sale** instead of **Unknown**. Enable **Order Attribution** under **WooCommerce → Settings → Advanced → Features** on the site. Existing orders are unchanged unless you update their attribution meta manually.
+
 ## REST
 
 - `GET /wp-json/internalpos/v1/events`

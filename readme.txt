@@ -16,6 +16,8 @@ Internal point-of-sale for FooEvents Bookings at /internal-pos/. Cashiers and sh
 
 Regional reporting (postal codes): checkout captures a billing postal/ZIP code for each POS booking. WooCommerce stores this in the native billing_postcode field (postmeta key _billing_postcode), so POS and storefront orders can be analyzed together. Internal POS orders also set order meta _fooevents_internal_pos_postal_code (same value) and _fooevents_internal_pos_postal_code_source = manual_pos to identify cashier-entered values. Values are trimmed and sanitized only (no enforced format).
 
+Order attribution: each Internal POS booking sets WooCommerce Order Attribution meta _wc_order_attribution_source_type = pos so WooCommerce > Orders shows Origin as Point of Sale (requires Order Attribution enabled under WooCommerce > Settings > Advanced > Features). Orders placed before this behavior was added keep their prior origin unless backfilled manually.
+
 Coupons (WooCommerce): each coupon lists a **FooEvents POS / storefront** panel in WooCommerce > Marketing > Coupons: **Auto-apply** (`Off`, `Internal POS checkout`, `Storefront checkout`, or `both`), **Channel restriction** (`both`, **POS only**, **Storefront only**), optional **Bundle tier** with **Tickets per bundle**. Bundle tiers stack as multiple WooCommerce cart/order fees (one line per grouped pack across total FooEvents booking ticket qty—largest tiers first—so e.g. 8 tickets applies two× four-packs). Tier amounts must use **Fixed cart discount** in WooCommerce.
 
 Checkout preview (`POST checkout/preview`) and bookings accept `couponCodes` for cashier-entered codes. Tier codes entered manually are skipped (tier fees still apply).

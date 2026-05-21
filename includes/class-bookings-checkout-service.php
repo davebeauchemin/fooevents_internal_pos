@@ -1692,6 +1692,23 @@ class Bookings_Checkout_Service {
 			: $pm_label;
 		$order->set_payment_method_title( $title );
 		$order->update_meta_data( $this->get_order_payment_method_meta_key(), $title );
+		$this->apply_wc_order_attribution_meta( $order );
+	}
+
+	/**
+	 * Stamp WooCommerce Order Attribution so admin Origin shows Point of Sale.
+	 *
+	 * @param WC_Order $order Order.
+	 * @return void
+	 */
+	private function apply_wc_order_attribution_meta( $order ) {
+		if ( ! is_a( $order, 'WC_Order' ) ) {
+			return;
+		}
+		if ( $order->meta_exists( '_wc_order_attribution_source_type' ) ) {
+			return;
+		}
+		$order->update_meta_data( '_wc_order_attribution_source_type', 'pos' );
 	}
 
 	/**
