@@ -43,15 +43,22 @@ class Bookings_Checkout_Service {
 	private const POS_DEFAULT_CHECKOUT_EMAIL = 'pos-order@kaboommontreal.com';
 
 	/**
-	 * Guest billing names when POS checkout omits first name, last name, and postal code.
-	 * Combined as "POS Guest Checkout" in WooCommerce order lists.
+	 * WooCommerce billing address first name when guest checkout (no attendee name or postal).
 	 */
-	private const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Guest';
+	private const POS_CHECKOUT_GUEST_BILLING_FIRST_NAME = 'POS Guest';
 
 	/**
-	 * @see POS_CHECKOUT_GUEST_FIRST_NAME
+	 * WooCommerce billing address last name when guest checkout.
+	 *
+	 * With {@see POS_CHECKOUT_GUEST_BILLING_FIRST_NAME} displays as "POS Guest Checkout".
 	 */
-	private const POS_CHECKOUT_GUEST_LAST_NAME = 'Checkout';
+	private const POS_CHECKOUT_GUEST_BILLING_LAST_NAME = 'Checkout';
+
+	/** @deprecated 0.1.3.2 Legacy billing first name sent by older app builds. */
+	private const POS_CHECKOUT_GUEST_BILLING_FIRST_NAME_LEGACY = 'POS Checkout';
+
+	/** @deprecated 0.1.3.2 Legacy billing last name sent by older app builds. */
+	private const POS_CHECKOUT_GUEST_BILLING_LAST_NAME_LEGACY = 'Guest';
 
 	/**
 	 * Resolve POS checkout email: blank input uses the POS default; non-blank must be valid.
@@ -711,10 +718,7 @@ class Bookings_Checkout_Service {
 			$check_in_now = false;
 		}
 
-		if ( '' === $af && '' === $al && '' === $postal_pc ) {
-			$af = self::POS_CHECKOUT_GUEST_FIRST_NAME;
-			$al = self::POS_CHECKOUT_GUEST_LAST_NAME;
-		}
+		$this->normalize_pos_guest_billing_names( $af, $al, $postal_pc );
 
 		if ( mb_strlen( $af ) > 100 || mb_strlen( $al ) > 100 ) {
 			return new WP_Error( 'rest_invalid_param', __( 'attendee.firstName and attendee.lastName must be 100 characters or fewer.', 'fooevents-internal-pos' ), array( 'status' => 400 ) );
@@ -924,8 +928,7 @@ class Bookings_Checkout_Service {
 			}
 
 			$order_id = $order->get_id();
-			$order->set_billing_first_name( $af );
-			$order->set_billing_last_name( $al );
+			$this->set_order_billing_address_names( $order, $af, $al );
 			$order->set_billing_email( $em );
 			$order->set_billing_postcode( $billing_postal_code );
 			$order->update_meta_data( '_fooevents_internal_pos_postal_code', $billing_postal_code );
@@ -1057,6 +1060,10 @@ class Bookings_Checkout_Service {
 			}
 			try {
 				$order->update_status( 'completed', __( 'Booked via Internal POS', 'fooevents-internal-pos' ), true );
+				$order = wc_get_order( $order_id );
+				if ( $order instanceof WC_Order ) {
+					$this->set_order_billing_address_names( $order, $af, $al, true );
+				}
 			} finally {
 				if ( null !== $immediate_check_in_cb ) {
 					remove_action( 'fooevents_create_ticket', $immediate_check_in_cb, 10 );
@@ -1694,6 +1701,53 @@ class Bookings_Checkout_Service {
 		$order->set_payment_method_title( $title );
 		$order->update_meta_data( $this->get_order_payment_method_meta_key(), $title );
 		$this->apply_wc_order_attribution_meta( $order );
+	}
+
+	/**
+	 * Apply guest billing first/last when checkout omitted attendee name and postal code.
+	 *
+	 * @param string $af          Billing/attendee first (in/out).
+	 * @param string $al          Billing/attendee last (in/out).
+	 * @param string $postal_pc Billing postal code.
+	 * @return void
+	 */
+	private function normalize_pos_guest_billing_names( &$af, &$al, $postal_pc ) {
+		$af = trim( (string) $af );
+		$al = trim( (string) $al );
+		$postal_pc = trim( (string) $postal_pc );
+
+		$all_empty = ( '' === $af && '' === $al && '' === $postal_pc );
+		$legacy_guest = (
+			self::POS_CHECKOUT_GUEST_BILLING_FIRST_NAME_LEGACY === $af
+			&& self::POS_CHECKOUT_GUEST_BILLING_LAST_NAME_LEGACY === $al
+			&& '' === $postal_pc
+		);
+
+		if ( ! $all_empty && ! $legacy_guest ) {
+			return;
+		}
+
+		$af = self::POS_CHECKOUT_GUEST_BILLING_FIRST_NAME;
+		$al = self::POS_CHECKOUT_GUEST_BILLING_LAST_NAME;
+	}
+
+	/**
+	 * Set WooCommerce order billing address first and last name.
+	 *
+	 * @param WC_Order $order Order.
+	 * @param string   $af    First name.
+	 * @param string   $al    Last name.
+	 * @return void
+	 */
+	private function set_order_billing_address_names( $order, $af, $al, $save = false ) {
+		if ( ! is_a( $order, 'WC_Order' ) ) {
+			return;
+		}
+		$order->set_billing_first_name( sanitize_text_field( (string) $af ) );
+		$order->set_billing_last_name( sanitize_text_field( (string) $al ) );
+		if ( $save ) {
+			$order->save();
+		}
 	}
 
 	/**

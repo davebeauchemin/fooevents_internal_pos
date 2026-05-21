@@ -30,9 +30,9 @@ import { cn } from '@/lib/utils';
 
 const MAX_POS_COUPONS = 20;
 
-/** Guest billing names when first name, last name, and postal code are all omitted (order list: POS Guest Checkout). */
-const POS_CHECKOUT_GUEST_FIRST_NAME = 'POS Guest';
-const POS_CHECKOUT_GUEST_LAST_NAME = 'Checkout';
+/** WooCommerce billing address when first name, last name, and postal code are all omitted. */
+const POS_CHECKOUT_GUEST_BILLING_FIRST_NAME = 'POS Guest';
+const POS_CHECKOUT_GUEST_BILLING_LAST_NAME = 'Checkout';
 
 function parseCouponCodesInput( raw: string ): string[] {
 	const parts = raw.split( /[\s,;]+/ );
@@ -321,8 +321,8 @@ export default function Checkout() {
 				paymentMethodKey: effectivePaymentKey,
 				checkInNow,
 				attendee: {
-					firstName: useGuestIdentity ? POS_CHECKOUT_GUEST_FIRST_NAME : firstTrimmed,
-					lastName: useGuestIdentity ? POS_CHECKOUT_GUEST_LAST_NAME : lastTrimmed,
+					firstName: useGuestIdentity ? POS_CHECKOUT_GUEST_BILLING_FIRST_NAME : firstTrimmed,
+					lastName: useGuestIdentity ? POS_CHECKOUT_GUEST_BILLING_LAST_NAME : lastTrimmed,
 					email: email.trim(),
 				},
 				billing: {
