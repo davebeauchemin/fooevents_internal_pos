@@ -56,6 +56,8 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-next-purchase-coupon-s
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-checkout-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-slot-generator-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-ticket-reschedule-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-booking-stock-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-order-status-stock-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-ticket-status-stock-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-rest-api.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-storefront-assets.php';
@@ -85,6 +87,7 @@ function fooevents_internal_pos_init() {
 	( new \FooEvents_Internal_POS\Storefront_Bundles() )->init();
 	( new \FooEvents_Internal_POS\Product_Bundle_Pricing() )->init();
 	( new \FooEvents_Internal_POS\Next_Purchase_Coupon_Service() )->init();
+	( new \FooEvents_Internal_POS\Order_Status_Stock_Service() )->init();
 }
 add_action( 'plugins_loaded', 'fooevents_internal_pos_init', 20 );
 

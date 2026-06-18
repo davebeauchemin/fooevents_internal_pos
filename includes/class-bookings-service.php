@@ -18,6 +18,21 @@ defined( 'ABSPATH' ) || exit;
 class Bookings_Service {
 
 	/**
+	 * @var Booking_Stock_Service|null
+	 */
+	private $stock_service;
+
+	/**
+	 * @return Booking_Stock_Service
+	 */
+	private function stock() {
+		if ( null === $this->stock_service ) {
+			$this->stock_service = new Booking_Stock_Service();
+		}
+		return $this->stock_service;
+	}
+
+	/**
 	 * Get WordPress site timezone.
 	 */
 	public function get_wp_timezone() {
@@ -445,11 +460,7 @@ class Bookings_Service {
 	 * @return int|null Null = unlimited.
 	 */
 	private function normalize_stock( $stock ) {
-		if ( '' === $stock || null === $stock ) {
-			return null;
-		}
-		$n = (int) $stock;
-		return $n;
+		return $this->stock()->normalize_stock_for_rest( $stock );
 	}
 
 	/**
@@ -608,6 +619,9 @@ class Bookings_Service {
 		$date_label = '';
 		$date_ymd   = '';
 		$found      = false;
+		$remaining_spots = null;
+		$booked_count    = 0;
+		$total_capacity  = null;
 
 		foreach ( (array) ( $detail['dates'] ?? array() ) as $day ) {
 			if ( ! is_array( $day ) || empty( $day['slots'] ) || ! is_array( $day['slots'] ) ) {
@@ -631,6 +645,15 @@ class Bookings_Service {
 					$time = $this->extract_time( $label );
 				}
 				$slot_label = '' !== $time ? $time : ( '' !== $label ? $label : $slot_id );
+				if ( array_key_exists( 'stock', $slot ) ) {
+					$remaining_spots = $slot['stock'];
+				}
+				if ( isset( $slot['bookedCount'] ) ) {
+					$booked_count = max( 0, (int) $slot['bookedCount'] );
+				}
+				if ( array_key_exists( 'totalCapacity', $slot ) ) {
+					$total_capacity = $slot['totalCapacity'];
+				}
 				break 2;
 			}
 		}
@@ -779,6 +802,15 @@ class Bookings_Service {
 		}
 		unset( $order_row );
 
+		$capacity_drift = $this->detect_capacity_drift_for_slot(
+			$detail,
+			$date_ymd,
+			$slot_id,
+			$date_id,
+			$remaining_spots,
+			$ticket_count
+		);
+
 		return array(
 			'eventId'    => $event_id,
 			'slotId'     => $slot_id,
@@ -786,12 +818,145 @@ class Bookings_Service {
 			'slotLabel'  => $slot_label,
 			'dateLabel'  => $date_label,
 			'dateYmd'    => $date_ymd,
+			'remainingSpots' => $remaining_spots,
+			'totalCapacity'  => $total_capacity,
+			'capacityDrift'  => $capacity_drift,
 			'summary'    => array(
 				'ticketCount'       => $ticket_count,
 				'orderCount'        => count( $orders_out ),
 				'activeTicketCount' => $active_count,
 			),
 			'orders'     => $orders_out,
+		);
+	}
+
+	/**
+	 * True when serialized remaining is below peer slots on the same day but no tickets exist.
+	 *
+	 * @param array       $detail          Event detail from get_event_detail().
+	 * @param string      $date_ymd        Calendar day.
+	 * @param string      $slot_id         Slot id.
+	 * @param string      $date_id         Date id.
+	 * @param int|null    $remaining_spots Remaining stock for this cell.
+	 * @param int         $ticket_count    Tickets on this session.
+	 * @return bool
+	 */
+	private function detect_capacity_drift_for_slot( $detail, $date_ymd, $slot_id, $date_id, $remaining_spots, $ticket_count ) {
+		if ( $ticket_count > 0 || null === $remaining_spots ) {
+			return false;
+		}
+
+		$peer_max = null;
+		foreach ( (array) ( $detail['dates'] ?? array() ) as $day ) {
+			if ( ! is_array( $day ) || (string) ( $day['date'] ?? '' ) !== (string) $date_ymd ) {
+				continue;
+			}
+			foreach ( (array) ( $day['slots'] ?? array() ) as $slot ) {
+				if ( ! is_array( $slot ) || ! array_key_exists( 'stock', $slot ) || null === $slot['stock'] ) {
+					continue;
+				}
+				$sid = trim( (string) ( $slot['id'] ?? '' ) );
+				$did = trim( (string) ( $slot['dateId'] ?? '' ) );
+				if ( $sid === $slot_id && $did === $date_id ) {
+					continue;
+				}
+				$v = (int) $slot['stock'];
+				$peer_max = ( null === $peer_max ) ? $v : max( $peer_max, $v );
+			}
+			break;
+		}
+
+		if ( null === $peer_max ) {
+			return false;
+		}
+
+		return (int) $remaining_spots < (int) $peer_max;
+	}
+
+	/**
+	 * Reconcile serialized remaining stock vs active tickets; optionally repair cancelled orders.
+	 *
+	 * @param int  $product_id Product ID.
+	 * @param bool $repair     When true, restore stock from eligible cancelled/failed orders.
+	 * @return array<string,mixed>|\WP_Error
+	 */
+	public function reconcile_booking_stock( $product_id, $repair = false ) {
+		$product_id = absint( $product_id );
+		$detail     = $this->get_event_detail( $product_id, true );
+		if ( ! empty( $detail['error'] ) ) {
+			return new \WP_Error(
+				'not_found',
+				__( 'Event not found or not a booking product.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$cells = array();
+		foreach ( (array) ( $detail['dates'] ?? array() ) as $day ) {
+			if ( ! is_array( $day ) || empty( $day['slots'] ) ) {
+				continue;
+			}
+			foreach ( (array) $day['slots'] as $slot ) {
+				if ( ! is_array( $slot ) ) {
+					continue;
+				}
+				$remaining = array_key_exists( 'stock', $slot ) ? $slot['stock'] : null;
+				if ( null === $remaining ) {
+					continue;
+				}
+				$booked = isset( $slot['bookedCount'] ) ? max( 0, (int) $slot['bookedCount'] ) : 0;
+				$cells[] = array(
+					'slotId'             => (string) ( $slot['id'] ?? '' ),
+					'dateId'             => (string) ( $slot['dateId'] ?? '' ),
+					'dateYmd'            => (string) ( $day['date'] ?? '' ),
+					'time'               => (string) ( $slot['time'] ?? '' ),
+					'remainingSpots'     => (int) $remaining,
+					'activeTickets'      => $booked,
+					'observedTotal'      => (int) $remaining + $booked,
+					'capacityDrift'      => $this->detect_capacity_drift_for_slot(
+						$detail,
+						(string) ( $day['date'] ?? '' ),
+						(string) ( $slot['id'] ?? '' ),
+						(string) ( $slot['dateId'] ?? '' ),
+						$remaining,
+						0
+					),
+				);
+			}
+		}
+
+		$order_repair = array();
+		if ( $repair ) {
+			$order_service = new Order_Status_Stock_Service( $this->stock() );
+			$order_repair  = $order_service->reconcile_product_orders( $product_id, false );
+			$detail        = $this->get_event_detail( $product_id, true );
+			foreach ( $cells as &$cell ) {
+				foreach ( (array) ( $detail['dates'] ?? array() ) as $day ) {
+					if ( ! is_array( $day ) || (string) ( $day['date'] ?? '' ) !== (string) ( $cell['dateYmd'] ?? '' ) ) {
+						continue;
+					}
+					foreach ( (array) ( $day['slots'] ?? array() ) as $slot ) {
+						if ( ! is_array( $slot ) ) {
+							continue;
+						}
+						if ( (string) ( $slot['id'] ?? '' ) !== (string) ( $cell['slotId'] ?? '' )
+							|| (string) ( $slot['dateId'] ?? '' ) !== (string) ( $cell['dateId'] ?? '' ) ) {
+							continue;
+						}
+						if ( array_key_exists( 'stock', $slot ) && null !== $slot['stock'] ) {
+							$cell['remainingSpotsAfterRepair'] = (int) $slot['stock'];
+						}
+					}
+				}
+			}
+			unset( $cell );
+		}
+
+		return array(
+			'productId' => $product_id,
+			'repair'    => (bool) $repair,
+			'cells'     => $cells,
+			'orderRepair' => $order_repair,
 		);
 	}
 
@@ -1526,18 +1691,6 @@ class Bookings_Service {
 	 * @return array
 	 */
 	private function interpret_stock( $stock, $qty ) {
-		if ( '' === $stock || null === $stock ) {
-			return array( 'available' => true, 'remaining' => null, 'reason' => 'unlimited' );
-		}
-		$n = (int) $stock;
-		if ( $n < 0 ) {
-			return array( 'available' => true, 'remaining' => null, 'reason' => 'unlimited' );
-		}
-		$ok = $n >= $qty;
-		return array(
-			'available'  => $ok,
-			'remaining'  => max( 0, $n ),
-			'reason'     => $ok ? 'ok' : 'insufficient',
-		);
+		return $this->stock()->interpret_stock( $stock, $qty );
 	}
 }

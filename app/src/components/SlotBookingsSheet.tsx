@@ -36,6 +36,9 @@ type SlotBookingsResponse = {
 		orderCount?: number;
 		activeTicketCount?: number;
 	};
+	remainingSpots?: number | null;
+	totalCapacity?: number | null;
+	capacityDrift?: boolean;
 	orders?: SlotBookingsOrder[];
 	slotLabel?: string;
 	dateLabel?: string;
@@ -105,6 +108,8 @@ export default function SlotBookingsSheet( {
 	const data = query.data as SlotBookingsResponse | undefined;
 	const orders = data?.orders ?? [];
 	const summary = data?.summary;
+	const capacityDrift = Boolean( data?.capacityDrift );
+	const remainingSpots = data?.remainingSpots;
 
 	return (
 		<Sheet open={ open } onOpenChange={ onOpenChange }>
@@ -133,6 +138,12 @@ export default function SlotBookingsSheet( {
 									{ ' active' }
 								</>
 							) : null }
+						</p>
+					) : null }
+					{ query.isSuccess && capacityDrift && typeof remainingSpots === 'number' ? (
+						<p className="rounded-md border border-amber-600/35 bg-amber-500/10 px-2 py-2 text-xs text-amber-950 dark:text-amber-100">
+							<span className="tabular-nums font-medium">{ remainingSpots }</span>
+							{ ' spots remain in capacity, but no tickets exist for this session. Capacity may need repair after cancelled storefront orders.' }
 						</p>
 					) : null }
 				</SheetHeader>

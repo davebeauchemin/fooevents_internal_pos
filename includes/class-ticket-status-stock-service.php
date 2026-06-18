@@ -22,6 +22,18 @@ defined( 'ABSPATH' ) || exit;
 class Ticket_Status_Stock_Service {
 
 	/**
+	 * @var Booking_Stock_Service
+	 */
+	private $stock;
+
+	/**
+	 * @param Booking_Stock_Service|null $stock Optional stock service.
+	 */
+	public function __construct( ?Booking_Stock_Service $stock = null ) {
+		$this->stock = $stock ? $stock : new Booking_Stock_Service();
+	}
+
+	/**
 	 * @param string $ticket_lookup Same string as `get_single_ticket` / REST validate path.
 	 * @param string $new_status    Checked In | Not Checked In | Canceled.
 	 * @return string|WP_Error FooEvents message string or error.
@@ -86,24 +98,15 @@ class Ticket_Status_Stock_Service {
 			return update_ticket_status( $ticket_lookup, $new_status );
 		}
 
-		$fb = new \FooEvents_Bookings();
-
-		$persisted = false;
-		$apply      = $this->mutate_booking_stock( $fb, $event_id, $slot_id, $date_id, $delta, $persisted );
+		$apply = $this->stock->mutate_remaining_stock( $event_id, $slot_id, $date_id, $delta, true );
 		if ( is_wp_error( $apply ) ) {
 			return $apply;
-		}
-
-		if ( $persisted ) {
-			$this->maybe_wpml_sync_bookings( $fb, $event_id );
 		}
 
 		$result = update_ticket_status( $ticket_lookup, $new_status );
 
 		if ( 'Status is required' === $result ) {
-			if ( $persisted ) {
-				$this->rollback_stock_mutation( $fb, $event_id, $slot_id, $date_id, $delta );
-			}
+			$this->stock->mutate_remaining_stock( $event_id, $slot_id, $date_id, -1 * (int) $delta, false );
 			return new WP_Error(
 				'status_failed',
 				__( 'Could not update ticket status.', 'fooevents-internal-pos' ),
@@ -223,130 +226,6 @@ class Ticket_Status_Stock_Service {
 		}
 
 		return null;
-	}
-
-	/**
-	 * @param \FooEvents_Bookings $fb       Bookings instance.
-	 * @param int                 $event_id Product ID.
-	 * @param string              $slot_id  Slot key.
-	 * @param string              $date_id  Date attachment key.
-	 * @param int                 $delta    +1 or -1.
-	 * @param bool                $persisted_out Set true when post meta was updated.
-	 * @return true|WP_Error
-	 */
-	private function mutate_booking_stock( $fb, $event_id, $slot_id, $date_id, $delta, &$persisted_out ) {
-		$persisted_out = false;
-
-		$serialized = get_post_meta( $event_id, 'fooevents_bookings_options_serialized', true );
-		$raw        = json_decode( (string) $serialized, true );
-		if ( ! is_array( $raw ) ) {
-			$raw = array();
-		}
-
-		$options = $fb->process_booking_options( $raw );
-
-		$slot_key = $this->normalize_struct_key( $options, $slot_id );
-		if ( null === $slot_key || ! isset( $options[ $slot_key ] ) || ! is_array( $options[ $slot_key ] ) ) {
-			return new WP_Error(
-				'booking_cell_missing',
-				__( 'Booking slot not found for this ticket.', 'fooevents-internal-pos' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		$add_date = isset( $options[ $slot_key ]['add_date'] ) && is_array( $options[ $slot_key ]['add_date'] )
-			? $options[ $slot_key ]['add_date'] : array();
-
-		$date_key = $this->normalize_struct_key( $add_date, $date_id );
-		if ( null === $date_key || ! isset( $add_date[ $date_key ] ) || ! is_array( $add_date[ $date_key ] ) ) {
-			return new WP_Error(
-				'booking_cell_missing',
-				__( 'Booking date not found for this ticket.', 'fooevents-internal-pos' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		$stock_raw = $add_date[ $date_key ]['stock'] ?? '';
-		// Unlimited: empty string — FooEvents treats as unlimited.
-		if ( '' === $stock_raw || null === $stock_raw ) {
-			return true;
-		}
-
-		$current = (int) $stock_raw;
-		if ( $delta < 0 && $current < 1 ) {
-			return new WP_Error(
-				'booking_full',
-				__( 'Cannot reactivate: this session has no available spots.', 'fooevents-internal-pos' ),
-				array( 'status' => 409 )
-			);
-		}
-
-		$next = $current + (int) $delta;
-		if ( $next < 0 ) {
-			return new WP_Error(
-				'booking_full',
-				__( 'Cannot reactivate: this session has no available spots.', 'fooevents-internal-pos' ),
-				array( 'status' => 409 )
-			);
-		}
-
-		$options[ $slot_key ]['add_date'][ $date_key ]['stock'] = $next;
-
-		$updated = wp_json_encode( $options, JSON_UNESCAPED_UNICODE );
-		if ( false === $updated ) {
-			return new WP_Error(
-				'json_error',
-				__( 'Failed to encode booking options.', 'fooevents-internal-pos' ),
-				array( 'status' => 500 )
-			);
-		}
-
-		update_post_meta( $event_id, 'fooevents_bookings_options_serialized', $updated );
-		$persisted_out = true;
-
-		return true;
-	}
-
-	/**
-	 * Undo a stock mutation when status update fails after meta write.
-	 *
-	 * @param \FooEvents_Bookings $fb       Bookings instance.
-	 * @param int                 $event_id Product ID.
-	 * @param string              $slot_id  Slot key.
-	 * @param string              $date_id  Date key.
-	 * @param int                 $delta    Same delta passed to mutate_booking_stock.
-	 */
-	private function rollback_stock_mutation( $fb, $event_id, $slot_id, $date_id, $delta ) {
-		$ignored = false;
-		$this->mutate_booking_stock( $fb, $event_id, $slot_id, $date_id, -1 * (int) $delta, $ignored );
-	}
-
-	/**
-	 * @param array<string|int,mixed> $struct Processed booking subtree keyed by slot or date id.
-	 * @param string                    $needle Client id.
-	 * @return string|int|null Actual array key.
-	 */
-	private function normalize_struct_key( array $struct, $needle ) {
-		$needle = trim( (string) $needle );
-		if ( '' === $needle ) {
-			return null;
-		}
-		foreach ( array_keys( $struct ) as $k ) {
-			if ( (string) $k === $needle ) {
-				return $k;
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * @param \FooEvents_Bookings $fb       Bookings instance.
-	 * @param int                 $event_id Product ID.
-	 */
-	private function maybe_wpml_sync_bookings( $fb, $event_id ) {
-		if ( method_exists( $fb, 'wpml_sync_bookings_between_translations' ) ) {
-			$fb->wpml_sync_bookings_between_translations( $event_id );
-		}
 	}
 
 	/**

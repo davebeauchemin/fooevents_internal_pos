@@ -48,14 +48,21 @@ class Rest_API {
 	private $ticket_status_stock;
 
 	/**
+	 * @var Order_Status_Stock_Service
+	 */
+	private $order_status_stock;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
+		$stock                     = new Booking_Stock_Service();
 		$this->bookings            = new Bookings_Service();
 		$this->slot_generator      = new Slot_Generator_Service();
 		$this->booking_checkout    = new Bookings_Checkout_Service( $this->bookings );
 		$this->ticket_reschedule   = new Ticket_Reschedule_Service( $this->bookings );
-		$this->ticket_status_stock = new Ticket_Status_Stock_Service();
+		$this->ticket_status_stock = new Ticket_Status_Stock_Service( $stock );
+		$this->order_status_stock  = new Order_Status_Stock_Service( $stock );
 	}
 
 	/**
@@ -154,6 +161,33 @@ class Rest_API {
 					'id' => array(
 						'validate_callback' => function( $p ) {
 							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/reconcile-booking-stock',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'post_reconcile_booking_stock' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+					'repair' => array(
+						'type'              => 'boolean',
+						'default'           => false,
+						'sanitize_callback' => function( $value ) {
+							if ( is_bool( $value ) ) {
+								return $value;
+							}
+							$s = strtolower( trim( (string) $value ) );
+							return in_array( $s, array( '1', 'true', 'yes' ), true );
 						},
 					),
 				),
@@ -525,6 +559,22 @@ class Rest_API {
 			rawurldecode( (string) $request['dateId'] ),
 			$ymd
 		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * POST /events/{id}/reconcile-booking-stock
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function post_reconcile_booking_stock( WP_REST_Request $request ) {
+		$id     = (int) $request['id'];
+		$repair = (bool) $request->get_param( 'repair' );
+		$result = $this->bookings->reconcile_booking_stock( $id, $repair );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
