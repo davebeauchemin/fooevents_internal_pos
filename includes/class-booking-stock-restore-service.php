@@ -1,6 +1,6 @@
 <?php
 /**
- * Restore FooEvents serialized booking stock when cancelled/failed orders do not release spots.
+ * Restore FooEvents serialized booking stock and compute effective POS availability.
  *
  * @package FooEventsInternalPOS
  */
@@ -13,17 +13,29 @@ use WP_Query;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Safety-net stock restore on order cancel/failed plus retroactive repair on event load.
+ * Safety-net stock restore on order cancel/failed, repair on event load, effective remaining for POS.
  */
 class Booking_Stock_Restore_Service {
 
 	const ORDER_RELEASE_META  = '_internal_pos_booking_stock_released';
 	const ORDER_SNAPSHOT_META = '_internal_pos_booking_stock_snapshot';
+	const META_SLOT_TOTALS    = 'fooevents_internal_pos_slot_totals';
+	const HOLD_STATUSES       = array( 'pending', 'processing', 'on-hold' );
 
 	/**
 	 * @var Bookings_Service
 	 */
 	private $bookings;
+
+	/**
+	 * @var array<int,bool> Product IDs already repaired this request.
+	 */
+	private $repaired_products = array();
+
+	/**
+	 * @var array<int,array<string,int>> Per-product order hold counts keyed by slot-date.
+	 */
+	private $order_holds_cache = array();
 
 	/**
 	 * @param Bookings_Service|null $bookings Optional bookings service.
@@ -43,7 +55,7 @@ class Booking_Stock_Restore_Service {
 	}
 
 	/**
-	 * Repair drifted serialized stock for a booking product (called on event read).
+	 * Repair drifted serialized stock and backfill slot totals (called on event read).
 	 *
 	 * @param int $product_id Product ID.
 	 * @return bool True when any cell was updated.
@@ -54,9 +66,11 @@ class Booking_Stock_Restore_Service {
 			return false;
 		}
 
-		$cells          = $this->enumerate_slot_date_cells( $product_id );
-		$updated        = false;
-		$flagged_orders = array();
+		$cells   = $this->enumerate_slot_date_cells( $product_id );
+		$booked  = $this->bookings->get_active_booked_counts_by_slot_date( $product_id );
+		$holds   = $this->count_order_holds_by_slot_date( $product_id );
+		$totals  = $this->load_slot_totals( $product_id );
+		$updated = false;
 
 		foreach ( $cells as $cell ) {
 			$raw = $cell['stock'];
@@ -64,34 +78,201 @@ class Booking_Stock_Restore_Service {
 				continue;
 			}
 
-			$unrel = count( $cell['unreleased_order_ids'] );
-			if ( $unrel <= 0 ) {
-				continue;
+			$slot_id = (string) $cell['slot_id'];
+			$date_id = (string) $cell['date_id'];
+			$key     = $this->slot_date_key( $slot_id, $date_id );
+
+			$active     = isset( $booked[ $key ] ) ? (int) $booked[ $key ] : 0;
+			$hold       = isset( $holds[ $key ] ) ? (int) $holds[ $key ] : 0;
+			$drift_cnt  = count( $cell['drift_cancelled_order_ids'] );
+			$meta_exist = array_key_exists( $key, $totals );
+
+			if ( ! $meta_exist ) {
+				$base = max( 0, (int) $raw + $active + $hold );
+				if ( $drift_cnt > 0 && ( 1 === $drift_cnt || (int) $raw < ( $drift_cnt * 2 ) ) ) {
+					$totals[ $key ] = max( $base, (int) $raw + $active + $hold + $drift_cnt );
+				} else {
+					$totals[ $key ] = $base;
+				}
 			}
 
-			$candidate  = (int) $raw + (int) $unrel;
-			$needs_bump = (int) $raw < $candidate
-				&& (
-					1 === (int) $unrel
-					|| (int) $raw < ( (int) $unrel * 2 )
-				);
+			$total     = max( 0, (int) $totals[ $key ] );
+			$effective = max( 0, $total - $active - $hold );
 
-			if ( $needs_bump ) {
-				if ( $this->sync_serialized_stock( $product_id, $cell['slot_id'], $cell['date_id'], $candidate ) ) {
+			if ( (int) $raw < (int) $effective ) {
+				if ( $this->sync_serialized_stock( $product_id, $slot_id, $date_id, $effective ) ) {
 					$updated = true;
 				}
 			}
 
-			foreach ( $cell['unreleased_order_ids'] as $oid ) {
-				$flagged_orders[ (int) $oid ] = true;
+			if ( ! empty( $cell['drift_cancelled_order_ids'] ) && (int) $raw <= (int) $effective ) {
+				foreach ( $cell['drift_cancelled_order_ids'] as $oid ) {
+					$this->clear_stale_release_meta_if_needed( (int) $oid, $product_id, $slot_id, $date_id, (int) $raw, (int) $effective );
+					if ( (int) $raw < (int) $effective || $this->order_has_release_meta( (int) $oid ) ) {
+						$this->mark_order_stock_released( (int) $oid );
+					}
+				}
 			}
 		}
 
-		foreach ( array_keys( $flagged_orders ) as $order_id ) {
-			$this->mark_order_stock_released( $order_id );
-		}
+		$this->save_slot_totals( $product_id, $totals );
+
+		$this->repaired_products[ $product_id ] = true;
 
 		return $updated;
+	}
+
+	/**
+	 * Cashier-facing remaining spots for a slot–date cell.
+	 *
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    Slot id.
+	 * @param string $date_id    Date id.
+	 * @return int|null Null = unlimited.
+	 */
+	public function compute_effective_remaining( $product_id, $slot_id, $date_id ) {
+		$product_id = absint( $product_id );
+		if ( $product_id > 0 && empty( $this->repaired_products[ $product_id ] ) ) {
+			$this->repair_product_stock( $product_id );
+			$this->repaired_products[ $product_id ] = true;
+		}
+
+		$raw = $this->read_serialized_stock_raw( $product_id, $slot_id, $date_id );
+		if ( null === $raw ) {
+			return null;
+		}
+
+		$key    = $this->slot_date_key( $slot_id, $date_id );
+		$booked = $this->bookings->get_active_booked_counts_by_slot_date( $product_id );
+		$holds  = $this->count_order_holds_by_slot_date( $product_id );
+
+		$active = isset( $booked[ $key ] ) ? (int) $booked[ $key ] : 0;
+		$hold   = isset( $holds[ $key ] ) ? (int) $holds[ $key ] : 0;
+
+		$total = $this->get_total_capacity( $product_id, $slot_id, $date_id, $raw, $active, $hold );
+		if ( null === $total ) {
+			return null;
+		}
+
+		return max( 0, (int) $total - $active - $hold );
+	}
+
+	/**
+	 * Replace REST slot `stock` with effective remaining and recompute day aggregates.
+	 *
+	 * @param int                            $product_id Product ID.
+	 * @param array<int,array<string,mixed>> $dates_out  Built dates from get_event_detail.
+	 * @param array<string,int>              $booked     Active ticket counts by slot-date key.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function apply_effective_to_dates( $product_id, array $dates_out, array $booked ) {
+		$holds = $this->count_order_holds_by_slot_date( $product_id );
+
+		foreach ( $dates_out as &$day ) {
+			if ( ! is_array( $day ) || empty( $day['slots'] ) || ! is_array( $day['slots'] ) ) {
+				continue;
+			}
+			foreach ( $day['slots'] as &$slot ) {
+				if ( ! is_array( $slot ) ) {
+					continue;
+				}
+				$sid = trim( (string) ( $slot['id'] ?? '' ) );
+				$did = trim( (string) ( $slot['dateId'] ?? '' ) );
+				if ( '' === $sid || '' === $did ) {
+					continue;
+				}
+				if ( ! array_key_exists( 'stock', $slot ) || null === $slot['stock'] ) {
+					continue;
+				}
+
+				$key    = $this->slot_date_key( $sid, $did );
+				$active = isset( $booked[ $key ] ) ? (int) $booked[ $key ] : 0;
+				$hold   = isset( $holds[ $key ] ) ? (int) $holds[ $key ] : 0;
+				$raw    = (int) $slot['stock'];
+
+				$total = $this->get_total_capacity( $product_id, $sid, $did, $raw, $active, $hold );
+				if ( null === $total ) {
+					continue;
+				}
+
+				$slot['stock'] = max( 0, (int) $total - $active - $hold );
+			}
+			unset( $slot );
+
+			$day['stock'] = $this->aggregate_slot_stock_for_rest( $day['slots'] );
+		}
+		unset( $day );
+
+		return $dates_out;
+	}
+
+	/**
+	 * Persist configured total capacity for a slot–date cell.
+	 *
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    Slot id.
+	 * @param string $date_id    Date id.
+	 * @param int    $capacity   Total capacity (0 allowed).
+	 */
+	public function set_slot_total( $product_id, $slot_id, $date_id, $capacity ) {
+		$product_id = absint( $product_id );
+		$capacity   = max( 0, (int) $capacity );
+		$totals     = $this->load_slot_totals( $product_id );
+		$totals[ $this->slot_date_key( $slot_id, $date_id ) ] = $capacity;
+		$this->save_slot_totals( $product_id, $totals );
+	}
+
+	/**
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    Slot id.
+	 * @param string $date_id    Date id.
+	 * @param int    $delta      Capacity delta (+/-).
+	 */
+	public function adjust_slot_total( $product_id, $slot_id, $date_id, $delta ) {
+		$product_id = absint( $product_id );
+		$delta      = (int) $delta;
+		if ( 0 === $delta ) {
+			return;
+		}
+		$key    = $this->slot_date_key( $slot_id, $date_id );
+		$totals = $this->load_slot_totals( $product_id );
+		$cur    = isset( $totals[ $key ] ) ? (int) $totals[ $key ] : 0;
+		$totals[ $key ] = max( 0, $cur + $delta );
+		$this->save_slot_totals( $product_id, $totals );
+	}
+
+	/**
+	 * Seed slot totals from raw fooevents_bookings_options_serialized slot map.
+	 *
+	 * @param int                 $product_id Product ID.
+	 * @param array<string,mixed> $raw_slots  Decoded raw slots.
+	 * @param bool                $replace    When true, rebuild totals from raw (full schedule replace).
+	 */
+	public function seed_slot_totals_from_raw_slots( $product_id, array $raw_slots, $replace = false ) {
+		$product_id = absint( $product_id );
+		$totals     = $replace ? array() : $this->load_slot_totals( $product_id );
+
+		foreach ( $raw_slots as $slot_id => $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			foreach ( array_keys( $row ) as $k ) {
+				if ( ! preg_match( '/^(.+)_stock$/', (string) $k, $m ) ) {
+					continue;
+				}
+				$date_id = (string) $m[1];
+				$stock   = $row[ $k ] ?? '';
+				if ( '' === $stock || null === $stock ) {
+					continue;
+				}
+				$key = $this->slot_date_key( (string) $slot_id, $date_id );
+				if ( $replace || ! array_key_exists( $key, $totals ) ) {
+					$totals[ $key ] = max( 0, (int) $stock );
+				}
+			}
+		}
+
+		$this->save_slot_totals( $product_id, $totals );
 	}
 
 	/**
@@ -156,8 +337,10 @@ class Booking_Stock_Restore_Service {
 			return;
 		}
 
-		$fb            = new \FooEvents_Bookings();
-		$sync_products = array();
+		$fb               = new \FooEvents_Bookings();
+		$sync_products    = array();
+		$restored_any     = false;
+		$fooevents_fixed  = false;
 
 		foreach ( $lines as $line ) {
 			$product_id = (int) $line['product_id'];
@@ -171,12 +354,14 @@ class Booking_Stock_Restore_Service {
 			}
 
 			if ( array_key_exists( $key, $snapshot ) && (int) $current !== (int) $snapshot[ $key ] ) {
+				$fooevents_fixed = true;
 				continue;
 			}
 
 			$persisted = false;
 			$result    = $this->mutate_booking_stock( $fb, $product_id, $slot_id, $date_id, 1, $persisted );
 			if ( true === $result && $persisted ) {
+				$restored_any              = true;
 				$sync_products[ $product_id ] = $product_id;
 			}
 		}
@@ -185,7 +370,77 @@ class Booking_Stock_Restore_Service {
 			$this->maybe_wpml_sync_bookings( $fb, $product_id );
 		}
 
-		$this->mark_order_stock_released( $order_id );
+		if ( $restored_any || $fooevents_fixed ) {
+			$this->mark_order_stock_released( $order_id );
+		}
+	}
+
+	/**
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    Slot id.
+	 * @param string $date_id    Date id.
+	 * @param int    $serialized Normalized remaining stock.
+	 * @param int    $active     Active ticket count.
+	 * @param int    $holds      Order hold count.
+	 * @return int|null Null = unlimited.
+	 */
+	private function get_total_capacity( $product_id, $slot_id, $date_id, $serialized, $active, $holds ) {
+		if ( null === $serialized ) {
+			return null;
+		}
+
+		$key    = $this->slot_date_key( $slot_id, $date_id );
+		$totals = $this->load_slot_totals( absint( $product_id ) );
+
+		if ( array_key_exists( $key, $totals ) && null !== $totals[ $key ] ) {
+			return max( 0, (int) $totals[ $key ] );
+		}
+
+		return max( 0, (int) $serialized + max( 0, (int) $active ) + max( 0, (int) $holds ) );
+	}
+
+	/**
+	 * @param int $product_id Product ID.
+	 * @return array<string,int|null>
+	 */
+	private function load_slot_totals( $product_id ) {
+		$raw = get_post_meta( absint( $product_id ), self::META_SLOT_TOTALS, true );
+		return is_array( $raw ) ? $raw : array();
+	}
+
+	/**
+	 * @param int                $product_id Product ID.
+	 * @param array<string,int|null> $totals Totals map.
+	 */
+	private function save_slot_totals( $product_id, array $totals ) {
+		update_post_meta( absint( $product_id ), self::META_SLOT_TOTALS, $totals );
+	}
+
+	/**
+	 * @param int $product_id Product ID.
+	 * @return array<string,int>
+	 */
+	public function count_order_holds_by_slot_date( $product_id ) {
+		$product_id = absint( $product_id );
+		if ( isset( $this->order_holds_cache[ $product_id ] ) ) {
+			return $this->order_holds_cache[ $product_id ];
+		}
+
+		$out    = array();
+		$orders = $this->query_orders_for_product( $product_id, self::HOLD_STATUSES );
+
+		foreach ( $orders as $order ) {
+			foreach ( $this->extract_booking_lines_from_order( $order, $product_id ) as $line ) {
+				$key = $this->slot_date_key( $line['slot_id'], $line['date_id'] );
+				if ( ! isset( $out[ $key ] ) ) {
+					$out[ $key ] = 0;
+				}
+				$out[ $key ]++;
+			}
+		}
+
+		$this->order_holds_cache[ $product_id ] = $out;
+		return $out;
 	}
 
 	/**
@@ -198,6 +453,43 @@ class Booking_Stock_Restore_Service {
 		}
 		$order->update_meta_data( self::ORDER_RELEASE_META, '1' );
 		$order->save();
+	}
+
+	/**
+	 * @param int $order_id Order ID.
+	 * @return bool
+	 */
+	private function order_has_release_meta( $order_id ) {
+		$order = wc_get_order( absint( $order_id ) );
+		return $order instanceof WC_Order && (bool) $order->get_meta( self::ORDER_RELEASE_META, true );
+	}
+
+	/**
+	 * @param int    $order_id   Order ID.
+	 * @param int    $product_id Product ID.
+	 * @param string $slot_id    Slot id.
+	 * @param string $date_id    Date id.
+	 * @param int    $raw        Serialized stock before repair.
+	 * @param int    $effective  Target effective remaining.
+	 */
+	private function clear_stale_release_meta_if_needed( $order_id, $product_id, $slot_id, $date_id, $raw, $effective ) {
+		if ( (int) $raw >= (int) $effective ) {
+			return;
+		}
+		$order = wc_get_order( absint( $order_id ) );
+		if ( ! $order instanceof WC_Order ) {
+			return;
+		}
+		if ( ! $order->get_meta( self::ORDER_RELEASE_META, true ) ) {
+			return;
+		}
+		foreach ( $this->extract_booking_lines_from_order( $order, $product_id ) as $line ) {
+			if ( $line['slot_id'] === $slot_id && $line['date_id'] === $date_id ) {
+				$order->delete_meta_data( self::ORDER_RELEASE_META );
+				$order->save();
+				return;
+			}
+		}
 	}
 
 	/**
@@ -244,6 +536,30 @@ class Booking_Stock_Restore_Service {
 	 */
 	private function cell_key( $product_id, $slot_id, $date_id ) {
 		return absint( $product_id ) . "\x1f" . $this->slot_date_key( $slot_id, $date_id );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $slots Slot rows with stock keys.
+	 * @return int|null
+	 */
+	private function aggregate_slot_stock_for_rest( array $slots ) {
+		$has_limited = false;
+		$min         = null;
+		foreach ( $slots as $s ) {
+			if ( ! is_array( $s ) || ! array_key_exists( 'stock', $s ) ) {
+				continue;
+			}
+			$v = $s['stock'];
+			if ( null === $v ) {
+				continue;
+			}
+			$has_limited = true;
+			$min         = ( null === $min ) ? (int) $v : min( (int) $min, (int) $v );
+		}
+		if ( ! $has_limited ) {
+			return null;
+		}
+		return (int) $min;
 	}
 
 	/**
@@ -372,7 +688,7 @@ class Booking_Stock_Restore_Service {
 
 	/**
 	 * @param int $product_id Product ID.
-	 * @return array<int,array{slot_id:string,date_id:string,stock:int|null,unreleased_order_ids:int[]}>
+	 * @return array<int,array{slot_id:string,date_id:string,stock:int|null,drift_cancelled_order_ids:int[]}>
 	 */
 	private function enumerate_slot_date_cells( $product_id ) {
 		$ctx     = $this->bookings->get_processed_options( $product_id );
@@ -380,22 +696,19 @@ class Booking_Stock_Restore_Service {
 		$options = $ctx['options'];
 		$cells   = array();
 
-		$unreleased_orders = $this->query_orders_for_product( $product_id, array( 'cancelled', 'failed' ) );
-		$unreleased_by_key = array();
-		foreach ( $unreleased_orders as $order ) {
-			if ( $order->get_meta( self::ORDER_RELEASE_META, true ) ) {
-				continue;
-			}
+		$drift_orders = $this->query_orders_for_product( $product_id, array( 'cancelled', 'failed' ) );
+		$drift_by_key = array();
+		foreach ( $drift_orders as $order ) {
 			if ( $this->order_has_ticket_cpts( $order->get_id() ) ) {
 				continue;
 			}
 			$oid = (int) $order->get_id();
 			foreach ( $this->extract_booking_lines_from_order( $order, $product_id ) as $line ) {
 				$key = $this->slot_date_key( $line['slot_id'], $line['date_id'] );
-				if ( ! isset( $unreleased_by_key[ $key ] ) ) {
-					$unreleased_by_key[ $key ] = array();
+				if ( ! isset( $drift_by_key[ $key ] ) ) {
+					$drift_by_key[ $key ] = array();
 				}
-				$unreleased_by_key[ $key ][ $oid ] = $oid;
+				$drift_by_key[ $key ][ $oid ] = $oid;
 			}
 		}
 
@@ -412,10 +725,10 @@ class Booking_Stock_Restore_Service {
 					$stock   = $row['stock'] ?? '';
 					$key     = $this->slot_date_key( (string) $slot_id, $date_id );
 					$cells[] = array(
-						'slot_id'              => (string) $slot_id,
-						'date_id'              => $date_id,
-						'stock'                => $this->normalize_stock_value( $stock ),
-						'unreleased_order_ids' => isset( $unreleased_by_key[ $key ] ) ? array_values( $unreleased_by_key[ $key ] ) : array(),
+						'slot_id'                    => (string) $slot_id,
+						'date_id'                    => $date_id,
+						'stock'                      => $this->normalize_stock_value( $stock ),
+						'drift_cancelled_order_ids'  => isset( $drift_by_key[ $key ] ) ? array_values( $drift_by_key[ $key ] ) : array(),
 					);
 				}
 			}
@@ -437,10 +750,10 @@ class Booking_Stock_Restore_Service {
 				$stock = $drow['stock'] ?? '';
 				$key   = $this->slot_date_key( (string) $slot_id, (string) $date_id );
 				$cells[] = array(
-					'slot_id'              => (string) $slot_id,
-					'date_id'              => (string) $date_id,
-					'stock'                => $this->normalize_stock_value( $stock ),
-					'unreleased_order_ids' => isset( $unreleased_by_key[ $key ] ) ? array_values( $unreleased_by_key[ $key ] ) : array(),
+					'slot_id'                   => (string) $slot_id,
+					'date_id'                   => (string) $date_id,
+					'stock'                     => $this->normalize_stock_value( $stock ),
+					'drift_cancelled_order_ids' => isset( $drift_by_key[ $key ] ) ? array_values( $drift_by_key[ $key ] ) : array(),
 				);
 			}
 		}
@@ -465,7 +778,7 @@ class Booking_Stock_Restore_Service {
 	 * @param string $date_id    Date id.
 	 * @return int|null
 	 */
-	private function read_serialized_stock_raw( $product_id, $slot_id, $date_id ) {
+	public function read_serialized_stock_raw( $product_id, $slot_id, $date_id ) {
 		$ctx     = $this->bookings->get_processed_options( absint( $product_id ) );
 		$method  = (string) $ctx['method'];
 		$options = $ctx['options'];
