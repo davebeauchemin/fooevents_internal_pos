@@ -610,3 +610,27 @@ export function useRescheduleTicket() {
 		},
 	} );
 }
+
+/**
+ * Orders and tickets for one slot–date cell (event schedule overview).
+ *
+ * @param {number|string|undefined} eventId
+ * @param {string|undefined} slotId
+ * @param {string|undefined} dateId
+ * @param {{ enabled?: boolean }} options
+ */
+export function useSlotBookings( eventId, slotId, dateId, options = {} ) {
+	const { enabled = true } = options;
+	const eid = eventId != null ? String( eventId ).trim() : '';
+	const sid = typeof slotId === 'string' ? slotId.trim() : '';
+	const did = typeof dateId === 'string' ? dateId.trim() : '';
+	return useQuery( {
+		queryKey: [ 'internalpos', 'slotBookings', eid, sid, did ],
+		enabled: enabled && Boolean( eid && sid && did ),
+		staleTime: 30_000,
+		queryFn: () =>
+			restFetch(
+				`${ prefix }/events/${ encodeURIComponent( eid ) }/slots/${ encodeURIComponent( sid ) }/dates/${ encodeURIComponent( did ) }/bookings`,
+			),
+	} );
+}

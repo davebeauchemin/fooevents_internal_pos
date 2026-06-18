@@ -575,6 +575,260 @@ class Bookings_Service {
 	}
 
 	/**
+	 * Orders and tickets for one slot–date cell (management / schedule overview).
+	 *
+	 * @param int    $event_id Event (booking) product ID.
+	 * @param string $slot_id  FooEvents slot id.
+	 * @param string $date_id  FooEvents date id.
+	 * @return array|\WP_Error
+	 */
+	public function get_slot_bookings( $event_id, $slot_id, $date_id ) {
+		$event_id = absint( $event_id );
+		$slot_id  = trim( (string) $slot_id );
+		$date_id  = trim( (string) $date_id );
+
+		if ( $event_id <= 0 || '' === $slot_id || '' === $date_id ) {
+			return new \WP_Error(
+				'rest_invalid_param',
+				__( 'eventId, slotId, and dateId are required.', 'fooevents-internal-pos' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$detail = $this->get_event_detail( $event_id, true );
+		if ( ! empty( $detail['error'] ) ) {
+			return new \WP_Error(
+				'not_found',
+				__( 'Event not found or not a booking product.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$slot_label = '';
+		$date_label = '';
+		$date_ymd   = '';
+		$found      = false;
+
+		foreach ( (array) ( $detail['dates'] ?? array() ) as $day ) {
+			if ( ! is_array( $day ) || empty( $day['slots'] ) || ! is_array( $day['slots'] ) ) {
+				continue;
+			}
+			foreach ( $day['slots'] as $slot ) {
+				if ( ! is_array( $slot ) ) {
+					continue;
+				}
+				$sid = trim( (string) ( $slot['id'] ?? '' ) );
+				$did = trim( (string) ( $slot['dateId'] ?? '' ) );
+				if ( $sid !== $slot_id || $did !== $date_id ) {
+					continue;
+				}
+				$found      = true;
+				$date_ymd   = trim( (string) ( $day['date'] ?? '' ) );
+				$date_label = trim( (string) ( $day['label'] ?? '' ) );
+				$label      = trim( (string) ( $slot['label'] ?? '' ) );
+				$time       = isset( $slot['time'] ) ? trim( (string) $slot['time'] ) : '';
+				if ( '' === $time ) {
+					$time = $this->extract_time( $label );
+				}
+				$slot_label = '' !== $time ? $time : ( '' !== $label ? $label : $slot_id );
+				break 2;
+			}
+		}
+
+		if ( ! $found ) {
+			return new \WP_Error(
+				'not_found',
+				__( 'Slot not found for this event.', 'fooevents-internal-pos' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		$active_statuses = array( 'Not Checked In', 'Checked In' );
+
+		$q = new WP_Query(
+			array(
+				'post_type'              => 'event_magic_tickets',
+				'post_status'            => 'publish',
+				'posts_per_page'         => -1,
+				'fields'                 => 'ids',
+				'no_found_rows'          => true,
+				'update_post_meta_cache' => true,
+				'update_post_term_cache' => false,
+				'meta_query'             => array(
+					'relation' => 'AND',
+					array(
+						'key'     => 'WooCommerceEventsProductID',
+						'value'   => $event_id,
+						'compare' => '=',
+						'type'    => 'NUMERIC',
+					),
+					array(
+						'key'     => 'WooCommerceEventsBookingSlotID',
+						'value'   => $slot_id,
+						'compare' => '=',
+					),
+					array(
+						'key'     => 'WooCommerceEventsBookingDateID',
+						'value'   => $date_id,
+						'compare' => '=',
+					),
+				),
+			)
+		);
+
+		$by_order     = array();
+		$ticket_count = 0;
+		$active_count = 0;
+
+		foreach ( (array) $q->posts as $pid_raw ) {
+			$pid = absint( $pid_raw );
+			if ( $pid <= 0 ) {
+				continue;
+			}
+
+			$status = trim( (string) get_post_meta( $pid, 'WooCommerceEventsStatus', true ) );
+			if ( in_array( $status, $active_statuses, true ) ) {
+				++$active_count;
+			}
+			++$ticket_count;
+
+			$lookup = $this->ticket_lookup_identifier_for_post( $pid );
+			$fn     = trim( (string) get_post_meta( $pid, 'WooCommerceEventsAttendeeName', true ) );
+			$ln     = trim( (string) get_post_meta( $pid, 'WooCommerceEventsAttendeeLastName', true ) );
+			$name   = trim( $fn . ' ' . $ln );
+			if ( '' === $name ) {
+				$name = trim( (string) get_post_meta( $pid, 'WooCommerceEventsPurchaserFirstName', true ) . ' ' . (string) get_post_meta( $pid, 'WooCommerceEventsPurchaserLastName', true ) );
+			}
+
+			$order_id = absint( get_post_meta( $pid, 'WooCommerceEventsOrderID', true ) );
+			if ( ! isset( $by_order[ $order_id ] ) ) {
+				$by_order[ $order_id ] = array(
+					'orderId'         => $order_id,
+					'orderNumber'     => $order_id > 0 ? (string) $order_id : '',
+					'orderDate'       => null,
+					'orderDateTs'     => 0,
+					'purchaserName'   => '',
+					'purchaserEmail'  => '',
+					'tickets'         => array(),
+				);
+			}
+
+			$by_order[ $order_id ]['tickets'][] = array(
+				'ticketId'        => $lookup['ticketId'],
+				'ticketNumericId' => $lookup['numericId'],
+				'attendeeName'    => $name,
+				'status'          => $status,
+			);
+		}
+
+		foreach ( array_keys( $by_order ) as $oid ) {
+			if ( $oid <= 0 ) {
+				continue;
+			}
+			$order = wc_get_order( $oid );
+			if ( ! $order ) {
+				continue;
+			}
+			$created = $order->get_date_created();
+			$iso     = null;
+			$ts      = 0;
+			if ( $created ) {
+				$iso = $created->date( 'c' );
+				$ts  = (int) $created->getTimestamp();
+			}
+			$purchaser = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+			$by_order[ $oid ]['orderNumber']    = (string) $order->get_order_number();
+			$by_order[ $oid ]['orderDate']      = $iso;
+			$by_order[ $oid ]['orderDateTs']    = $ts;
+			$by_order[ $oid ]['purchaserName']  = $purchaser;
+			$by_order[ $oid ]['purchaserEmail'] = (string) $order->get_billing_email();
+		}
+
+		$orders_out = array_values( $by_order );
+		usort(
+			$orders_out,
+			function( $a, $b ) {
+				$ta = isset( $a['orderDateTs'] ) ? (int) $a['orderDateTs'] : 0;
+				$tb = isset( $b['orderDateTs'] ) ? (int) $b['orderDateTs'] : 0;
+				if ( $ta !== $tb ) {
+					return $tb <=> $ta;
+				}
+				return ( (int) ( $a['orderId'] ?? 0 ) ) <=> ( (int) ( $b['orderId'] ?? 0 ) );
+			}
+		);
+
+		foreach ( $orders_out as &$order_row ) {
+			unset( $order_row['orderDateTs'] );
+			if ( ! empty( $order_row['tickets'] ) && is_array( $order_row['tickets'] ) ) {
+				usort(
+					$order_row['tickets'],
+					function( $a, $b ) {
+						$na = isset( $a['attendeeName'] ) ? strtolower( trim( (string) $a['attendeeName'] ) ) : '';
+						$nb = isset( $b['attendeeName'] ) ? strtolower( trim( (string) $b['attendeeName'] ) ) : '';
+						$c  = strcmp( $na, $nb );
+						if ( 0 !== $c ) {
+							return $c;
+						}
+						return strcmp(
+							(string) ( $a['ticketId'] ?? '' ),
+							(string) ( $b['ticketId'] ?? '' )
+						);
+					}
+				);
+			}
+		}
+		unset( $order_row );
+
+		return array(
+			'eventId'    => $event_id,
+			'slotId'     => $slot_id,
+			'dateId'     => $date_id,
+			'slotLabel'  => $slot_label,
+			'dateLabel'  => $date_label,
+			'dateYmd'    => $date_ymd,
+			'summary'    => array(
+				'ticketCount'       => $ticket_count,
+				'orderCount'        => count( $orders_out ),
+				'activeTicketCount' => $active_count,
+			),
+			'orders'     => $orders_out,
+		);
+	}
+
+	/**
+	 * Build ticket lookup id for REST (matches validate search / scanners).
+	 *
+	 * @param int $ticket_post_id Ticket CPT id.
+	 * @return array{ticketId:string,numericId:string}
+	 */
+	private function ticket_lookup_identifier_for_post( $ticket_post_id ) {
+		$ticket_post_id = absint( $ticket_post_id );
+		$product_id     = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsProductID', true );
+		$numeric_tid    = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketID', true );
+		$formatted      = (string) get_post_meta( $ticket_post_id, 'WooCommerceEventsTicketNumberFormatted', true );
+		if ( '' === $product_id ) {
+			return array(
+				'ticketId'  => $numeric_tid,
+				'numericId' => $numeric_tid,
+			);
+		}
+		$identifier_mode = (string) get_post_meta( absint( $product_id ), 'WooCommerceEventsTicketIdentifierOutput', true );
+		if ( '' === $identifier_mode ) {
+			$identifier_mode = 'ticketid';
+		}
+		if ( 'ticketnumberformatted' === $identifier_mode && '' !== $formatted ) {
+			return array(
+				'ticketId'  => $product_id . '-' . $formatted,
+				'numericId' => $numeric_tid,
+			);
+		}
+		return array(
+			'ticketId'  => $numeric_tid,
+			'numericId' => $numeric_tid,
+		);
+	}
+
+	/**
 	 * List booking events (summary).
 	 */
 	public function list_booking_events() {

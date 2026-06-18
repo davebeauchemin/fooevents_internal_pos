@@ -161,6 +161,22 @@ class Rest_API {
 		);
 		register_rest_route(
 			self::NAMESPACE,
+			'/events/(?P<id>\\d+)/slots/(?P<slotId>[^/]+)/dates/(?P<dateId>[^/]+)/bookings',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_slot_bookings' ),
+				'permission_callback' => array( $this, 'can_manage_events' ),
+				'args'                => array(
+					'id' => array(
+						'validate_callback' => function( $p ) {
+							return is_numeric( $p ) && (int) $p > 0;
+						},
+					),
+				),
+			)
+		);
+		register_rest_route(
+			self::NAMESPACE,
 			'/events/(?P<id>\\d+)',
 			array(
 				'methods'             => WP_REST_Server::READABLE,
@@ -508,6 +524,25 @@ class Rest_API {
 			rawurldecode( (string) $request['slotId'] ),
 			rawurldecode( (string) $request['dateId'] ),
 			$ymd
+		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		return rest_ensure_response( $result );
+	}
+
+	/**
+	 * GET /events/{id}/slots/{slotId}/dates/{dateId}/bookings
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|WP_Error
+	 */
+	public function get_slot_bookings( WP_REST_Request $request ) {
+		$id     = (int) $request['id'];
+		$result = $this->bookings->get_slot_bookings(
+			$id,
+			rawurldecode( (string) $request['slotId'] ),
+			rawurldecode( (string) $request['dateId'] )
 		);
 		if ( is_wp_error( $result ) ) {
 			return $result;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
 import { CalendarIcon, Clock3, Minus, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ import { slotAvailabilityText } from '@/components/SlotCartToggleButton';
 import BookingScheduleSummaryCards, {
 	type BookingScheduleSummaryPayload,
 } from '@/components/BookingScheduleSummaryCards';
+import SlotBookingsSheet from '@/components/SlotBookingsSheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -154,6 +155,13 @@ export default function EventSlotOverview( {
 		ymd: string;
 		title: string;
 		currentStock: number;
+	} | null >( null );
+	const [ bookingsSheet, setBookingsSheet ] = useState< {
+		slotId: string;
+		dateId: string;
+		timeText: string;
+		dateLabel: string;
+		bookedCount?: number;
 	} | null >( null );
 	const siteTodayYmd = useMemo( () => {
 		const norm = ( v: unknown ) => {
@@ -532,10 +540,38 @@ export default function EventSlotOverview( {
 															key={ `${ s.id }-${ s.dateId ?? '' }` }
 															timeText={ formatSlotTime( s ) }
 															stock={ s.stock }
+															bookedCount={
+																typeof s.bookedCount === 'number'
+																&& Number.isFinite( s.bookedCount )
+																	? Math.max( 0, Math.floor( s.bookedCount ) )
+																	: undefined
+															}
 															emphasized={ bookable }
 															manageSlots={ manageSlotsUi }
 															canRemoveSlot={ canRemove }
 															slotActionsDisabled={ slotBusy }
+															onSelect={
+																typeof detail.id === 'number'
+																	? () =>
+																		setBookingsSheet( {
+																			slotId: sid,
+																			dateId: did,
+																			timeText: formatSlotTime( s ),
+																			dateLabel:
+																				selectedDay?.label
+																				?? selectedDay?.date
+																				?? '',
+																			bookedCount:
+																				typeof s.bookedCount === 'number'
+																				&& Number.isFinite( s.bookedCount )
+																					? Math.max(
+																						0,
+																						Math.floor( s.bookedCount ),
+																					)
+																					: undefined,
+																		} )
+																	: undefined
+															}
 															onRequestRemove={
 																canRemove
 																	? () =>
@@ -593,6 +629,24 @@ export default function EventSlotOverview( {
 					</CardContent>
 				</Card>
 			</div>
+
+			{ typeof detail.id === 'number' && bookingsSheet ? (
+				<SlotBookingsSheet
+					open={ Boolean( bookingsSheet ) }
+					onOpenChange={ ( next ) => {
+						if ( ! next ) {
+							setBookingsSheet( null );
+						}
+					} }
+					eventId={ detail.id }
+					eventTitle={ detail.title }
+					slotId={ bookingsSheet.slotId }
+					dateId={ bookingsSheet.dateId }
+					timeText={ bookingsSheet.timeText }
+					dateLabel={ bookingsSheet.dateLabel }
+					bookedCount={ bookingsSheet.bookedCount }
+				/>
+			) : null }
 		</div>
 	);
 }
@@ -600,10 +654,12 @@ export default function EventSlotOverview( {
 function SlotOverviewCard( {
 	timeText,
 	stock,
+	bookedCount,
 	emphasized,
 	manageSlots,
 	canRemoveSlot,
 	slotActionsDisabled,
+	onSelect,
 	onRequestRemove,
 	canReduceStock,
 	onRequestReduce,
@@ -612,10 +668,12 @@ function SlotOverviewCard( {
 }: {
 	timeText: string;
 	stock: number | null;
+	bookedCount?: number;
 	emphasized: boolean;
 	manageSlots?: boolean;
 	canRemoveSlot?: boolean;
 	slotActionsDisabled?: boolean;
+	onSelect?: () => void;
 	onRequestRemove?: () => void;
 	canReduceStock?: boolean;
 	onRequestReduce?: () => void;
@@ -634,11 +692,14 @@ function SlotOverviewCard( {
 		&& typeof onRequestReduce === 'function';
 	const showAdd =
 		manageSlots && canAddStock && typeof onRequestAdd === 'function';
+	const selectable = typeof onSelect === 'function';
+	const stopAdmin = ( e: MouseEvent ) => {
+		e.stopPropagation();
+	};
 	return (
 		<div
-			aria-label={ `${ timeText }. ${ availability }.` }
 			className={ cn(
-				'flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left text-sm',
+				'flex min-w-0 items-center justify-between gap-2 rounded-lg border text-left text-sm',
 				emphasized && ! full
 					? 'border-border bg-card'
 					: 'border-border bg-muted/30 opacity-85',
@@ -646,19 +707,38 @@ function SlotOverviewCard( {
 				unlimited && emphasized && 'border-secondary/60',
 			) }
 		>
-			<div className="text-muted-foreground flex min-w-0 shrink-0 items-center gap-1 font-mono text-sm tabular-nums">
-				<Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-				<span className="truncate">{ timeText }</span>
-			</div>
-			<div className="flex shrink-0 items-center gap-1">
-				<span
-					className={ cn(
-						'text-muted-foreground tabular-nums text-xs',
-						full && 'text-destructive font-medium',
-					) }
-				>
-					{ availability }
-				</span>
+			<button
+				type="button"
+				disabled={ ! selectable }
+				onClick={ onSelect }
+				aria-label={ `${ timeText }. ${ availability }.${ bookedCount && bookedCount > 0 ? ` ${ bookedCount } booked.` : '' } View bookings.` }
+				className={ cn(
+					'flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left',
+					selectable && 'cursor-pointer transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+					! selectable && 'cursor-default',
+				) }
+			>
+				<div className="text-muted-foreground flex min-w-0 shrink-0 items-center gap-1 font-mono text-sm tabular-nums">
+					<Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+					<span className="truncate">{ timeText }</span>
+				</div>
+				<div className="flex shrink-0 flex-col items-end gap-0.5">
+					{ typeof bookedCount === 'number' && bookedCount > 0 ? (
+						<span className="text-muted-foreground tabular-nums text-[11px]">
+							{ bookedCount } booked
+						</span>
+					) : null }
+					<span
+						className={ cn(
+							'text-muted-foreground tabular-nums text-xs',
+							full && 'text-destructive font-medium',
+						) }
+					>
+						{ availability }
+					</span>
+				</div>
+			</button>
+			<div className="flex shrink-0 items-center gap-1 pr-1">
 				{ showAdd ? (
 					<Button
 						type="button"
@@ -667,7 +747,10 @@ function SlotOverviewCard( {
 						className="text-muted-foreground hover:text-foreground size-8 shrink-0"
 						disabled={ slotActionsDisabled }
 						aria-label={ `Add ticket spots for ${ timeText }` }
-						onClick={ onRequestAdd }
+						onClick={ ( e ) => {
+							stopAdmin( e );
+							onRequestAdd?.();
+						} }
 					>
 						<Plus className="size-4" />
 					</Button>
@@ -680,7 +763,10 @@ function SlotOverviewCard( {
 						className="text-muted-foreground hover:text-foreground size-8 shrink-0"
 						disabled={ slotActionsDisabled }
 						aria-label={ `Remove ticket spots for ${ timeText }` }
-						onClick={ onRequestReduce }
+						onClick={ ( e ) => {
+							stopAdmin( e );
+							onRequestReduce?.();
+						} }
 					>
 						<Minus className="size-4" />
 					</Button>
@@ -693,7 +779,10 @@ function SlotOverviewCard( {
 						className="size-8 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
 						disabled={ slotActionsDisabled }
 						aria-label={ `Remove session ${ timeText }` }
-						onClick={ onRequestRemove }
+						onClick={ ( e ) => {
+							stopAdmin( e );
+							onRequestRemove?.();
+						} }
 					>
 						<Trash2 className="size-4" />
 					</Button>
