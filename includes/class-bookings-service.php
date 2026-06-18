@@ -18,6 +18,21 @@ defined( 'ABSPATH' ) || exit;
 class Bookings_Service {
 
 	/**
+	 * @var Booking_Stock_Restore_Service|null
+	 */
+	private $stock_restore = null;
+
+	/**
+	 * @return Booking_Stock_Restore_Service
+	 */
+	private function get_stock_restore() {
+		if ( null === $this->stock_restore ) {
+			$this->stock_restore = new Booking_Stock_Restore_Service( $this );
+		}
+		return $this->stock_restore;
+	}
+
+	/**
 	 * Get WordPress site timezone.
 	 */
 	public function get_wp_timezone() {
@@ -312,6 +327,8 @@ class Bookings_Service {
 			'date' => $date_lbl ? $date_lbl : __( 'Date', 'fooevents-internal-pos' ),
 			'slot' => $slot_lbl ? $slot_lbl : __( 'Slot', 'fooevents-internal-pos' ),
 		);
+
+		$this->get_stock_restore()->repair_product_stock( $product_id );
 
 		$dates_out = array();
 

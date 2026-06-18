@@ -50,6 +50,7 @@ require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-admin-menu.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-access-helper.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-frontend-page.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-bookings-service.php';
+require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-booking-stock-restore-service.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-coupon-rules.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-pos-settings.php';
 require_once FOOEVENTS_INTERNAL_POS_DIR . 'includes/class-next-purchase-coupon-service.php';
@@ -85,6 +86,7 @@ function fooevents_internal_pos_init() {
 	( new \FooEvents_Internal_POS\Storefront_Bundles() )->init();
 	( new \FooEvents_Internal_POS\Product_Bundle_Pricing() )->init();
 	( new \FooEvents_Internal_POS\Next_Purchase_Coupon_Service() )->init();
+	( new \FooEvents_Internal_POS\Booking_Stock_Restore_Service() )->init();
 }
 add_action( 'plugins_loaded', 'fooevents_internal_pos_init', 20 );
 
