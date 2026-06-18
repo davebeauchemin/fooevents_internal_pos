@@ -31,25 +31,10 @@ class Slot_Generator_Service {
 	private $bookings;
 
 	/**
-	 * @var Booking_Stock_Restore_Service|null
-	 */
-	private $stock_restore = null;
-
-	/**
 	 * Constructor.
 	 */
 	public function __construct() {
 		$this->bookings = new Bookings_Service();
-	}
-
-	/**
-	 * @return Booking_Stock_Restore_Service
-	 */
-	private function get_stock_restore() {
-		if ( null === $this->stock_restore ) {
-			$this->stock_restore = new Booking_Stock_Restore_Service( $this->bookings );
-		}
-		return $this->stock_restore;
 	}
 
 	/**
@@ -292,7 +277,6 @@ class Slot_Generator_Service {
 		}
 		// Match FooEvents: wp_slash on save (see class-fooevents-bookings.php update_serialized).
 		update_post_meta( $product_id, 'fooevents_bookings_options_serialized', wp_slash( $json ) );
-		$this->get_stock_restore()->seed_slot_totals_from_raw_slots( $product_id, $out, true );
 
 		$method = $product->get_meta( 'WooCommerceEventsBookingsMethod', true );
 		if ( empty( $method ) || '1' === (string) $method ) {
@@ -957,8 +941,6 @@ class Slot_Generator_Service {
 			return $maybe_err;
 		}
 
-		$this->get_stock_restore()->adjust_slot_total( $product_id, (string) $slot_actual_key, (string) $inner_date_id, $add );
-
 		return array(
 			'slotId'        => (string) $slot_actual_key,
 			'dateId'        => (string) $inner_date_id,
@@ -1066,8 +1048,6 @@ class Slot_Generator_Service {
 		if ( is_wp_error( $maybe_err ) ) {
 			return $maybe_err;
 		}
-
-		$this->get_stock_restore()->adjust_slot_total( $product_id, (string) $slot_actual_key, (string) $inner_date_id, -1 * $remove );
 
 		return array(
 			'slotId'         => (string) $slot_actual_key,
@@ -1345,7 +1325,6 @@ class Slot_Generator_Service {
 			return new WP_Error( 'json_error', __( 'Failed to encode booking options.', 'fooevents-internal-pos' ), array( 'status' => 500 ) );
 		}
 		update_post_meta( absint( $product_id ), 'fooevents_bookings_options_serialized', wp_slash( $json ) );
-		$this->get_stock_restore()->seed_slot_totals_from_raw_slots( absint( $product_id ), $slots );
 		return true;
 	}
 

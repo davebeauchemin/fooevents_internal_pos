@@ -18,21 +18,6 @@ defined( 'ABSPATH' ) || exit;
 class Bookings_Service {
 
 	/**
-	 * @var Booking_Stock_Restore_Service|null
-	 */
-	private $stock_restore = null;
-
-	/**
-	 * @return Booking_Stock_Restore_Service
-	 */
-	private function get_stock_restore() {
-		if ( null === $this->stock_restore ) {
-			$this->stock_restore = new Booking_Stock_Restore_Service( $this );
-		}
-		return $this->stock_restore;
-	}
-
-	/**
 	 * Get WordPress site timezone.
 	 */
 	public function get_wp_timezone() {
@@ -318,8 +303,6 @@ class Bookings_Service {
 			);
 		}
 
-		$this->get_stock_restore()->repair_product_stock( $product_id );
-
 		$ctx      = $this->get_processed_options( $product_id );
 		$method   = $ctx['method'];
 		$options  = $ctx['options'];
@@ -438,8 +421,7 @@ class Bookings_Service {
 			);
 		}
 
-		$booked_by_slot_date = $this->get_active_booked_counts_by_slot_date( $product_id );
-		$dates_out           = $this->get_stock_restore()->apply_effective_to_dates( $product_id, $dates_out, $booked_by_slot_date );
+		$booked_by_slot_date = $this->build_active_booked_counts_by_slot_date( $product_id );
 		$dates_out           = $this->enrich_dates_slots_with_booking_metrics( $dates_out, $booked_by_slot_date );
 
 		$price_row = $this->get_product_price_for_rest( $product_id );
@@ -499,7 +481,7 @@ class Bookings_Service {
 	 * @param int $product_id Event (booking) product ID.
 	 * @return array<string,int> Keys `{slotId}\x1e{dateId}` (trimmed meta) => count.
 	 */
-	public function get_active_booked_counts_by_slot_date( $product_id ) {
+	private function build_active_booked_counts_by_slot_date( $product_id ) {
 		$product_id = absint( $product_id );
 		if ( $product_id <= 0 ) {
 			return array();
@@ -1267,11 +1249,8 @@ class Bookings_Service {
 			if ( null === $ymd || ! $this->is_date_not_past( $ymd ) ) {
 				return array( 'available' => false, 'remaining' => 0, 'reason' => 'past_date' );
 			}
-			$remaining = $this->get_stock_restore()->compute_effective_remaining( $event_id, $slot_id, $date_id );
-			if ( null === $remaining ) {
-				return $this->interpret_stock( $row['stock'] ?? '', $qty );
-			}
-			return $this->interpret_stock( $remaining, $qty );
+			$stock = $row['stock'] ?? '';
+			return $this->interpret_stock( $stock, $qty );
 		}
 
 		// slotdate.
@@ -1283,11 +1262,8 @@ class Bookings_Service {
 		if ( null === $ymd || ! $this->is_date_not_past( $ymd ) ) {
 			return array( 'available' => false, 'remaining' => 0, 'reason' => 'past_date' );
 		}
-		$remaining = $this->get_stock_restore()->compute_effective_remaining( $event_id, $slot_id, $date_id );
-		if ( null === $remaining ) {
-			return $this->interpret_stock( $d['stock'] ?? '', $qty );
-		}
-		return $this->interpret_stock( $remaining, $qty );
+		$stock = $d['stock'] ?? '';
+		return $this->interpret_stock( $stock, $qty );
 	}
 
 	/**
